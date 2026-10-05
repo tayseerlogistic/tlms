@@ -207,8 +207,41 @@ export function predictManifestForDriver(
     const commRaw = matchedScheduleRow.commodity?.split('/')[0]?.trim() || '';
     const comm = commRaw.replace(/\s+Granular$/i, '').trim();
 
-    // Check if this driver was already under loading or en-route yesterday for this same customer/destination
-    if (prevNorm.includes('UNDER LOADING') && (prevNorm.includes(normText(cust)) || prevNorm.includes(normText(dst)))) {
+    const srcUpper = normText(src);
+    const dstUpper = normText(dst);
+    const custUpper = normText(cust);
+    const commUpper = normText(comm);
+
+    // 1a. Internal transfer detection (TLS <-> TPF)
+    const isInternal = (srcUpper === 'TLS' && dstUpper === 'TPF') || (srcUpper === 'TPF' && dstUpper === 'TLS') || (srcUpper === 'TPF' && dstUpper === 'TPF');
+    if (isInternal) {
+      return {
+        text: 'Internal Transfer',
+        conf: 'high',
+        reason: `⚡ Timetable Dispatch: Internal plant transfer between ${src} and ${dst}.`
+      };
+    }
+
+    // 1b. Luberef Sulphur collection
+    if (custUpper.includes('LUBEREF') || normText(matchedScheduleRow.supplier || '').includes('LUBEREF')) {
+      return {
+        text: 'MOLTEN SULPHER Collection from LUBEREF',
+        conf: 'high',
+        reason: '⚡ Timetable Dispatch: Molten Sulphur collection from Luberef refinery.'
+      };
+    }
+
+    // 1c. Tronox Caustic Soda / CS collection
+    if (custUpper.includes('TRONOX') && (commUpper.includes('CS') || commUpper.includes('CAUSTIC'))) {
+      return {
+        text: 'CS Collection from TRONOX',
+        conf: 'high',
+        reason: '⚡ Timetable Dispatch: Caustic Soda collection from Tronox plant.'
+      };
+    }
+
+    // 1d. Multi-day cycle progression for scheduled driver
+    if (prevNorm.includes('UNDER LOADING') && (prevNorm.includes(custUpper) || prevNorm.includes(dstUpper))) {
       return {
         text: `${comm} Supply for ${cust} - On the way to ${dst}`,
         conf: 'high',
@@ -216,7 +249,7 @@ export function predictManifestForDriver(
       };
     }
 
-    if (prevNorm.includes('ON THE WAY') && (prevNorm.includes(normText(cust)) || prevNorm.includes(normText(dst)))) {
+    if (prevNorm.includes('ON THE WAY') && (prevNorm.includes(custUpper) || prevNorm.includes(dstUpper))) {
       return {
         text: `${comm} Supply for ${cust} - Under Offloading at ${dst}`,
         conf: 'high',
@@ -224,8 +257,8 @@ export function predictManifestForDriver(
       };
     }
 
-    // Default first day tag for a scheduled load
-    const isLocal = normText(src) === normText(dst);
+    // 1e. Default timetable dispatch tag
+    const isLocal = srcUpper === dstUpper || dstUpper.includes('YANBU');
     const defaultTag = isLocal
       ? `${comm} Supply for ${cust} - Under Loading at ${src}`
       : `${comm} Supply for ${cust} - Under Loading at ${src}`;
@@ -239,62 +272,112 @@ export function predictManifestForDriver(
 
   // 2. CHECK MULTI-DAY TRIP PROGRESSION FROM PREVIOUS DAY
   if (prevNorm) {
+    // 2a. Under Loading progression
     if (prevNorm.includes('UNDER LOADING')) {
-      const destMatch = previousTag.match(/to\s+([A-Za-z\s]+)/i);
+      const destMatch = previousTag.match(/to\s+([A-Za-z\s]+)/i) || previousTag.match(/at\s+([A-Za-z\s]+)/i);
       const custMatch = previousTag.match(/for\s+([A-Za-z\s]+?)\s*[-]/i);
-      const dst = destMatch ? destMatch[1].trim() : '';
       const cust = custMatch ? custMatch[1].trim() : '';
 
-      if (dst) {
+      // Check destination keywords in previous tag
+      let dst = '';
+      if (prevNorm.includes('TURAIF') || prevNorm.includes('MWSPC')) dst = 'Turaif';
+      else if (prevNorm.includes('JUBAIL') || prevNorm.includes('TASNEE')) dst = 'Jubail';
+      else if (prevNorm.includes('RIYADH') || prevNorm.includes('NBC') || prevNorm.includes('MAAR')) dst = 'Riyadh';
+      else if (prevNorm.includes('KUWAIT') || prevNorm.includes('CISCO')) dst = 'Kuwait';
+      else if (prevNorm.includes('RAS AL KHAIR')) dst = 'Ras Al Khair';
+      else if (prevNorm.includes('DAMMAM') || prevNorm.includes('NOMAC') || prevNorm.includes('ARASCO')) dst = 'Dammam';
+      else if (prevNorm.includes('KHAFJI') || prevNorm.includes('DROPS')) dst = 'Khafji';
+      else if (prevNorm.includes('SHUHEIBA') || prevNorm.includes('SHUHAIBA')) dst = 'Shuhaiba';
+      else if (prevNorm.includes('SHUQAIQ')) dst = 'Shuqaiq';
+      else if (prevNorm.includes('RABIGH') || prevNorm.includes('PRC') || prevNorm.includes('RPC')) dst = 'Rabigh';
+      else if (destMatch) dst = destMatch[1].trim();
+
+      if (dst && normText(dst) !== 'YANBU') {
+        const updated = previousTag.replace(/Under Loading at\s+[A-Za-z\s]+/i, `On the way to ${dst}`);
         return {
-          text: previousTag.replace(/Under Loading at\s+[A-Za-z\s]+/i, `On the way to ${dst}`),
+          text: updated.includes('On the way') ? updated : `${previousTag.split('-')[0].trim()} - On the way to ${dst}`,
           conf: 'high',
-          reason: `Trip Lifecycle: Finished loading yesterday, now en route to ${dst}.`
+          reason: `Trip Progression: Finished loading yesterday at Yanbu, now en route to ${dst}.`
+        };
+      } else if (dst && normText(dst) === 'YANBU') {
+        return {
+          text: previousTag.replace(/Under Loading at\s+Yanbu/i, 'Under Offloading at Yanbu'),
+          conf: 'high',
+          reason: 'Local Yanbu Transit: Loading completed, cargo under offloading.'
         };
       }
     }
 
-    if (prevNorm.includes('ON THE WAY')) {
-      const destMatch = previousTag.match(/to\s+([A-Za-z\s]+)/i);
-      const dst = destMatch ? destMatch[1].trim() : 'Destination';
+    // 2b. Waiting for Loading / Offloading progression
+    if (prevNorm.includes('WAITING FOR OFFLOADING')) {
+      return {
+        text: previousTag.replace(/Waiting for Offloading/i, 'Under Offloading'),
+        conf: 'high',
+        reason: 'Standby Queue Cleared: Began offloading at destination customer facility.'
+      };
+    }
 
-      // If long haul (Kuwait, Turaif, Dammam), may take 2 days
+    if (prevNorm.includes('WAITING FOR LOADING')) {
+      return {
+        text: previousTag.replace(/Waiting for Loading/i, 'Under Loading'),
+        conf: 'high',
+        reason: 'Queue Cleared: Began cargo loading at supply facility.'
+      };
+    }
+
+    // 2c. On the way progression
+    if (prevNorm.includes('ON THE WAY')) {
       if (prevNorm.includes('KUWAIT') && !prevNorm.includes('BORDER')) {
         return {
           text: previousTag.replace(/On the way to\s+Kuwait/i, 'At Kuwait Border'),
           conf: 'high',
-          reason: 'Transit Timeline: 2nd day cross-border route arriving at Kuwait Customs.'
+          reason: 'Cross-Border Route: 2nd transit day arrived at Kuwait border customs post.'
         };
       }
+
+      const destMatch = previousTag.match(/to\s+([A-Za-z\s]+)/i);
+      const dst = destMatch ? destMatch[1].trim() : 'Destination';
 
       return {
         text: previousTag.replace(/On the way to\s+/i, 'Under Offloading at '),
         conf: 'high',
-        reason: `Trip Lifecycle: Reached destination ${dst} for cargo offloading.`
+        reason: `Trip Progression: Arrived at destination ${dst} for cargo discharge.`
       };
     }
 
+    // 2d. At Kuwait Border -> Under Offloading at Kuwait
+    if (prevNorm.includes('AT KUWAIT BORDER')) {
+      return {
+        text: 'SA Supply for CISCO - Under Offloading at Kuwait',
+        conf: 'high',
+        reason: 'Border Clearance Complete: Offloading at CISCO customer facility in Kuwait.'
+      };
+    }
+
+    // 2e. Under Offloading -> Returning
     if (prevNorm.includes('UNDER OFFLOADING')) {
       return {
         text: 'Coming Back to Yanbu',
         conf: 'high',
-        reason: 'Trip Lifecycle: Offloaded yesterday; now returning empty to Yanbu central fleet depot.'
+        reason: 'Cargo Discharged: Return journey commenced to Yanbu central fleet depot.'
       };
     }
 
+    // 2f. Coming Back -> Standby at Yanbu Base
     if (prevNorm.includes('COMING BACK')) {
       return {
         text: 'At Yanbu',
         conf: 'high',
-        reason: 'Transit Complete: Return journey completed, vehicle standby at Yanbu base.'
+        reason: 'Return Leg Completed: Prime mover arrived back and standby at Yanbu base.'
       };
     }
 
+    // 2g. Maintenance / Vacation / Standby
     if (prevNorm.includes('TRUCK UNDER MAINTENANCE')) {
       return {
         text: 'Truck Under Maintenance at Yanbu',
         conf: 'medium',
-        reason: 'Workshop Continuation: Vehicle under repair at central workshop.'
+        reason: 'Workshop Schedule: Vehicle maintenance and mechanical inspection ongoing.'
       };
     }
 
@@ -302,7 +385,7 @@ export function predictManifestForDriver(
       return {
         text: 'Vacation',
         conf: 'high',
-        reason: 'Driver is on approved statutory annual vacation.'
+        reason: 'Driver on approved annual vacation leave.'
       };
     }
 
@@ -310,7 +393,23 @@ export function predictManifestForDriver(
       return {
         text: 'With Out Truck',
         conf: 'medium',
-        reason: 'Driver on standby awaiting vehicle reassignment.'
+        reason: 'Driver standby awaiting vehicle assignment.'
+      };
+    }
+
+    if (prevNorm === 'AT YANBU' || prevNorm.includes('AT YANBU')) {
+      return {
+        text: 'At Yanbu',
+        conf: 'medium',
+        reason: 'Standby at Yanbu Base awaiting new dispatch.'
+      };
+    }
+
+    if (prevNorm.includes('INTERNAL TRANSFER')) {
+      return {
+        text: 'Internal Transfer',
+        conf: 'medium',
+        reason: 'Internal yard logistics and transfer support.'
       };
     }
   }

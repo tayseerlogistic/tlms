@@ -2,29 +2,42 @@ import React, { useState, useEffect } from 'react';
 import { useLms } from '../context/LmsContext';
 import { useAuth } from '../context/AuthContext';
 import { ManifestSuggestion, LearnedRule } from '../types';
-import { trainManifestAiModel, getManifestModelStats, ModelTrainingStats } from '../utils/manifestAiEngine';
+import {
+  trainManifestAiModel, getManifestModelStats, ModelTrainingStats,
+  predictManifestForDriver
+} from '../utils/manifestAiEngine';
+import {
+  parseMultiDayManifest, SAMPLE_OCTOBER_1_4_MANIFEST_TEXT, MultiDayParseResult
+} from '../utils/multiDayManifestParser';
 import * as XLSX from 'xlsx';
 import {
   ClipboardList, Brain, Calendar, Save, Download, FileText,
   HelpCircle, CheckCircle2, Clock, Upload, Search, RefreshCw,
-  Sparkles, Zap, ArrowRight, ShieldCheck, Check, Filter, TrendingUp, AlertCircle
+  Sparkles, Zap, ArrowRight, ShieldCheck, Check, Filter, TrendingUp, AlertCircle,
+  FileSpreadsheet, Database, Layers, ArrowDown
 } from 'lucide-react';
 
 export const DailyManifestView: React.FC = () => {
   const {
-    drivers, manifests, schedules, saveDailyManifest,
+    drivers, manifests, schedules, saveDailyManifest, saveMultiDayManifests,
     learnedRules, learnHistoricalRules
   } = useLms();
 
   const { isDispatcher, isAdmin } = useAuth();
 
-  const [selectedDate, setSelectedDate] = useState(() => '2026-09-07');
-  const [subTab, setSubTab] = useState<'manifest' | 'history' | 'learning' | 'bulk'>('manifest');
+  const [selectedDate, setSelectedDate] = useState(() => '2026-10-05');
+  const [subTab, setSubTab] = useState<'manifest' | 'history' | 'learning' | 'bulk' | 'paste-multi'>('manifest');
   const [selectedDriverIdx, setSelectedDriverIdx] = useState(0);
 
   // Bulk Import state
   const [bulkTagsText, setBulkTagsText] = useState('');
   const [bulkPreviewCount, setBulkPreviewCount] = useState<number | null>(null);
+
+  // Multi-day manifest direct paste state
+  const [multiPasteText, setMultiPasteText] = useState('');
+  const [multiPasteMonth, setMultiPasteMonth] = useState('2026-10');
+  const [parsedMultiResult, setParsedMultiResult] = useState<MultiDayParseResult | null>(null);
+  const [isSyncingMulti, setIsSyncingMulti] = useState(false);
 
   // Schedule paste state for historical learning
   const [learningPasteText, setLearningPasteText] = useState('');
@@ -121,122 +134,61 @@ export const DailyManifestView: React.FC = () => {
     const d = drivers[driverIdx];
     if (!d) return { text: 'At Yanbu', conf: 'low', reason: 'Driver record not found' };
 
-    // 1. If already confirmed for this date
-    if (todayTags[driverIdx]) {
-      return {
-        text: todayTags[driverIdx],
-        conf: 'high',
-        reason: 'Previously confirmed & locked for this manifest date'
-      };
-    }
-
+    const confirmed = manifests[date]?.[driverIdx];
     const prev = getPreviousTag(driverIdx, date);
-    const prevNorm = norm(prev);
+    const daySchedule = schedules[date]?.rows || [];
 
-    // 2. Auto-fetch and match with today's Timetable Schedule
-    const matchedScheduleRows = currentSchedule.filter(r => {
-      const driverMatch = r.driverName && norm(r.driverName).includes(norm(d.name)) || norm(d.name).includes(norm(r.driverName));
-      const plateMatch = r.plateNo && d.assignedVehiclePlate && norm(r.plateNo).replace(/\s+/g, '') === norm(d.assignedVehiclePlate).replace(/\s+/g, '');
-      return driverMatch || plateMatch;
-    });
+    return predictManifestForDriver(
+      driverIdx,
+      d,
+      date,
+      daySchedule,
+      prev,
+      learnedRules,
+      confirmed
+    );
+  };
 
-    // 3. Match against trained historical rules
-    if (matchedScheduleRows.length > 0) {
-      const first = matchedScheduleRows[0];
-      const src = first.source || 'Yanbu';
-      const dst = first.destination || '';
-      const cust = first.customer || first.supplier || first.store || '';
-      const comm = first.commodity ? first.commodity.split('/')[0].trim() : '';
-
-      const scheduleKey = `${norm(src)}>${norm(dst)}|${norm(cust)}|${norm(comm)}`;
-
-      // Check pre-trained learned rules
-      const rule = learnedRules.find(r =>
-        r.driverIndex === driverIdx &&
-        r.keys.some(k => norm(k).includes(norm(dst)) || norm(k) === scheduleKey)
-      );
-
-      if (rule && rule.hits >= 2) {
-        return {
-          text: rule.result,
-          conf: 'high',
-          reason: `Learned pattern: matched ${rule.hits} confirmed observations for route to ${dst}.`
-        };
-      }
-
-      // Check lifecycle progression
-      if (prevNorm.includes('UNDER LOADING') && dst) {
-        return {
-          text: `${comm ? comm + ' ' : ''}Supply for ${cust} - On the way to ${dst}`,
-          conf: 'high',
-          reason: `Trip Progression: Driver was Under Loading yesterday; today en route to destination ${dst}.`
-        };
-      }
-
-      if (prevNorm.includes('ON THE WAY') && dst) {
-        return {
-          text: `${comm ? comm + ' ' : ''}Supply for ${cust} - Under Offloading at ${dst}`,
-          conf: 'high',
-          reason: `Trip Progression: Driver was On the way yesterday; today arrives for offloading at ${dst}.`
-        };
-      }
-
-      if (prevNorm.includes('UNDER OFFLOADING') && dst) {
-        return {
-          text: `Coming Back to ${src || 'Yanbu'}`,
-          conf: 'high',
-          reason: `Trip Progression: Offloaded yesterday; now returning to ${src || 'Yanbu'}.`
-        };
-      }
-
-      // Default schedule loading tag
-      return {
-        text: `${comm ? comm + ' ' : ''}Supply for ${cust} - Under Loading at ${src}`,
-        conf: 'medium',
-        reason: `Auto-fetched from Timetable Dispatch: starts trip at ${src} destined for ${dst}.`
-      };
+  // -------------------------------------------------------------
+  // MULTI-DAY PREVIOUS MANIFEST INGESTION HANDLERS
+  // -------------------------------------------------------------
+  const handleParseMulti = (customText?: string) => {
+    const textToUse = customText !== undefined ? customText : multiPasteText;
+    if (!textToUse.trim()) {
+      alert("Please paste the previous daily manifest sheet text first.");
+      return;
     }
 
-    // 4. No schedule row: check prior day status
-    if (prevNorm.includes('ON THE WAY') || prevNorm.includes('COMING BACK')) {
-      const destMatch = prev.match(/to\s+([A-Za-z\s]+)/i);
-      const destination = destMatch ? destMatch[1].trim() : 'Destination';
-      return {
-        text: `Arrived ${destination}`,
-        conf: 'medium',
-        reason: `Carry-forward: active trip in transit yesterday arriving today.`
-      };
-    }
+    const res = parseMultiDayManifest(textToUse, drivers, multiPasteMonth);
+    setParsedMultiResult(res);
+  };
 
-    if (prevNorm.includes('TRUCK UNDER MAINTENANCE')) {
-      return {
-        text: prev,
-        conf: 'medium',
-        reason: 'Carry-forward: vehicle under maintenance status continues.'
-      };
-    }
+  const handleLoadSampleMulti = () => {
+    setMultiPasteText(SAMPLE_OCTOBER_1_4_MANIFEST_TEXT);
+    setMultiPasteMonth('2026-10');
+    handleParseMulti(SAMPLE_OCTOBER_1_4_MANIFEST_TEXT);
+  };
 
-    if (prevNorm.includes('VACATION')) {
-      return {
-        text: 'Vacation',
-        conf: 'high',
-        reason: 'Driver on approved annual leave.'
-      };
-    }
+  const handleApplyMultiSync = async () => {
+    if (!parsedMultiResult || !parsedMultiResult.mappedDriversCount) return;
 
-    if (prevNorm.includes('WITH OUT TRUCK')) {
-      return {
-        text: 'With Out Truck',
-        conf: 'medium',
-        reason: 'Driver on standby without vehicle.'
-      };
-    }
+    setIsSyncingMulti(true);
+    await saveMultiDayManifests(parsedMultiResult.manifestByDate);
 
-    return {
-      text: prev || 'At Yanbu',
-      conf: prev ? 'medium' : 'low',
-      reason: prev ? 'Carried forward from previous manifest status.' : 'Standby at Yanbu base (no schedule).'
-    };
+    // Retrain AI Model to assimilate the newly synced multi-day historical manifests
+    const retrain = trainManifestAiModel(drivers, schedules, manifests, learnedRules);
+    learnHistoricalRules(retrain.rules);
+    setModelStats(retrain.stats);
+
+    setIsSyncingMulti(false);
+    setAiSuccessToast(
+      `⚡ Successfully synchronized ${parsedMultiResult.totalEntriesCount} manifest tags across ${parsedMultiResult.detectedDates.length} dates (${parsedMultiResult.detectedDates.join(', ')})! Real-time suggestions updated for 2026-10-05.`
+    );
+    setTimeout(() => setAiSuccessToast(''), 7000);
+
+    // Switch to Oct 5 (today) and manifest view
+    setSelectedDate('2026-10-05');
+    setSubTab('manifest');
   };
 
   // -------------------------------------------------------------
@@ -417,14 +369,44 @@ export const DailyManifestView: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 bg-slate-800 border border-slate-700 rounded-xl px-3 py-1.5">
-            <Calendar className="w-3.5 h-3.5 text-slate-400" />
+          <div className="flex items-center gap-1.5 bg-slate-800 border border-slate-700 rounded-xl px-2 py-1">
+            <Calendar className="w-3.5 h-3.5 text-slate-400 ml-1" />
             <input
               type="date"
               value={selectedDate}
               onChange={(e) => setSelectedDate(e.target.value)}
               className="bg-transparent text-xs text-white font-mono focus:outline-none"
             />
+          </div>
+
+          <div className="hidden lg:flex items-center gap-1 bg-slate-900 border border-slate-700/80 p-1 rounded-xl text-[11px] font-mono">
+            {[
+              { dt: '2026-10-01', label: 'Thu 1' },
+              { dt: '2026-10-02', label: 'Fri 2' },
+              { dt: '2026-10-03', label: 'Sat 3' },
+              { dt: '2026-10-04', label: 'Sun 4' },
+              { dt: '2026-10-05', label: 'Mon 5 (Today)' }
+            ].map(({ dt, label }) => {
+              const isSelected = selectedDate === dt;
+              const hasData = manifests[dt] && Object.keys(manifests[dt]).length > 0;
+              return (
+                <button
+                  key={dt}
+                  onClick={() => setSelectedDate(dt)}
+                  className={`px-2 py-1 rounded-lg transition flex items-center gap-1 ${
+                    isSelected
+                      ? 'bg-emerald-600 text-white font-bold shadow'
+                      : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                  }`}
+                  title={hasData ? `${Object.keys(manifests[dt]).length} confirmed driver manifests` : 'No confirmed manifests'}
+                >
+                  {label}
+                  {hasData && (
+                    <span className={`w-1.5 h-1.5 rounded-full ${isSelected ? 'bg-white' : 'bg-emerald-400'}`}></span>
+                  )}
+                </button>
+              );
+            })}
           </div>
 
           <button
@@ -570,18 +552,28 @@ export const DailyManifestView: React.FC = () => {
       )}
 
       {/* Sub-Tabs */}
-      <div className="flex border-b border-slate-800 gap-2">
+      <div className="flex border-b border-slate-800 gap-2 overflow-x-auto">
         <button
           onClick={() => setSubTab('manifest')}
-          className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold transition border-b-2 ${
+          className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold transition border-b-2 whitespace-nowrap ${
             subTab === 'manifest' ? 'border-emerald-500 text-white' : 'border-transparent text-slate-400 hover:text-slate-200'
           }`}
         >
           <ClipboardList className="w-4 h-4" /> Daily Manifest ({drivers.length} Drivers)
         </button>
         <button
+          onClick={() => setSubTab('paste-multi')}
+          className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold transition border-b-2 whitespace-nowrap ${
+            subTab === 'paste-multi'
+              ? 'border-sky-500 text-white bg-sky-950/40 rounded-t-lg shadow-inner'
+              : 'border-transparent text-sky-400/90 hover:text-white hover:bg-slate-800/40'
+          }`}
+        >
+          <FileSpreadsheet className="w-4 h-4 text-sky-400" /> 📋 Paste Multi-Day Manifest / Sync
+        </button>
+        <button
           onClick={() => setSubTab('history')}
-          className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold transition border-b-2 ${
+          className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold transition border-b-2 whitespace-nowrap ${
             subTab === 'history' ? 'border-emerald-500 text-white' : 'border-transparent text-slate-400 hover:text-slate-200'
           }`}
         >
@@ -589,15 +581,15 @@ export const DailyManifestView: React.FC = () => {
         </button>
         <button
           onClick={() => setSubTab('learning')}
-          className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold transition border-b-2 ${
-            subTab === 'learning' ? 'border-emerald-500 text-white' : 'border-transparent text-slate-400 hover:text-slate-200'
+          className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold transition border-b-2 whitespace-nowrap ${
+            subTab === 'learning' ? 'border-purple-500 text-white' : 'border-transparent text-slate-400 hover:text-slate-200'
           }`}
         >
           <Brain className="w-4 h-4 text-purple-400" /> 🧠 Historical Learning ({learnedRules.length} Rules)
         </button>
         <button
           onClick={() => setSubTab('bulk')}
-          className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold transition border-b-2 ${
+          className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold transition border-b-2 whitespace-nowrap ${
             subTab === 'bulk' ? 'border-emerald-500 text-white' : 'border-transparent text-slate-400 hover:text-slate-200'
           }`}
         >
@@ -1009,6 +1001,306 @@ FC Supply for ZAMIL - Under Loading at Yanbu
               Save Bulk Tags
             </button>
           </div>
+        </div>
+      )}
+
+      {/* Sub-Tab 5: Paste Multi-Day Manifest / Sync */}
+      {subTab === 'paste-multi' && (
+        <div className="bg-slate-800/80 border border-slate-700 rounded-2xl p-6 shadow-xl space-y-6">
+          {/* Header */}
+          <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-slate-700">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-sky-600/20 border border-sky-500/40 flex items-center justify-center text-sky-400">
+                <FileSpreadsheet className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-extrabold text-white text-base flex items-center gap-2">
+                  Multi-Day Manifest Ingestion &amp; Sync Engine
+                  <span className="bg-sky-500/20 text-sky-300 border border-sky-500/40 text-[10px] font-mono font-bold px-2 py-0.5 rounded-full">
+                    Multi-Date Auto-Aligner
+                  </span>
+                </h3>
+                <p className="text-xs text-slate-300 mt-0.5">
+                  Paste multi-column daily manifests directly from your dispatch spreadsheet (with dates like Thursday 1, Friday 2, Saturday 3, Sunday 4). Automatically synchronizes historical records and trains the predictive suggestion engine for upcoming dispatches.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleLoadSampleMulti}
+                className="bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs px-3.5 py-2 rounded-xl shadow transition flex items-center gap-1.5"
+                title="Populate with the 59-driver Oct 1–4 manifest provided in prompt"
+              >
+                <Layers className="w-3.5 h-3.5" /> 📥 Load Oct 1–4 Provided Sample (59 Drivers)
+              </button>
+            </div>
+          </div>
+
+          {/* Column Layout Instructions */}
+          <div className="p-3.5 bg-slate-900/90 border border-slate-800 rounded-xl text-xs space-y-1.5">
+            <div className="text-slate-300 font-bold flex items-center gap-1.5">
+              <Database className="w-3.5 h-3.5 text-sky-400" /> Supported Spreadsheet Column Structure:
+            </div>
+            <div className="font-mono text-[11px] text-slate-400 overflow-x-auto whitespace-nowrap bg-slate-950 p-2 rounded-lg border border-slate-800">
+              Driver Name &bull; Iqama # &bull; Nationality &bull; Contact Number &bull; Equipment# &bull; Transporter &bull; Vehicle Plate No &bull; Driver card &bull; Employee No. &bull; Working For &bull; <span className="text-sky-300 font-bold">Thursday, 1</span> &bull; <span className="text-sky-300 font-bold">Friday, 2</span> &bull; <span className="text-sky-300 font-bold">Saturday, 3</span> &bull; <span className="text-sky-300 font-bold">Sunday, 4</span> ...
+            </div>
+            <div className="text-[11px] text-slate-400">
+              Matches drivers automatically by <strong className="text-white">Driver Name</strong>, <strong className="text-white">Iqama #</strong>, <strong className="text-white">Employee No</strong>, or <strong className="text-white">Vehicle Plate</strong>. Missing drivers or external transporters are highlighted.
+            </div>
+          </div>
+
+          {/* Paste Input Area */}
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center justify-between text-xs text-slate-400">
+              <div className="flex items-center gap-3">
+                <span className="font-semibold text-white">Paste Spreadsheet Rows (TSV / Tab-Separated):</span>
+                <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1">
+                  <span className="text-[10px] uppercase text-slate-400">Target Month:</span>
+                  <input
+                    type="month"
+                    value={multiPasteMonth}
+                    onChange={(e) => setMultiPasteMonth(e.target.value)}
+                    className="bg-transparent text-white font-mono text-xs focus:outline-none"
+                  />
+                </div>
+              </div>
+              <span>{multiPasteText.length > 0 ? `${multiPasteText.split('\n').length} raw line(s)` : 'Awaiting input'}</span>
+            </div>
+
+            <textarea
+              rows={9}
+              value={multiPasteText}
+              onChange={(e) => setMultiPasteText(e.target.value)}
+              placeholder={`Driver Name\tIqama #\tNationality\tContact Number\tEquipment#\tTransporter\tVehicle Plate No\tDriver card\t\tEmployee No.\tWorking For\tThursday, 1 \tFriday, 2 \tSaturday, 3 \tSunday, 4 \nMUHAMMAD FAYYAZ AWAN\t2326626773\tPAKISTAN\t595343932\t401LSR18\tTLS\tأ ح د D J A 4829\t\t\tL-EMP0024\tYanbu - Local\tCS Supply for SWCC - Under Offloading at Yanbu\t Internal Transfer \tMOLTEN SULPHER Collection from LUBEREF\tMOLTEN SULPHER Collection from LUBEREF\n...`}
+              className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-white font-mono placeholder-slate-600 focus:outline-none focus:border-sky-500 custom-scrollbar"
+            />
+
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+              <button
+                onClick={() => {
+                  setMultiPasteText('');
+                  setParsedMultiResult(null);
+                }}
+                className="text-xs text-slate-400 hover:text-white transition"
+              >
+                Clear Input
+              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => handleParseMulti()}
+                  className="bg-slate-700 hover:bg-slate-600 text-white font-bold text-xs px-4 py-2 rounded-xl transition flex items-center gap-1.5 shadow"
+                >
+                  <Search className="w-3.5 h-3.5" /> 🔍 Parse Manifest Sheet
+                </button>
+
+                {parsedMultiResult && parsedMultiResult.mappedDriversCount > 0 && (
+                  <button
+                    onClick={handleApplyMultiSync}
+                    disabled={isSyncingMulti}
+                    className="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-xs px-5 py-2 rounded-xl shadow-lg transition flex items-center gap-2 disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isSyncingMulti ? 'animate-spin' : ''}`} />
+                    ⚡ Sync Manifests to Database &amp; Suggest Today (Oct 5)
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Parsing Results & Metrics */}
+          {parsedMultiResult && (
+            <div className="space-y-4 pt-2 border-t border-slate-700/80">
+              {/* Summary Cards */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="bg-slate-900/90 p-3.5 rounded-xl border border-slate-700">
+                  <span className="text-[10px] font-mono uppercase text-slate-400">DETECTED DATES</span>
+                  <div className="text-base font-black text-sky-400 font-mono mt-0.5">
+                    {parsedMultiResult.detectedDates.length} Dates
+                  </div>
+                  <div className="text-[10px] text-slate-400 mt-1 flex flex-wrap gap-1">
+                    {parsedMultiResult.detectedDates.map(d => (
+                      <span key={d} className="bg-sky-950 text-sky-300 border border-sky-800 px-1.5 py-0.2 rounded font-mono text-[9px]">
+                        {d.split('-').slice(1).join('/')}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="bg-slate-900/90 p-3.5 rounded-xl border border-slate-700">
+                  <span className="text-[10px] font-mono uppercase text-slate-400">FLEET MATCH RATE</span>
+                  <div className="text-base font-black text-emerald-400 font-mono mt-0.5">
+                    {parsedMultiResult.mappedDriversCount} / {drivers.length} Drivers
+                  </div>
+                  <div className="text-[10px] text-slate-400 mt-1">
+                    {Math.round((parsedMultiResult.mappedDriversCount / drivers.length) * 100)}% fleet coverage
+                  </div>
+                </div>
+
+                <div className="bg-slate-900/90 p-3.5 rounded-xl border border-slate-700">
+                  <span className="text-[10px] font-mono uppercase text-slate-400">TOTAL STATUS READINGS</span>
+                  <div className="text-base font-black text-purple-400 font-mono mt-0.5">
+                    {parsedMultiResult.totalEntriesCount} Status Tags
+                  </div>
+                  <div className="text-[10px] text-slate-400 mt-1">
+                    Multi-day journey logs
+                  </div>
+                </div>
+
+                <div className="bg-slate-900/90 p-3.5 rounded-xl border border-slate-700">
+                  <span className="text-[10px] font-mono uppercase text-slate-400">AI SUGGESTION READY</span>
+                  <div className="text-base font-black text-amber-400 font-mono mt-0.5">
+                    Monday Oct 5
+                  </div>
+                  <div className="text-[10px] text-slate-400 mt-1">
+                    Infers cycle from Sunday 4
+                  </div>
+                </div>
+              </div>
+
+              {/* Action Banner to Sync */}
+              <div className="p-4 bg-gradient-to-r from-sky-950 via-slate-900 to-indigo-950 border border-sky-500/50 rounded-xl flex flex-wrap items-center justify-between gap-4 shadow-xl">
+                <div>
+                  <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                    Manifest Sheet Validated &amp; Ready for Synchronization
+                  </h4>
+                  <p className="text-xs text-sky-200 mt-0.5">
+                    Clicking sync updates manifests for <strong>{parsedMultiResult.detectedDates.join(', ')}</strong>, saves each driver&apos;s history timeline, retrains the progression engine, and immediately generates high-confidence predictions for <strong>2026-10-05</strong>.
+                  </p>
+                </div>
+                <button
+                  onClick={handleApplyMultiSync}
+                  disabled={isSyncingMulti}
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs px-5 py-2.5 rounded-xl shadow-lg transition flex items-center gap-2 disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-4 h-4 ${isSyncingMulti ? 'animate-spin' : ''}`} />
+                  ⚡ Sync Manifests to Database &amp; Suggest Today (Oct 5)
+                </button>
+              </div>
+
+              {/* Multi-Date Preview Table */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-xs text-slate-300">
+                  <span className="font-bold flex items-center gap-1.5">
+                    <ClipboardList className="w-3.5 h-3.5 text-sky-400" />
+                    Parsed Driver Manifest Preview ({parsedMultiResult.entries.length} Drivers)
+                  </span>
+                  <span className="text-slate-400 font-mono text-[11px]">
+                    Scroll horizontally to view all daily status columns
+                  </span>
+                </div>
+
+                <div className="overflow-x-auto max-h-[500px] border border-slate-700/80 rounded-xl custom-scrollbar">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead className="bg-slate-950 text-slate-400 font-mono uppercase tracking-wider sticky top-0 z-10 border-b border-slate-700">
+                      <tr>
+                        <th className="p-2.5 w-10 text-center">#</th>
+                        <th className="p-2.5 min-w-[200px]">Driver Details</th>
+                        <th className="p-2.5 min-w-[130px]">Plate / Iqama</th>
+                        <th className="p-2.5 min-w-[90px]">Emp No</th>
+                        {parsedMultiResult.detectedDates.map(dateKey => {
+                          const [y, m, d] = dateKey.split('-');
+                          const dayNum = parseInt(d, 10);
+                          const dayName = new Date(parseInt(y, 10), parseInt(m, 10) - 1, dayNum).toLocaleDateString('en-US', { weekday: 'short' });
+                          return (
+                            <th key={dateKey} className="p-2.5 min-w-[220px] bg-slate-900 border-l border-slate-800">
+                              <div className="text-sky-300 font-bold">{dayName}, {dayNum}</div>
+                              <div className="text-[10px] text-slate-500 font-mono">{dateKey}</div>
+                            </th>
+                          );
+                        })}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/80 bg-slate-900/50">
+                      {parsedMultiResult.entries.map((entry, rIdx) => {
+                        return (
+                          <tr key={rIdx} className="hover:bg-slate-800/70 transition">
+                            <td className="p-2.5 text-center font-mono text-slate-400 text-[11px]">
+                              {rIdx + 1}
+                            </td>
+                            <td className="p-2.5">
+                              <div className="font-bold text-white text-xs">{entry.driverName}</div>
+                              <div className="text-[10px] text-slate-400">
+                                TLS Fleet
+                                <span className="ml-1 text-emerald-400 font-mono font-semibold">
+                                  [SL #{entry.driverIndex + 1}]
+                                </span>
+                              </div>
+                            </td>
+                            <td className="p-2.5 font-mono text-[11px]">
+                              <div className="text-sky-300 font-semibold">{entry.plate || '—'}</div>
+                              <div className="text-slate-400 text-[10px]">{entry.iqama || '—'}</div>
+                            </td>
+                            <td className="p-2.5 font-mono text-[11px] text-slate-300">
+                              {entry.empNo || '—'}
+                            </td>
+                            {parsedMultiResult.detectedDates.map(dateKey => {
+                              const tag = entry.tagsByDate[dateKey] || '';
+                              if (!tag) {
+                                return (
+                                  <td key={dateKey} className="p-2.5 text-slate-600 italic text-[11px] border-l border-slate-800/60">
+                                    —
+                                  </td>
+                                );
+                              }
+
+                              const upper = tag.toUpperCase();
+                              let badgeColor = 'bg-slate-800 text-slate-300 border-slate-700';
+                              if (upper.includes('UNDER LOADING') || upper.includes('COLLECTION')) {
+                                badgeColor = 'bg-blue-950/70 text-blue-200 border-blue-700/60';
+                              } else if (upper.includes('ON THE WAY') || upper.includes('BORDER')) {
+                                badgeColor = 'bg-indigo-950/70 text-indigo-200 border-indigo-700/60';
+                              } else if (upper.includes('OFFLOADING')) {
+                                badgeColor = 'bg-amber-950/70 text-amber-200 border-amber-700/60';
+                              } else if (upper.includes('COMING BACK') || upper.includes('ARRIVED YANBU')) {
+                                badgeColor = 'bg-purple-950/70 text-purple-200 border-purple-700/60';
+                              } else if (upper === 'AT YANBU' || upper.includes('AT YANBU')) {
+                                badgeColor = 'bg-emerald-950/70 text-emerald-200 border-emerald-700/60';
+                              } else if (upper.includes('INTERNAL TRANSFER')) {
+                                badgeColor = 'bg-cyan-950/70 text-cyan-200 border-cyan-700/60';
+                              } else if (upper.includes('MAINTENANCE')) {
+                                badgeColor = 'bg-orange-950/70 text-orange-200 border-orange-700/60';
+                              } else if (upper.includes('VACATION') || upper.includes('WITH OUT TRUCK')) {
+                                badgeColor = 'bg-rose-950/70 text-rose-200 border-rose-700/60';
+                              }
+
+                              return (
+                                <td key={dateKey} className="p-2.5 border-l border-slate-800/60">
+                                  <div className={`p-1.5 rounded-lg border text-[11px] font-mono leading-tight ${badgeColor}`}>
+                                    {tag}
+                                  </div>
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Unmapped Lines notice if any */}
+              {parsedMultiResult.unmatchedLines.length > 0 && (
+                <div className="p-3 bg-amber-950/40 border border-amber-500/40 rounded-xl text-xs text-amber-200 space-y-1">
+                  <div className="font-bold flex items-center gap-1.5">
+                    <AlertCircle className="w-3.5 h-3.5 text-amber-400" />
+                    {parsedMultiResult.unmatchedLines.length} Unmatched or Informational Line(s):
+                  </div>
+                  <div className="font-mono text-[11px] text-amber-300 max-h-24 overflow-y-auto custom-scrollbar">
+                    {parsedMultiResult.unmatchedLines.map((line, idx) => (
+                      <div key={idx}>&bull; {line}</div>
+                    ))}
+                  </div>
+                  <div className="text-[10px] text-amber-400">
+                    Headers or non-driver summary rows (e.g. section dividers) were skipped automatically.
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

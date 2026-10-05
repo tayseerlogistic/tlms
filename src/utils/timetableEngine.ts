@@ -60,34 +60,34 @@ export const COLUMNS: { key: keyof TimetableRow; label: string; def: boolean; w:
   { key: 'iqama', label: 'Iqama #', def: true, w: 110 },
   { key: 'mobile', label: 'Mobile #', def: true, w: 110 },
   { key: 'plateNo', label: 'Plate No', def: true, w: 150 },
-  { key: 'equipmentNo', label: 'Equipment#', def: true, w: 100 },
+  { key: 'equipmentNo', label: 'Equipment#', def: true, w: 110 },
   { key: 'customer', label: 'Customer', def: true, w: 150 },
   { key: 'source', label: 'Source', def: true, w: 90 },
   { key: 'destination', label: 'Destination', def: true, w: 100 },
-  { key: 'commodity', label: 'Commodity', def: true, w: 300 },
-  { key: 'supplier', label: 'Supplier', def: false, w: 120 },
-  { key: 'store', label: 'Store', def: false, w: 180 },
-  { key: 'equipmentType', label: 'Equipment Type', def: false, w: 110 },
-  { key: 'waybill', label: 'Waybill#', def: false, w: 90 },
+  { key: 'commodity', label: 'Commodity', def: true, w: 280 },
+  { key: 'supplier', label: 'Supplier', def: true, w: 120 },
+  { key: 'store', label: 'Store', def: true, w: 160 },
+  { key: 'equipmentType', label: 'Equipment Type', def: true, w: 120 },
+  { key: 'waybill', label: 'Waybill#', def: true, w: 90 },
   { key: 'dn', label: 'DN Number', def: false, w: 90 },
-  { key: 'transporter', label: 'Transporter', def: false, w: 120 },
-  { key: 'notes', label: 'Notes', def: false, w: 200 },
-  { key: 'bayanExpiry', label: 'Bayan Expiry', def: false, w: 120 }
+  { key: 'transporter', label: 'Transporter', def: true, w: 100 },
+  { key: 'notes', label: 'Notes', def: false, w: 180 },
+  { key: 'bayanExpiry', label: 'Bayan Expiry', def: false, w: 110 }
 ];
 
 export const OFFICIAL_EXPORT_COLUMNS: [keyof TimetableRow, string][] = [
   ['driverName', 'Driver Name'],
   ['iqama', 'Iqama #'],
-  ['mobile', 'Driver Mobile #'],
+  ['mobile', 'Mobile #'],
+  ['plateNo', 'Plate No'],
   ['equipmentNo', 'Equipment#'],
-  ['plateNo', 'Vehicle Plate No'],
+  ['customer', 'Customer'],
   ['source', 'Source'],
   ['destination', 'Destination'],
-  ['customer', 'Customer'],
+  ['commodity', 'Commodity'],
   ['supplier', 'Supplier'],
   ['store', 'Store'],
   ['equipmentType', 'Equipment Type'],
-  ['commodity', 'Commodity'],
   ['waybill', 'Waybill#'],
   ['dn', 'DN Number'],
   ['transporter', 'Transporter'],
@@ -115,7 +115,7 @@ export function deriveEquipmentType(equipmentNo: string): 'Tanker' | 'Flatbed' |
   const eq = String(equipmentNo || '').trim().toUpperCase();
   if (!eq) return 'Tanker';
   if (eq.startsWith('DT')) return 'Dumber';
-  if (/^40040/.test(eq)) return 'Flatbed';
+  if (/^40040/.test(eq) || eq.startsWith('4004')) return 'Flatbed';
   return 'Tanker';
 }
 
@@ -724,24 +724,47 @@ export function parseReadySchedule(
       headerIndex = i;
       const headers = rawLines[i].split('\t').map(h => h.trim().toLowerCase());
 
-      headers.forEach((h, idx) => {
-        if (h.includes('driver name') || h === 'driver') colMap.driverName = idx;
-        else if (h.includes('iqama')) colMap.iqama = idx;
-        else if (h.includes('mobile') || h.includes('phone')) colMap.mobile = idx;
-        else if (h.includes('equipment#') || h.includes('equipment')) colMap.equipmentNo = idx;
-        else if (h.includes('plate')) colMap.plateNo = idx;
-        else if (h.includes('source') || h === 'from') colMap.source = idx;
-        else if (h.includes('destination') || h === 'to') colMap.destination = idx;
-        else if (h.includes('customer')) colMap.customer = idx;
-        else if (h.includes('supplier')) colMap.supplier = idx;
-        else if (h.includes('store')) colMap.store = idx;
-        else if (h.includes('equipment type') || h === 'type' || h === 'trailer') colMap.equipmentType = idx;
-        else if (h.includes('commodity') || h.includes('material')) colMap.commodity = idx;
-        else if (h.includes('waybill')) colMap.waybill = idx;
-        else if (h.includes('dn')) colMap.dn = idx;
-        else if (h.includes('transporter')) colMap.transporter = idx;
-        else if (h.includes('notes') || h.includes('requirement')) colMap.notes = idx;
-        else if (h.includes('bayan')) colMap.bayanExpiry = idx;
+      headers.forEach((rawH, idx) => {
+        const h = rawH.replace(/[\r\n\t]+/g, ' ').trim().toLowerCase();
+        const clean = h.replace(/[^a-z0-9#]/g, ' ').replace(/\s+/g, ' ').trim();
+
+        if (clean.includes('driver name') || clean === 'driver') colMap.driverName = idx;
+        else if (clean.includes('iqama')) colMap.iqama = idx;
+        else if (clean.includes('mobile') || clean.includes('phone') || clean.includes('contact')) colMap.mobile = idx;
+        else if (clean.includes('plate') || clean.includes('vehicle plate')) colMap.plateNo = idx;
+        // CRITICAL FIX: Match "Equipment Type" FIRST so "equipment#" doesn't steal it
+        else if (
+          clean.includes('equipment type') ||
+          clean.includes('equip type') ||
+          clean.includes('trailer type') ||
+          clean === 'type' ||
+          clean === 'trailer'
+        ) {
+          colMap.equipmentType = idx;
+        }
+        // Match "Equipment#" or "Equipment No"
+        else if (
+          clean.includes('equipment#') ||
+          clean.includes('equipment no') ||
+          clean.includes('equipment number') ||
+          (clean.includes('equipment') && !clean.includes('type')) ||
+          clean === 'equipment#' ||
+          clean === 'eq#' ||
+          clean === 'equip#'
+        ) {
+          colMap.equipmentNo = idx;
+        }
+        else if (clean.includes('source') || clean === 'from') colMap.source = idx;
+        else if (clean.includes('destination') || clean === 'to') colMap.destination = idx;
+        else if (clean.includes('customer')) colMap.customer = idx;
+        else if (clean.includes('supplier')) colMap.supplier = idx;
+        else if (clean.includes('store')) colMap.store = idx;
+        else if (clean.includes('commodity') || clean.includes('material')) colMap.commodity = idx;
+        else if (clean.includes('waybill') || clean.includes('waybill#')) colMap.waybill = idx;
+        else if (clean.includes('dn') || clean.includes('delivery note')) colMap.dn = idx;
+        else if (clean.includes('transporter')) colMap.transporter = idx;
+        else if (clean.includes('notes') || clean.includes('requirement')) colMap.notes = idx;
+        else if (clean.includes('bayan')) colMap.bayanExpiry = idx;
       });
       break;
     }
@@ -777,7 +800,7 @@ export function parseReadySchedule(
 
     const driverName = getVal('driverName');
     const plateNo = getVal('plateNo');
-    const equipmentNo = getVal('equipmentNo');
+    let equipmentNo = getVal('equipmentNo');
     const commodity = getVal('commodity');
     const source = getVal('source');
     const destination = getVal('destination');
@@ -798,7 +821,44 @@ export function parseReadySchedule(
       continue;
     }
 
-    // Auto-derive equipment type if missing
+    // -----------------------------------------------------------------
+    // DISAMBIGUATION: Equipment# (unit ID) vs Equipment Type (category)
+    // Equipment# is like: DT-01, 135HCL19, 217SLF19, 4004006, 4004010...
+    // Equipment Type is like: Dumber, Tanker, Flatbed...
+    // -----------------------------------------------------------------
+    const KNOWN_TYPE_WORDS = ['DUMBER', 'DUMPER', 'TANKER', 'FLATBED', 'TRAILER', 'CURTAIN', 'LOWBED'];
+    const eqNoUpper = equipmentNo.trim().toUpperCase();
+    const eqTypeUpper = equipmentType.trim().toUpperCase();
+
+    // Check if equipmentNo mistakenly contains a type word while equipmentType has the actual equipment ID
+    if (KNOWN_TYPE_WORDS.includes(eqNoUpper)) {
+      if (equipmentType && !KNOWN_TYPE_WORDS.includes(eqTypeUpper)) {
+        // Inverted: swap them!
+        const temp = equipmentNo;
+        equipmentNo = equipmentType;
+        equipmentType = temp;
+      } else if (!equipmentType) {
+        equipmentType = equipmentNo;
+        equipmentNo = '';
+      }
+    }
+
+    // If equipmentType contains an equipment ID (e.g. "DT-01", "135HCL19", "4004006") and equipmentNo is empty
+    if (!equipmentNo && equipmentType && !KNOWN_TYPE_WORDS.includes(eqTypeUpper)) {
+      equipmentNo = equipmentType;
+      equipmentType = '';
+    }
+
+    // Standardize equipmentType spelling/casing (Dumber, Tanker, Flatbed)
+    if (/^dump/i.test(equipmentType)) {
+      equipmentType = 'Dumber';
+    } else if (/^flat/i.test(equipmentType)) {
+      equipmentType = 'Flatbed';
+    } else if (/^tank/i.test(equipmentType)) {
+      equipmentType = 'Tanker';
+    }
+
+    // Auto-derive equipment type if missing and equipmentNo is present
     if (!equipmentType && equipmentNo) {
       equipmentType = deriveEquipmentType(equipmentNo);
     }

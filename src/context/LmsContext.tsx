@@ -17,6 +17,7 @@ import {
   generateSeedKmRecords, generateSeedDieselLogs,
   PRE_TRAINED_LEARNED_RULES, generateSeedSchedules
 } from '../data/historicalData';
+import { SEED_OCTOBER_1_4_MANIFESTS } from '../utils/multiDayManifestParser';
 
 interface LmsContextType {
   trucks: Truck[];
@@ -43,6 +44,7 @@ interface LmsContextType {
   
   saveDailySchedule: (date: string, rows: any[], syncToManifest?: boolean) => Promise<void>;
   saveDailyManifest: (date: string, tags: Record<number, string>) => Promise<void>;
+  saveMultiDayManifests: (batchData: Record<string, Record<number, string>>) => Promise<void>;
   
   addCashTransaction: (tx: Omit<CashTransaction, 'id' | 'createdAt'>) => Promise<void>;
   reverseCashTransaction: (id: string, reason?: string) => Promise<void>;
@@ -76,16 +78,26 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   });
 
   const [drivers, setDrivers] = useState<Driver[]>(() => {
+    let base = INITIAL_DRIVERS;
     const saved = localStorage.getItem(LOCAL_STORAGE_KEY + '_drivers');
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length >= INITIAL_DRIVERS.length) return parsed;
+        if (Array.isArray(parsed) && parsed.length >= INITIAL_DRIVERS.length) base = parsed;
       } catch (e) {
         // fallback to INITIAL_DRIVERS
       }
     }
-    return INITIAL_DRIVERS;
+    // Always ensure October 1–4 manifest seed tags are populated into driver history
+    return base.map((d, idx) => {
+      const hist = { ...(d.history || {}) };
+      Object.entries(SEED_OCTOBER_1_4_MANIFESTS).forEach(([dt, tags]) => {
+        if (tags[idx] && !hist[dt]) {
+          hist[dt] = tags[idx];
+        }
+      });
+      return { ...d, history: hist };
+    });
   });
 
   const [commodities] = useState<Commodity[]>(INITIAL_COMMODITIES);
@@ -119,11 +131,24 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     });
 
+    // Merge October 1–4 pre-seeded manifests
+    Object.entries(SEED_OCTOBER_1_4_MANIFESTS).forEach(([dt, tags]) => {
+      if (!seedManifests[dt]) seedManifests[dt] = {};
+      Object.entries(tags).forEach(([idx, tag]) => {
+        seedManifests[dt][idx] = tag;
+      });
+    });
+
     const saved = localStorage.getItem(LOCAL_STORAGE_KEY + '_manifests');
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        return { ...seedManifests, ...parsed };
+        const merged = { ...seedManifests, ...parsed };
+        // Ensure October 1-4 is always populated
+        Object.entries(SEED_OCTOBER_1_4_MANIFESTS).forEach(([dt, tags]) => {
+          merged[dt] = { ...(merged[dt] || {}), ...tags };
+        });
+        return merged;
       } catch (e) {
         return seedManifests;
       }
@@ -392,6 +417,48 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  const saveMultiDayManifests = async (batchData: Record<string, Record<number, string>>) => {
+    setManifests(prev => {
+      const next = { ...prev };
+      Object.entries(batchData).forEach(([dt, tags]) => {
+        next[dt] = { ...(next[dt] || {}), ...tags };
+      });
+      return next;
+    });
+
+    setDrivers(prev => {
+      const copy = [...prev];
+      Object.entries(batchData).forEach(([dt, tags]) => {
+        Object.entries(tags).forEach(([idxStr, tag]) => {
+          const idx = Number(idxStr);
+          if (copy[idx]) {
+            copy[idx] = {
+              ...copy[idx],
+              history: { ...(copy[idx].history || {}), [dt]: tag }
+            };
+          }
+        });
+      });
+      return copy;
+    });
+
+    if (user) {
+      for (const [dt, tags] of Object.entries(batchData)) {
+        try {
+          await setDoc(doc(db, 'manifests', dt), {
+            date: dt,
+            tags,
+            confirmedAt: new Date().toISOString(),
+            confirmedBy: user?.email || 'Dispatcher',
+            driverCount: Object.keys(tags).length
+          });
+        } catch (e) {
+          console.warn("Error saving multi-day manifest to Firestore:", e);
+        }
+      }
+    }
+  };
+
   const addCashTransaction = async (txData: Omit<CashTransaction, 'id' | 'createdAt'>) => {
     const id = 'TX-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).substring(2, 6).toUpperCase();
     const newTx: CashTransaction = {
@@ -631,6 +698,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     deleteDriver,
     saveDailySchedule,
     saveDailyManifest,
+    saveMultiDayManifests,
     addCashTransaction,
     reverseCashTransaction,
     deleteCashTransaction,

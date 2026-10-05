@@ -215,7 +215,11 @@ export const TimetableParserView: React.FC = () => {
     const prefKey = view === 'daily' ? 'visibleColumnsDaily' : 'visibleColumnsList';
     const arr = db.uiPrefs[prefKey];
     if (Array.isArray(arr) && arr.length > 0) {
-      return arr as (keyof TimetableRow)[];
+      // Ensure both equipmentNo (unit ID) and equipmentType (category) are included
+      const list = [...arr];
+      if (!list.includes('equipmentNo')) list.push('equipmentNo');
+      if (!list.includes('equipmentType')) list.push('equipmentType');
+      return COLUMNS.filter(c => list.includes(c.key)).map(c => c.key);
     }
     return COLUMNS.filter(c => c.def).map(c => c.key);
   }, [view, db.uiPrefs]);
@@ -365,13 +369,16 @@ export const TimetableParserView: React.FC = () => {
           }
         }
 
-        // Equipment# autocomplete
+        // Equipment# autocomplete (unit ID like DT-01, 135HCL19, 4004006)
         if (colKey === 'equipmentNo') {
+          updated.equipmentNo = val;
           const v = db.vehicles.find(x => x.equipmentNo.toLowerCase() === val.toLowerCase());
-          updated.equipmentType = deriveEquipmentType(updated.equipmentNo);
           if (v) {
             updated.equipmentNo = v.equipmentNo;
             updated.plateNo = v.plateNo;
+            if (!updated.equipmentType) {
+              updated.equipmentType = v.type || deriveEquipmentType(v.equipmentNo);
+            }
             updated.transporter = 'TLS';
             if (v.defaultDriverId && !updated.driverName) {
               const d = db.drivers.find(x => x.id === v.defaultDriverId);
@@ -381,7 +388,14 @@ export const TimetableParserView: React.FC = () => {
                 updated.mobile = d.mobile;
               }
             }
+          } else if (val && !updated.equipmentType) {
+            updated.equipmentType = deriveEquipmentType(val);
           }
+        }
+
+        // Equipment Type edit (category like Dumber, Tanker, Flatbed)
+        if (colKey === 'equipmentType') {
+          updated.equipmentType = val;
         }
 
         // Plate No autocomplete
@@ -1049,8 +1063,23 @@ export const TimetableParserView: React.FC = () => {
                               if (e.key === 'Enter') commitEditCell();
                               if (e.key === 'Escape') setEditingCell(null);
                             }}
-                            className="w-full bg-slate-950 border border-blue-500 rounded px-2 py-1 text-xs text-white outline-none"
-                            placeholder="Search equipment..."
+                            className="w-full bg-slate-950 border border-blue-500 rounded px-2 py-1 text-xs text-white outline-none font-mono"
+                            placeholder="Unit ID (e.g. DT-01, 135HCL19)..."
+                          />
+                        ) : colKey === 'equipmentType' ? (
+                          <input
+                            ref={editInputRef}
+                            list="dl-equipment-types-tt-edit"
+                            type="text"
+                            value={editingValue}
+                            onChange={e => setEditingValue(e.target.value)}
+                            onBlur={commitEditCell}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') commitEditCell();
+                              if (e.key === 'Escape') setEditingCell(null);
+                            }}
+                            className="w-full bg-slate-950 border border-blue-500 rounded px-2 py-1 text-xs text-white outline-none font-mono"
+                            placeholder="Dumber, Tanker, Flatbed..."
                           />
                         ) : colKey === 'plateNo' ? (
                           <input
@@ -1421,30 +1450,34 @@ export const TimetableParserView: React.FC = () => {
 
                 {/* Column Structure Badge */}
                 <div className="bg-slate-950/70 border border-slate-800/80 rounded-xl p-2.5 text-[11px] font-mono text-slate-400 flex flex-wrap items-center gap-x-2 gap-y-1">
-                  <span className="text-slate-200 font-bold">Expected Columns:</span>
+                  <span className="text-slate-200 font-bold">Headers:</span>
                   <span>Driver Name</span>
                   <span className="text-slate-600">·</span>
                   <span>Iqama #</span>
                   <span className="text-slate-600">·</span>
-                  <span>Driver Mobile #</span>
+                  <span>Mobile #</span>
                   <span className="text-slate-600">·</span>
-                  <span>Equipment#</span>
+                  <span>Plate No</span>
                   <span className="text-slate-600">·</span>
-                  <span>Vehicle Plate No</span>
+                  <span className="text-sky-300 font-bold bg-sky-950/80 px-1.5 py-0.5 rounded border border-sky-700/60" title="Equipment Number like DT-01, 135HCL19, 4004006">
+                    Equipment# (Unit ID)
+                  </span>
+                  <span className="text-slate-600">·</span>
+                  <span>Customer</span>
                   <span className="text-slate-600">·</span>
                   <span>Source</span>
                   <span className="text-slate-600">·</span>
                   <span>Destination</span>
                   <span className="text-slate-600">·</span>
-                  <span>Customer</span>
+                  <span>Commodity</span>
                   <span className="text-slate-600">·</span>
                   <span>Supplier</span>
                   <span className="text-slate-600">·</span>
                   <span>Store</span>
                   <span className="text-slate-600">·</span>
-                  <span>Equipment Type</span>
-                  <span className="text-slate-600">·</span>
-                  <span>Commodity</span>
+                  <span className="text-amber-300 font-bold bg-amber-950/80 px-1.5 py-0.5 rounded border border-amber-700/60" title="Equipment Type like Dumber, Tanker, Flatbed">
+                    Equipment Type (Dumber/Tanker/Flatbed)
+                  </span>
                   <span className="text-slate-600">·</span>
                   <span>Waybill#</span>
                   <span className="text-slate-600">·</span>
@@ -2328,6 +2361,15 @@ export const TimetableParserView: React.FC = () => {
               {v.equipmentNo} ({v.type})
             </option>
           ))}
+      </datalist>
+
+      <datalist id="dl-equipment-types-tt-edit">
+        <option value="Dumber">Dumber (Dump Truck)</option>
+        <option value="Tanker">Tanker (Liquid Tanker)</option>
+        <option value="Flatbed">Flatbed (Flatbed Trailer)</option>
+        <option value="Trailer">Trailer</option>
+        <option value="Curtain">Curtain Side</option>
+        <option value="Lowbed">Lowbed</option>
       </datalist>
     </div>
   );
