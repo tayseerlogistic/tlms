@@ -1,0 +1,6 @@
+{
+  "name": "TLS Logistics Management System",
+  "description": "Enterprise logistics, fleet dispatch, driver manifests, timetable parsing, cashbook ledger, and KM fuel analytics with role-based Firebase authentication.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

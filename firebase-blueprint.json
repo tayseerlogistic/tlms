@@ -1,0 +1,221 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "User Profile",
+      "description": "User profile with role-based access information",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 128 },
+        "role": { "type": "string", "enum": ["admin", "dispatcher", "cashier", "driver"] },
+        "driverId": { "type": "string", "maxLength": 64 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["email", "role"]
+    },
+    "AdminRecord": {
+      "title": "Admin Record",
+      "description": "Document marking user as authorized administrator",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "maxLength": 128 },
+        "assignedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["email"]
+    },
+    "Truck": {
+      "title": "Fleet Truck",
+      "description": "Prime mover tractor head",
+      "type": "object",
+      "properties": {
+        "plate": { "type": "string", "maxLength": 32 },
+        "plateNorm": { "type": "string", "maxLength": 32 },
+        "seq": { "type": "number" },
+        "type": { "type": "string", "maxLength": 32 },
+        "status": { "type": "string", "enum": ["ACTIVE", "MAINTENANCE", "STANDBY", "OUT_OF_SERVICE"] },
+        "istemaraExp": { "type": "string", "maxLength": 32 },
+        "insuranceExp": { "type": "string", "maxLength": 32 },
+        "fahasExp": { "type": "string", "maxLength": 32 },
+        "assignedDriverId": { "type": "string", "maxLength": 64 },
+        "assignedDriverName": { "type": "string", "maxLength": 128 },
+        "notes": { "type": "string", "maxLength": 500 }
+      },
+      "required": ["plate", "status"]
+    },
+    "Equipment": {
+      "title": "Equipment Trailer",
+      "description": "Tanker, Flatbed or Dumper",
+      "type": "object",
+      "properties": {
+        "equipNo": { "type": "string", "maxLength": 32 },
+        "equipNorm": { "type": "string", "maxLength": 32 },
+        "seq": { "type": "number" },
+        "type": { "type": "string", "enum": ["Tanker", "Flatbed", "Dumber"] },
+        "status": { "type": "string", "enum": ["ACTIVE", "MAINTENANCE", "STANDBY"] },
+        "assignedTruckId": { "type": "string", "maxLength": 64 },
+        "active": { "type": "boolean" }
+      },
+      "required": ["equipNo", "type", "status"]
+    },
+    "Driver": {
+      "title": "Driver Profile",
+      "description": "Professional fleet driver record",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "maxLength": 128 },
+        "nameNorm": { "type": "string", "maxLength": 128 },
+        "seq": { "type": "number" },
+        "empNo": { "type": "string", "maxLength": 32 },
+        "iqama": { "type": "string", "maxLength": 32 },
+        "iqamaExp": { "type": "string", "maxLength": 32 },
+        "nationality": { "type": "string", "maxLength": 64 },
+        "mobile": { "type": "string", "maxLength": 32 },
+        "transporter": { "type": "string", "maxLength": 64 },
+        "workingFor": { "type": "string", "maxLength": 128 },
+        "status": { "type": "string", "enum": ["AVAILABLE", "ON_TRIP", "VACATION", "MAINTENANCE", "INCOMPLETE"] },
+        "assignedTruckId": { "type": "string", "maxLength": 64 },
+        "assignedVehiclePlate": { "type": "string", "maxLength": 32 },
+        "active": { "type": "boolean" },
+        "notes": { "type": "string", "maxLength": 500 }
+      },
+      "required": ["name", "status"]
+    },
+    "DailyManifest": {
+      "title": "Daily Manifest",
+      "description": "Confirmed daily fleet status snapshot",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string", "maxLength": 16 },
+        "tags": { "type": "object" },
+        "confirmedAt": { "type": "string", "maxLength": 64 },
+        "confirmedBy": { "type": "string", "maxLength": 128 },
+        "driverCount": { "type": "number" }
+      },
+      "required": ["date"]
+    },
+    "DailySchedule": {
+      "title": "Daily Timetable Schedule",
+      "description": "Ingested and structured daily dispatch schedule",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string", "maxLength": 16 },
+        "rows": { "type": "array" },
+        "updatedAt": { "type": "string", "maxLength": 64 },
+        "updatedBy": { "type": "string", "maxLength": 128 }
+      },
+      "required": ["date"]
+    },
+    "CashbookTransaction": {
+      "title": "Cashbook Transaction",
+      "description": "Cash advance, settlement, or income/outflow entry",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string", "maxLength": 16 },
+        "dateISO": { "type": "string", "maxLength": 16 },
+        "account": { "type": "string", "maxLength": 64 },
+        "employee": { "type": "string", "maxLength": 128 },
+        "type": { "type": "string", "maxLength": 64 },
+        "category": { "type": "string", "maxLength": 64 },
+        "amount": { "type": "number" },
+        "description": { "type": "string", "maxLength": 500 },
+        "receipt": { "type": "string", "maxLength": 500 },
+        "status": { "type": "string", "enum": ["Posted", "Reversed"] },
+        "createdBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "reversalOf": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["date", "account", "type", "amount", "status"]
+    },
+    "KmRecord": {
+      "title": "KM Meter Reading",
+      "description": "Odometer reading and computed daily distance",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string", "maxLength": 16 },
+        "veh": { "type": "string", "maxLength": 32 },
+        "odometer": { "type": "number" },
+        "km": { "type": "number" },
+        "driver": { "type": "string", "maxLength": 128 },
+        "loggedBy": { "type": "string", "maxLength": 128 },
+        "notes": { "type": "string", "maxLength": 500 }
+      },
+      "required": ["date", "veh"]
+    },
+    "DieselLog": {
+      "title": "Diesel Fuel Log",
+      "description": "Diesel fuel consumption voucher",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string", "maxLength": 16 },
+        "veh": { "type": "string", "maxLength": 32 },
+        "drv": { "type": "string", "maxLength": 128 },
+        "liters": { "type": "number" },
+        "cost": { "type": "number" },
+        "route": { "type": "string", "maxLength": 256 },
+        "loggedBy": { "type": "string", "maxLength": 128 }
+      },
+      "required": ["date", "veh", "liters"]
+    },
+    "AuditEntry": {
+      "title": "Audit Log",
+      "description": "Immutable security and operational event",
+      "type": "object",
+      "properties": {
+        "timestamp": { "type": "string", "maxLength": 64 },
+        "user": { "type": "string", "maxLength": 128 },
+        "action": { "type": "string", "maxLength": 64 },
+        "entity": { "type": "string", "maxLength": 64 },
+        "entityId": { "type": "string", "maxLength": 64 },
+        "details": { "type": "string", "maxLength": 1000 }
+      },
+      "required": ["timestamp", "action", "user"]
+    }
+  },
+  "firestore": {
+    "/admins/{uid}": {
+      "schema": "AdminRecord",
+      "description": "Administrative authority table"
+    },
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Application user records with assigned roles"
+    },
+    "/trucks/{truckId}": {
+      "schema": "Truck",
+      "description": "Prime mover tractor units"
+    },
+    "/equipment/{equipId}": {
+      "schema": "Equipment",
+      "description": "Trailers, tankers, flatbeds, dumpers"
+    },
+    "/drivers/{driverId}": {
+      "schema": "Driver",
+      "description": "Fleet drivers master list"
+    },
+    "/manifests/{manifestId}": {
+      "schema": "DailyManifest",
+      "description": "Confirmed daily manifest tags"
+    },
+    "/schedules/{scheduleId}": {
+      "schema": "DailySchedule",
+      "description": "Daily timetable schedules"
+    },
+    "/cashbook/{txId}": {
+      "schema": "CashbookTransaction",
+      "description": "Cashbook transaction ledger"
+    },
+    "/km_records/{recordId}": {
+      "schema": "KmRecord",
+      "description": "KM meter and odometer records"
+    },
+    "/diesel_logs/{logId}": {
+      "schema": "DieselLog",
+      "description": "Diesel fuel logs"
+    },
+    "/audit/{auditId}": {
+      "schema": "AuditEntry",
+      "description": "System audit trail"
+    }
+  }
+}
