@@ -18,8 +18,7 @@ import {
 } from 'firebase/firestore';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { auth, db, googleProvider } from '../firebase/config';
-import firebaseConfig from '../../firebase-applet-config.json';
+import { auth, db, googleProvider, firebaseConfig } from '../firebase/config';
 import { UserProfile, UserRole } from '../types';
 
 interface AuthContextType {

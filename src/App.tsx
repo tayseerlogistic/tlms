@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { ThemeProvider } from './context/ThemeContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { LmsProvider } from './context/LmsContext';
 import { Navbar } from './components/Navbar';
@@ -125,10 +126,12 @@ const MainAppContent: React.FC = () => {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <LmsProvider>
-        <MainAppContent />
-      </LmsProvider>
-    </AuthProvider>
+    <ThemeProvider>
+      <AuthProvider>
+        <LmsProvider>
+          <MainAppContent />
+        </LmsProvider>
+      </AuthProvider>
+    </ThemeProvider>
   );
 }

@@ -150,7 +150,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
   // DATA VISUALIZATION ENGINE 2: MANIFEST COMPLETION RATES OVER TIME
   // ===================================================================
   const manifestTrendData = useMemo(() => {
-    const totalFleetDrivers = drivers.length || 69;
+    const totalFleetDrivers = drivers.length || 64;
 
     if (timeRange === 'monthly') {
       // Historical monthly completion rates (Jan - Oct 2026)

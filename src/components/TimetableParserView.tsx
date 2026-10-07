@@ -1139,7 +1139,27 @@ export const TimetableParserView: React.FC = () => {
                         )}
 
                         {val ? (
-                          <span className="truncate">{val}</span>
+                          <div className="flex items-center gap-1.5 truncate">
+                            <span className="truncate">{val}</span>
+                            {colKey === 'driverName' && (() => {
+                              const valStr = String(val || '').toUpperCase().trim();
+                              const isPermanent = db.drivers.some((d: any) => {
+                                const dN = String(d.name || '').toUpperCase().trim();
+                                return dN === valStr || dN.includes(valStr) || valStr.includes(dN);
+                              });
+                              if (!isPermanent) {
+                                return (
+                                  <span
+                                    className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 shrink-0"
+                                    title="1-Day Rent / Temporary Driver - Excluded from Daily Manifest"
+                                  >
+                                    Rent (1-Day)
+                                  </span>
+                                );
+                              }
+                              return null;
+                            })()}
+                          </div>
                         ) : (
                           <span className="text-slate-600 italic select-none">—</span>
                         )}

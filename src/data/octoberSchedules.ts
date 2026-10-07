@@ -2510,48 +2510,48 @@ export const OCTOBER_DAILY_SCHEDULES: Record<string, DailySchedule> = {
  */
 export const OCTOBER_CONFIRMED_MANIFESTS: Record<string, Record<string, string>> = {
   "2026-10-01": {
-    "0": "At Yanbu Yard - Available for Dispatch",
-    "1": "At Yanbu",
-    "2": "At Yanbu",
+    "0": "At Yanbu Yard - Available for Dispatch", // Fayyaz Awan (seq 1 -> idx 0)
+    "1": "At Yanbu", // Mojib Rehman (seq 2 -> idx 1)
+    "2": "At Yanbu", // Dost Muhammad (seq 3 -> idx 2)
     "3": "SOP Powder Supply for TLS Warehouse - Under Loading at TPF (WB: 50958)", // Raisul Hasan (seq 4 -> idx 3)
-    "5": "At Yanbu",
+    "5": "At Yanbu", // Talha Fazlay (seq 6 -> idx 5)
     "7": "Caustic Soda flakes Supply for Wang Kang Ceramic Company - Under Loading at Yanbu (WB: 50956)", // Shafiq Ahmed (seq 8 -> idx 7)
     "12": "HCL Supply for Engie for Yanbu O&M company - Under Loading at Yanbu (WB: 50991)", // Sajjad Ali (seq 13 -> idx 12)
-    "16": "At Yanbu",
+    "16": "At Yanbu", // Aman Tullah (seq 17 -> idx 16)
     "20": "FC Supply for SWCC - Under Loading at Yanbu (WB: 51014)", // Muhammad Ashraf (seq 21 -> idx 20)
-    "26": "SOP Granular Bulk Supply for TLS Warehouse - Under Loading at TLS (WB: 50960)", // Abdul Wali (seq 27 -> idx 26)
+    "23": "SOP Granular Bulk Supply for TLS Warehouse - Under Loading at TLS (WB: 50960)", // Abdul Wali (seq 24 -> idx 23)
+    "26": "SA Supply for Petro Rabigh Alky Plant - Under Loading at Yanbu (WB: 50981)", // Sibghat Ullah (seq 27 -> idx 26)
     "29": "HCL Supply for ENERGIA - Under Loading at Yanbu (WB: 50998)", // Ghulam Yasin (seq 30 -> idx 29)
-    "37": "SA Supply for Petro Rabigh Alky Plant - Under Loading at Yanbu (WB: 50981)", // Sibghat Ullah (seq 38 -> idx 37)
-    "38": "SA Supply for Petro Rabigh Alky Plant - Under Loading at Yanbu (WB: 50977)", // Shahzad Ahmad (seq 39 -> idx 38)
-    "39": "HCL Supply for Saudi Arabian Mining Company - Under Loading at Yanbu (WB: 50975)" // Javid Khan (seq 40 -> idx 39)
+    "44": "SA Supply for Petro Rabigh Alky Plant - Under Loading at Yanbu (WB: 50977)", // Shahzad Ahmad (seq 45 -> idx 44)
+    "51": "HCL Supply for Saudi Arabian Mining Company - Under Loading at Yanbu (WB: 50975)" // Javid Khan (seq 52 -> idx 51)
   },
   "2026-10-02": {
     "0": "KCL Supply for Tayseer Group Factory - Under Loading at TLS (WB: 51010)", // Fayyaz Awan
     "3": "KCL Supply for Tayseer Group Factory - Under Loading at TLS (WB: 51009)", // Raisul Hasan
     "7": "SOP Powder Supply for TLS Warehouse - Under Loading at TPF (WB: 51017)", // Shafiq Ahmed
     "12": "SA Supply for TASNEE - Under Loading at Yanbu (WB: 51034)", // Sajjad Ali
-    "28": "SOP Powder Supply for TLS Warehouse - Under Loading at TPF (WB: 51012)", // Iqbal Hossain (seq 29 -> idx 28)
+    "26": "SA Supply for Petro Rabigh Alky Plant - On the way to Rabigh", // Sibghat Ullah
     "29": "CS Supply for Saudi Water Authority - Under Loading at Yanbu (WB: 51021)", // Ghulam Yasin
-    "32": "HCL Supply for ENERGIA - Under Loading at Yanbu (WB: 51035)", // Mohsin Farooq (seq 33 -> idx 32)
-    "37": "SA Supply for Petro Rabigh Alky Plant - On the way to Rabigh", // Sibghat Ullah
-    "38": "SA Supply for Petro Rabigh Alky Plant - On the way to Rabigh", // Shahzad Ahmad
-    "39": "HCL Supply for Saudi Arabian Mining Company - On the way to Turaif" // Javid Khan
+    "37": "HCL Supply for ENERGIA - Under Loading at Yanbu (WB: 51035)", // Mohsin Farooq (seq 38 -> idx 37)
+    "44": "SA Supply for Petro Rabigh Alky Plant - On the way to Rabigh", // Shahzad Ahmad
+    "50": "SOP Powder Supply for TLS Warehouse - Under Loading at TPF (WB: 51012)", // Iqbal Hossain (seq 51 -> idx 50)
+    "51": "HCL Supply for Saudi Arabian Mining Company - On the way to Turaif" // Javid Khan
   },
   "2026-10-03": {
     "0": "Molten Sulphur Collection from LUBEREF - Under Loading at Yanbu (WB: 51047)", // Fayyaz Awan
     "3": "SOP Granular Bulk Supply for TLS Warehouse - Under Loading at TLS (WB: 51044)", // Raisul Hasan
     "7": "Caustic Soda flakes Supply for Wang Kang Ceramic Company - Under Loading at Yanbu (WB: 51043)", // Shafiq Ahmed
     "12": "SA Supply for TASNEE - On the way to Jubail", // Sajjad Ali
-    "18": "HCL Supply for Saudi Arabian Mining Company - Under Loading at Yanbu (WB: 51075)", // Saddam Habib
-    "19": "Phosphoric Acid Supply for ARASCO - Under Loading at Turaif", // Afaq Shah
+    "18": "HCL Supply for Saudi Arabian Mining Company - Under Loading at Yanbu (WB: 51075)", // Saddam Habib (seq 19 -> idx 18)
+    "19": "Phosphoric Acid Supply for ARASCO - Under Loading at Turaif", // Afaq Shah (seq 20 -> idx 19)
     "22": "KCL Supply for Tayseer Group Factory - Under Loading at TLS (WB: 51046)", // Zain Ul Abideen (seq 23 -> idx 22)
-    "27": "Phosphoric Acid Supply for ARASCO - Under Loading at Turaif", // Waseem Hussain
-    "28": "SOP Granular Supply for TLS Warehouse - Under Loading at TPF (WB: 51050)", // Iqbal Hossain
     "29": "CS Supply for Saudi Water Authority - On the way to Shuqaiq", // Ghulam Yasin
-    "31": "Phosphoric Acid Supply for ARASCO - Under Loading at Turaif", // Fahim Akram
-    "32": "HCL Supply for ENERGIA - Under Loading at Yanbu (WB: 51067)", // Mohsin Farooq
-    "33": "CS Supply for Saudi Water Authority - Under Loading at Yanbu (WB: 51082)", // Saru Ibrahim (seq 34 -> idx 33)
-    "40": "SBS Supply for Saudi Arabian Mining Co - Under Loading at Yanbu (WB: 51069)" // Mohd Mohsen Khan
+    "34": "Phosphoric Acid Supply for ARASCO - Under Loading at Turaif", // Waseem Hussain (seq 35 -> idx 34)
+    "36": "Phosphoric Acid Supply for ARASCO - Under Loading at Turaif", // Fahim Akram (seq 37 -> idx 36)
+    "37": "HCL Supply for ENERGIA - Under Loading at Yanbu (WB: 51067)", // Mohsin Farooq
+    "43": "CS Supply for Saudi Water Authority - Under Loading at Yanbu (WB: 51082)", // Saru Ibrahim (seq 44 -> idx 43)
+    "45": "SBS Supply for Saudi Arabian Mining Co - Under Loading at Yanbu (WB: 51069)", // Mohd Mohsen Khan (seq 46 -> idx 45)
+    "50": "SOP Granular Supply for TLS Warehouse - Under Loading at TPF (WB: 51050)" // Iqbal Hossain
   },
   "2026-10-04": {
     "0": "Molten Sulphur Collection from LUBEREF - Under Loading at Yanbu (WB: 51125)", // Fayyaz Awan
@@ -2559,14 +2559,14 @@ export const OCTOBER_CONFIRMED_MANIFESTS: Record<string, Record<string, string>>
     "5": "HCL Supply for Rabigh Power Company - Under Loading at Yanbu (WB: 51096)", // Talha Fazlay
     "7": "SOP Granular Bulk Supply for TLS Warehouse - Under Loading at TLS (WB: 51090)", // Shafiq Ahmed
     "18": "HCL Supply for Saudi Arabian Mining Company - On the way to Turaif", // Saddam Habib
-    "24": "SMSBS Supply for NOMAC - Under Loading at Dammam (WB: 51103)", // Faisal Hammad
-    "25": "SA Supply for National Batteries Company - Under Loading at Riyadh (WB: 51097)", // Harun Ansari
-    "26": "HCL Supply for ENERGIA - Under Loading at Yanbu (WB: 51134)", // Abdul Wali
-    "28": "KCL Supply for Tayseer Group Factory - Under Loading at TLS (WB: 51045)", // Iqbal Hossain
-    "32": "FC Supply for SWCC - Under Loading at Yanbu (WB: 51106)", // Mohsin Farooq
-    "33": "CS Supply for Saudi Water Authority - On the way to Shuhaiba", // Saru Ibrahim
-    "38": "SA Collection from TRONOX - Under Loading at Yanbu (WB: 51101)", // Shahzad Ahmad
-    "40": "SBS Supply for Saudi Arabian Mining Co - On the way to Ras Al Khair" // Mohd Mohsen Khan
+    "23": "HCL Supply for ENERGIA - Under Loading at Yanbu (WB: 51134)", // Abdul Wali
+    "33": "SMSBS Supply for NOMAC - Under Loading at Dammam (WB: 51103)", // Faisal Hammad (seq 34 -> idx 33)
+    "37": "FC Supply for SWCC - Under Loading at Yanbu (WB: 51106)", // Mohsin Farooq
+    "39": "SA Supply for National Batteries Company - Under Loading at Riyadh (WB: 51097)", // Harun Ansari (seq 40 -> idx 39)
+    "43": "CS Supply for Saudi Water Authority - On the way to Shuhaiba", // Saru Ibrahim
+    "44": "SA Collection from TRONOX - Under Loading at Yanbu (WB: 51101)", // Shahzad Ahmad
+    "45": "SBS Supply for Saudi Arabian Mining Co - On the way to Ras Al Khair", // Mohd Mohsen Khan
+    "50": "KCL Supply for Tayseer Group Factory - Under Loading at TLS (WB: 51045)" // Iqbal Hossain
   },
   "2026-10-05": {
     "0": "SULPHUR Dumper Collection from LUBEREF - Under Loading at Yanbu (WB: 51135)", // Fayyaz Awan
@@ -2574,14 +2574,14 @@ export const OCTOBER_CONFIRMED_MANIFESTS: Record<string, Record<string, string>>
     "5": "HCL Supply for DROPS - Under Loading at Yanbu (WB: 51170)", // Talha Fazlay
     "7": "KCL Supply for Tayseer Group Factory - Under Loading at TLS (WB: 51142)", // Shafiq Ahmed
     "16": "FC Supply for SWCC - Under Loading at Yanbu (WB: 51164)", // Aman Tullah
-    "24": "SMSBS Supply for NOMAC - On the way to Jubail", // Faisal Hammad
-    "25": "SA Supply for National Batteries Company - Under Offloading at Riyadh", // Harun Ansari
-    "26": "HCL Supply for Saudi Arabian Mining Company - Under Loading at Yanbu (WB: 51169)", // Abdul Wali
-    "28": "SOP Granular Bulk Supply for TLS Warehouse - Under Loading at TLS (WB: 51143)", // Iqbal Hossain
+    "23": "HCL Supply for Saudi Arabian Mining Company - Under Loading at Yanbu (WB: 51169)", // Abdul Wali
+    "26": "SA Supply for Petro Rabigh Alky Plant - Under Loading at Yanbu (WB: 51141)", // Sibghat Ullah
     "29": "KCL Supply for Tayseer Group Factory - Under Loading at TLS (WB: 51157)", // Ghulam Yasin
-    "33": "CS Collection from TRONOX - Under Loading at Yanbu (WB: 51140)", // Saru Ibrahim
-    "37": "SA Supply for Petro Rabigh Alky Plant - Under Loading at Yanbu (WB: 51141)", // Sibghat Ullah
-    "38": "SA Collection from TRONOX - Under Loading at Yanbu (WB: 51171)", // Shahzad Ahmad
-    "39": "CS Supply for Rawabi Industrial Nature Company - Under Loading at Yanbu (WB: 51162)" // Javid Khan
+    "33": "SMSBS Supply for NOMAC - On the way to Jubail", // Faisal Hammad
+    "39": "SA Supply for National Batteries Company - Under Offloading at Riyadh", // Harun Ansari
+    "43": "CS Collection from TRONOX - Under Loading at Yanbu (WB: 51140)", // Saru Ibrahim
+    "44": "SA Collection from TRONOX - Under Loading at Yanbu (WB: 51171)", // Shahzad Ahmad
+    "50": "SOP Granular Bulk Supply for TLS Warehouse - Under Loading at TLS (WB: 51143)", // Iqbal Hossain
+    "51": "CS Supply for Rawabi Industrial Nature Company - Under Loading at Yanbu (WB: 51162)" // Javid Khan
   }
 };

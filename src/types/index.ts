@@ -59,6 +59,8 @@ export interface Driver {
   status: 'AVAILABLE' | 'ON_TRIP' | 'VACATION' | 'MAINTENANCE' | 'INCOMPLETE';
   assignedTruckId?: string | null;
   assignedVehiclePlate?: string | null;
+  equipment?: string;
+  cardExp?: string;
   active: boolean;
   notes?: string;
   history?: Record<string, string>; // date -> tag

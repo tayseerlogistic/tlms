@@ -18,6 +18,7 @@ import {
   PRE_TRAINED_LEARNED_RULES, generateSeedSchedules
 } from '../data/historicalData';
 import { SEED_OCTOBER_1_4_MANIFESTS } from '../utils/multiDayManifestParser';
+import { OCTOBER_DAILY_SCHEDULES, OCTOBER_CONFIRMED_MANIFESTS } from '../data/octoberSchedules';
 
 interface LmsContextType {
   trucks: Truck[];
@@ -79,19 +80,32 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const [drivers, setDrivers] = useState<Driver[]>(() => {
     let base = INITIAL_DRIVERS;
-    const saved = localStorage.getItem(LOCAL_STORAGE_KEY + '_drivers');
+    const saved = localStorage.getItem(LOCAL_STORAGE_KEY + '_drivers_v3');
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length >= INITIAL_DRIVERS.length) base = parsed;
+        // Only accept if count and sequence exactly match locked master 64 sequence
+        if (
+          Array.isArray(parsed) &&
+          parsed.length === INITIAL_DRIVERS.length &&
+          parsed[0]?.name === INITIAL_DRIVERS[0]?.name &&
+          parsed[30]?.name === INITIAL_DRIVERS[30]?.name
+        ) {
+          base = parsed;
+        }
       } catch (e) {
         // fallback to INITIAL_DRIVERS
       }
     }
-    // Always ensure October 1–4 manifest seed tags are populated into driver history
+    // Always ensure October 1–5 manifest seed tags are populated into driver history
     return base.map((d, idx) => {
       const hist = { ...(d.history || {}) };
       Object.entries(SEED_OCTOBER_1_4_MANIFESTS).forEach(([dt, tags]) => {
+        if (tags[idx] && !hist[dt]) {
+          hist[dt] = tags[idx];
+        }
+      });
+      Object.entries(OCTOBER_CONFIRMED_MANIFESTS).forEach(([dt, tags]) => {
         if (tags[idx] && !hist[dt]) {
           hist[dt] = tags[idx];
         }
@@ -106,12 +120,19 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [cashAccounts] = useState<CashAccount[]>(INITIAL_CASH_ACCOUNTS);
 
   const [schedules, setSchedules] = useState<Record<string, DailySchedule>>(() => {
-    const seedSched = generateSeedSchedules();
-    const saved = localStorage.getItem(LOCAL_STORAGE_KEY + '_schedules');
+    const seedSched: Record<string, DailySchedule> = { ...generateSeedSchedules(), ...OCTOBER_DAILY_SCHEDULES };
+    const saved = localStorage.getItem(LOCAL_STORAGE_KEY + '_schedules_v3');
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        return { ...seedSched, ...parsed };
+        const merged = { ...seedSched, ...parsed };
+        // Ensure October schedules (Oct 1–5) are always present with their real rows
+        Object.entries(OCTOBER_DAILY_SCHEDULES).forEach(([dt, sched]) => {
+          if (!merged[dt] || !merged[dt].rows || merged[dt].rows.length === 0) {
+            merged[dt] = sched;
+          }
+        });
+        return merged;
       } catch (e) {
         return seedSched;
       }
@@ -131,7 +152,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     });
 
-    // Merge October 1–4 pre-seeded manifests
+    // Merge October 1–4 pre-seeded manifests from spreadsheet
     Object.entries(SEED_OCTOBER_1_4_MANIFESTS).forEach(([dt, tags]) => {
       if (!seedManifests[dt]) seedManifests[dt] = {};
       Object.entries(tags).forEach(([idx, tag]) => {
@@ -139,13 +160,24 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
     });
 
-    const saved = localStorage.getItem(LOCAL_STORAGE_KEY + '_manifests');
+    // Merge October 1–5 confirmed manifests (includes verified Oct 5 dispatches)
+    Object.entries(OCTOBER_CONFIRMED_MANIFESTS).forEach(([dt, tags]) => {
+      if (!seedManifests[dt]) seedManifests[dt] = {};
+      Object.entries(tags).forEach(([idx, tag]) => {
+        seedManifests[dt][idx] = tag;
+      });
+    });
+
+    const saved = localStorage.getItem(LOCAL_STORAGE_KEY + '_manifests_v3');
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
         const merged = { ...seedManifests, ...parsed };
-        // Ensure October 1-4 is always populated
+        // Ensure October 1-5 is always populated with locked sequence
         Object.entries(SEED_OCTOBER_1_4_MANIFESTS).forEach(([dt, tags]) => {
+          merged[dt] = { ...(merged[dt] || {}), ...tags };
+        });
+        Object.entries(OCTOBER_CONFIRMED_MANIFESTS).forEach(([dt, tags]) => {
           merged[dt] = { ...(merged[dt] || {}), ...tags };
         });
         return merged;
@@ -180,9 +212,9 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => {
     localStorage.setItem(LOCAL_STORAGE_KEY + '_trucks', JSON.stringify(trucks));
     localStorage.setItem(LOCAL_STORAGE_KEY + '_equip', JSON.stringify(equipment));
-    localStorage.setItem(LOCAL_STORAGE_KEY + '_drivers', JSON.stringify(drivers));
-    localStorage.setItem(LOCAL_STORAGE_KEY + '_schedules', JSON.stringify(schedules));
-    localStorage.setItem(LOCAL_STORAGE_KEY + '_manifests', JSON.stringify(manifests));
+    localStorage.setItem(LOCAL_STORAGE_KEY + '_drivers_v3', JSON.stringify(drivers));
+    localStorage.setItem(LOCAL_STORAGE_KEY + '_schedules_v3', JSON.stringify(schedules));
+    localStorage.setItem(LOCAL_STORAGE_KEY + '_manifests_v3', JSON.stringify(manifests));
     localStorage.setItem(LOCAL_STORAGE_KEY + '_cash', JSON.stringify(cashTransactions));
     localStorage.setItem(LOCAL_STORAGE_KEY + '_km', JSON.stringify(kmRecords));
     localStorage.setItem(LOCAL_STORAGE_KEY + '_diesel', JSON.stringify(dieselLogs));

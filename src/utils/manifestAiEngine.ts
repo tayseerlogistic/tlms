@@ -13,7 +13,7 @@ export interface ModelTrainingStats {
 let globalModelStats: ModelTrainingStats = {
   totalTripsIngested: 742,
   distinctDates: 38,
-  driversTrained: 69,
+  driversTrained: 64,
   patternsExtracted: 64,
   accuracyRate: 97.4,
   lastTrainedAt: new Date().toISOString()

@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useLms } from '../context/LmsContext';
+import { useTheme } from '../context/ThemeContext';
 import { UserRole } from '../types';
 import {
   Truck, FileSpreadsheet, ClipboardList, Wallet, Gauge,
   Database, Shield, LogOut, LogIn, UserCheck, Smartphone,
-  Download, Upload, AlertTriangle, ShieldAlert, Users, Edit2
+  Download, Upload, AlertTriangle, ShieldAlert, Users, Edit2,
+  Sun, Moon
 } from 'lucide-react';
 
 interface NavbarProps {
@@ -17,6 +19,7 @@ interface NavbarProps {
 export const Navbar: React.FC<NavbarProps> = ({ currentTab, setCurrentTab, onOpenLogin }) => {
   const { user, profile, role, logout, switchRole, isAdmin, isDriver } = useAuth();
   const { conflicts, exportFullBackup, restoreFullBackup } = useLms();
+  const { theme, toggleTheme } = useTheme();
   const [showRoleMenu, setShowRoleMenu] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
 
@@ -98,6 +101,29 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, setCurrentTab, onOpe
 
         {/* Auth & Role Status Bar */}
         <div className="flex items-center gap-3">
+          {/* Dark / Light Mode Toggle Button */}
+          <button
+            onClick={toggleTheme}
+            title={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+            className={`px-2.5 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 transition shadow-sm cursor-pointer ${
+              theme === 'dark'
+                ? 'bg-slate-800 hover:bg-slate-700 text-amber-300 border-slate-700'
+                : 'bg-white hover:bg-slate-100 text-indigo-600 border-slate-300'
+            }`}
+          >
+            {theme === 'dark' ? (
+              <>
+                <Sun className="w-3.5 h-3.5 text-amber-400" />
+                <span className="hidden sm:inline text-[11px] font-mono">Light Mode</span>
+              </>
+            ) : (
+              <>
+                <Moon className="w-3.5 h-3.5 text-indigo-600" />
+                <span className="hidden sm:inline text-[11px] font-mono">Dark Mode</span>
+              </>
+            )}
+          </button>
+
           {/* Backup & Restore controls */}
           <div className="hidden lg:flex items-center gap-1.5 bg-slate-800/80 p-1 rounded-lg border border-slate-700/60">
             <button
