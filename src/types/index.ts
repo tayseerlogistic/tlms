@@ -1,13 +1,18 @@
-export type UserRole = 'admin' | 'dispatcher' | 'cashier' | 'driver';
+export type UserRole = 'admin' | 'dispatcher' | 'operator' | 'editor' | 'cashier' | 'driver' | 'viewer';
 
 export interface UserProfile {
   uid: string;
   email: string;
   name: string;
   role: UserRole;
+  status?: 'active' | 'suspended';
   driverId?: string; // If mapped to one of the fleet drivers
+  driverName?: string;
+  notes?: string;
+  password?: string; // Stored credential for provisioned accounts
   createdAt?: string;
   updatedAt?: string;
+  createdBy?: string;
 }
 
 export interface Truck {

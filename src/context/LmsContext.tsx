@@ -65,7 +65,7 @@ const LmsContext = createContext<LmsContextType | undefined>(undefined);
 const LOCAL_STORAGE_KEY = 'tls_lms_offline_cache_v2';
 
 export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
 
   const [trucks, setTrucks] = useState<Truck[]>(() => {
     const saved = localStorage.getItem(LOCAL_STORAGE_KEY + '_trucks');
@@ -188,9 +188,9 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.setItem(LOCAL_STORAGE_KEY + '_diesel', JSON.stringify(dieselLogs));
   }, [trucks, equipment, drivers, schedules, manifests, cashTransactions, kmRecords, dieselLogs]);
 
-  // Firestore real-time subscriptions if user is authenticated
+  // Firestore real-time subscriptions if user or profile is authenticated
   useEffect(() => {
-    if (!user) return;
+    if (!user && !profile) return;
 
     // Listen to trucks
     const unsubTrucks = onSnapshot(collection(db, 'trucks'), (snapshot) => {
@@ -238,7 +238,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       unsubCash();
       unsubKm();
     };
-  }, [user]);
+  }, [user, profile]);
 
   // Actions
   const saveTruck = async (truck: Truck) => {
@@ -252,7 +252,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return [...prev, truck];
     });
 
-    if (user) {
+    if (user || profile) {
       try {
         await setDoc(doc(db, 'trucks', truck.id), truck);
       } catch (e) {
@@ -263,7 +263,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const deleteTruck = async (id: string) => {
     setTrucks(prev => prev.filter(t => t.id !== id));
-    if (user) {
+    if (user || profile) {
       try {
         await deleteDoc(doc(db, 'trucks', id));
       } catch (e) {
@@ -283,7 +283,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return [...prev, equip];
     });
 
-    if (user) {
+    if (user || profile) {
       try {
         await setDoc(doc(db, 'equipment', equip.id), equip);
       } catch (e) {
@@ -294,7 +294,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const deleteEquipment = async (id: string) => {
     setEquipment(prev => prev.filter(e => e.id !== id));
-    if (user) {
+    if (user || profile) {
       try {
         await deleteDoc(doc(db, 'equipment', id));
       } catch (e) {
@@ -314,7 +314,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return [...prev, driver];
     });
 
-    if (user) {
+    if (user || profile) {
       try {
         await setDoc(doc(db, 'drivers', driver.id), driver);
       } catch (e) {
@@ -325,7 +325,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const deleteDriver = async (id: string) => {
     setDrivers(prev => prev.filter(d => d.id !== id));
-    if (user) {
+    if (user || profile) {
       try {
         await deleteDoc(doc(db, 'drivers', id));
       } catch (e) {
@@ -340,7 +340,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       rows,
       confirmed: true,
       updatedAt: new Date().toISOString(),
-      updatedBy: user?.email || 'Dispatcher'
+      updatedBy: profile?.email || user?.email || 'Dispatcher'
     };
     setSchedules(prev => ({ ...prev, [date]: schedObj }));
 
@@ -402,13 +402,13 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return copy;
     });
 
-    if (user) {
+    if (user || profile) {
       try {
         await setDoc(doc(db, 'manifests', date), {
           date,
           tags,
           confirmedAt: new Date().toISOString(),
-          confirmedBy: user?.email || 'Operator',
+          confirmedBy: profile?.email || user?.email || 'Operator',
           driverCount: Object.keys(tags).length
         });
       } catch (e) {
@@ -442,14 +442,14 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return copy;
     });
 
-    if (user) {
+    if (user || profile) {
       for (const [dt, tags] of Object.entries(batchData)) {
         try {
           await setDoc(doc(db, 'manifests', dt), {
             date: dt,
             tags,
             confirmedAt: new Date().toISOString(),
-            confirmedBy: user?.email || 'Dispatcher',
+            confirmedBy: profile?.email || user?.email || 'Dispatcher',
             driverCount: Object.keys(tags).length
           });
         } catch (e) {
@@ -465,12 +465,12 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       ...txData,
       id,
       createdAt: new Date().toISOString(),
-      createdBy: user?.email || 'Cashier'
+      createdBy: profile?.email || user?.email || 'Cashier'
     };
 
     setCashTransactions(prev => [newTx, ...prev]);
 
-    if (user) {
+    if (user || profile) {
       try {
         await setDoc(doc(db, 'cashbook', id), newTx);
       } catch (e) {
@@ -497,7 +497,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       status: 'Posted',
       reversalOf: id,
       createdAt: new Date().toISOString(),
-      createdBy: user?.email || 'Cashier'
+      createdBy: profile?.email || user?.email || 'Cashier'
     };
 
     setCashTransactions(prev => [
@@ -505,7 +505,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       ...prev.map(t => t.id === id ? { ...t, status: 'Reversed' as const } : t)
     ]);
 
-    if (user) {
+    if (user || profile) {
       try {
         await setDoc(doc(db, 'cashbook', revId), reversalTx);
         await updateDoc(doc(db, 'cashbook', id), { status: 'Reversed' });
@@ -517,7 +517,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const deleteCashTransaction = async (id: string) => {
     setCashTransactions(prev => prev.filter(t => t.id !== id));
-    if (user) {
+    if (user || profile) {
       try {
         await deleteDoc(doc(db, 'cashbook', id));
       } catch (e) {
@@ -531,7 +531,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const newRec: KmRecord = {
       ...rec,
       id,
-      loggedBy: user?.email || 'Dispatcher'
+      loggedBy: profile?.email || user?.email || 'Dispatcher'
     };
 
     setKmRecords(prev => {
@@ -545,7 +545,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return [newRec, ...prev];
     });
 
-    if (user) {
+    if (user || profile) {
       try {
         await setDoc(doc(db, 'km_records', id), newRec);
       } catch (e) {
@@ -556,7 +556,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const deleteKmRecord = async (id: string) => {
     setKmRecords(prev => prev.filter(r => r.id !== id));
-    if (user) {
+    if (user || profile) {
       try {
         await deleteDoc(doc(db, 'km_records', id));
       } catch (e) {
@@ -570,11 +570,11 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const newLog: DieselLog = {
       ...logData,
       id,
-      loggedBy: user?.email || 'Cashier'
+      loggedBy: profile?.email || user?.email || 'Cashier'
     };
     setDieselLogs(prev => [newLog, ...prev]);
 
-    if (user) {
+    if (user || profile) {
       try {
         await setDoc(doc(db, 'diesel_logs', id), newLog);
       } catch (e) {
@@ -638,7 +638,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         schema: "tls-lms",
         version: "2.0",
         exportedAt: new Date().toISOString(),
-        exportedBy: user?.email || "Admin",
+        exportedBy: profile?.email || user?.email || "Admin",
         recordCounts: {
           trucks: trucks.length,
           equipment: equipment.length,

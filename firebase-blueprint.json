@@ -7,8 +7,12 @@
       "properties": {
         "email": { "type": "string", "maxLength": 128 },
         "name": { "type": "string", "maxLength": 128 },
-        "role": { "type": "string", "enum": ["admin", "dispatcher", "cashier", "driver"] },
+        "role": { "type": "string", "enum": ["admin", "dispatcher", "operator", "editor", "cashier", "driver", "viewer"] },
+        "status": { "type": "string", "enum": ["active", "suspended"] },
         "driverId": { "type": "string", "maxLength": 64 },
+        "driverName": { "type": "string", "maxLength": 128 },
+        "notes": { "type": "string", "maxLength": 500 },
+        "createdBy": { "type": "string", "maxLength": 128 },
         "createdAt": { "type": "string", "maxLength": 64 },
         "updatedAt": { "type": "string", "maxLength": 64 }
       },

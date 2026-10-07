@@ -5,16 +5,17 @@ import { UserRole } from '../types';
 import {
   Truck, FileSpreadsheet, ClipboardList, Wallet, Gauge,
   Database, Shield, LogOut, LogIn, UserCheck, Smartphone,
-  Download, Upload, AlertTriangle
+  Download, Upload, AlertTriangle, ShieldAlert, Users, Edit2
 } from 'lucide-react';
 
 interface NavbarProps {
   currentTab: string;
   setCurrentTab: (tab: string) => void;
+  onOpenLogin?: () => void;
 }
 
-export const Navbar: React.FC<NavbarProps> = ({ currentTab, setCurrentTab }) => {
-  const { user, profile, role, loginWithGoogle, logout, switchRole, isAdmin, isDriver } = useAuth();
+export const Navbar: React.FC<NavbarProps> = ({ currentTab, setCurrentTab, onOpenLogin }) => {
+  const { user, profile, role, logout, switchRole, isAdmin, isDriver } = useAuth();
   const { conflicts, exportFullBackup, restoreFullBackup } = useLms();
   const [showRoleMenu, setShowRoleMenu] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -51,12 +52,30 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, setCurrentTab }) => 
     { id: 'driver-portal', label: 'Driver Portal', icon: Smartphone },
   ];
 
+  // If user is admin, add the User & Permissions tab
+  if (isAdmin || profile?.role === 'admin') {
+    navItems.push({
+      id: 'users',
+      label: 'User & Permissions',
+      icon: ShieldAlert,
+      badge: undefined
+    });
+  }
+
   const roleColors: Record<UserRole, { bg: string; text: string; border: string }> = {
     admin: { bg: 'bg-rose-500/20', text: 'text-rose-400', border: 'border-rose-500/40' },
+    editor: { bg: 'bg-indigo-500/20', text: 'text-indigo-400', border: 'border-indigo-500/40' },
+    operator: { bg: 'bg-cyan-500/20', text: 'text-cyan-400', border: 'border-cyan-500/40' },
     dispatcher: { bg: 'bg-blue-500/20', text: 'text-blue-400', border: 'border-blue-500/40' },
     cashier: { bg: 'bg-emerald-500/20', text: 'text-emerald-400', border: 'border-emerald-500/40' },
     driver: { bg: 'bg-amber-500/20', text: 'text-amber-400', border: 'border-amber-500/40' },
+    viewer: { bg: 'bg-slate-500/20', text: 'text-slate-400', border: 'border-slate-500/40' },
   };
+
+  const currentRoleColor = roleColors[role] || roleColors.operator;
+
+  const currentDisplayName = profile?.name || user?.displayName || user?.email?.split('@')[0] || profile?.email?.split('@')[0] || 'Guest';
+  const currentEmail = profile?.email || user?.email || '';
 
   return (
     <header className="bg-slate-900 border-b border-slate-800 sticky top-0 z-50 shadow-xl">
@@ -71,7 +90,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, setCurrentTab }) => 
             <div className="flex items-center gap-2">
               <span className="font-extrabold text-lg sm:text-xl tracking-tight text-white font-mono">TLS</span>
               <span className="bg-gradient-to-r from-blue-400 to-sky-300 bg-clip-text text-transparent font-bold text-xs uppercase tracking-widest">LOGISTICS LMS</span>
-              <span className="bg-slate-800 text-slate-400 text-[10px] font-mono px-2 py-0.5 rounded border border-slate-700">v3.0</span>
+              <span className="bg-slate-800 text-slate-400 text-[10px] font-mono px-2 py-0.5 rounded border border-slate-700">v3.5</span>
             </div>
             <p className="text-[11px] text-slate-400 hidden sm:block">Tayseer Group Central Fleet Operating System</p>
           </div>
@@ -98,18 +117,21 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, setCurrentTab }) => 
           <div className="relative">
             <button
               onClick={() => setShowRoleMenu(!showRoleMenu)}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold font-mono border transition ${roleColors[role].bg} ${roleColors[role].text} ${roleColors[role].border}`}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold font-mono border transition ${currentRoleColor.bg} ${currentRoleColor.text} ${currentRoleColor.border}`}
             >
               <Shield className="w-3.5 h-3.5" />
               <span className="capitalize">{role}</span>
               {profile?.role === 'admin' && <span className="text-[10px] opacity-75">▾</span>}
             </button>
 
-            {/* Admin Role Switching Menu */}
+            {/* Admin Role Switching Menu (For Testing Permission Views) */}
             {showRoleMenu && profile?.role === 'admin' && (
-              <div className="absolute right-0 mt-2 w-48 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl p-1.5 z-50 text-xs">
-                <div className="px-2 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">Test Role View</div>
-                {(['admin', 'dispatcher', 'cashier', 'driver'] as UserRole[]).map((r) => (
+              <div className="absolute right-0 mt-2 w-52 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl p-1.5 z-50 text-xs">
+                <div className="px-2 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center justify-between">
+                  <span>Simulate Role View</span>
+                  <span className="text-[9px] bg-slate-900 text-indigo-300 px-1.5 py-0.2 rounded">Admin Only</span>
+                </div>
+                {(['admin', 'editor', 'operator', 'dispatcher', 'cashier', 'driver', 'viewer'] as UserRole[]).map((r) => (
                   <button
                     key={r}
                     onClick={() => {
@@ -128,15 +150,15 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, setCurrentTab }) => 
           </div>
 
           {/* User Profile / Login */}
-          {user ? (
+          {(user || profile) ? (
             <div className="flex items-center gap-2">
               <div className="hidden sm:flex flex-col text-right">
-                <span className="text-xs font-semibold text-slate-200 truncate max-w-[140px]">{user.displayName || user.email}</span>
-                <span className="text-[10px] text-slate-400 font-mono">{user.email}</span>
+                <span className="text-xs font-semibold text-slate-200 truncate max-w-[140px]">{currentDisplayName}</span>
+                <span className="text-[10px] text-slate-400 font-mono truncate max-w-[140px]">{currentEmail}</span>
               </div>
               <button
                 onClick={logout}
-                title="Sign Out"
+                title="Sign Out of TLS Hub"
                 className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-slate-800 rounded-lg transition"
               >
                 <LogOut className="w-4 h-4" />
@@ -144,10 +166,10 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, setCurrentTab }) => 
             </div>
           ) : (
             <button
-              onClick={loginWithGoogle}
+              onClick={() => onOpenLogin && onOpenLogin()}
               className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-3 py-1.5 rounded-lg shadow-md flex items-center gap-1.5 transition"
             >
-              <LogIn className="w-3.5 h-3.5" /> Google Sign-In
+              <LogIn className="w-3.5 h-3.5" /> Sign In
             </button>
           )}
         </div>

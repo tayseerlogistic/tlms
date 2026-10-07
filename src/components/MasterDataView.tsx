@@ -26,20 +26,20 @@ export const MasterDataView: React.FC = () => {
 
   // Filter lists
   const filteredTrucks = trucks.filter(t =>
-    t.plate.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (t.plate || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
     (t.assignedDriverName && t.assignedDriverName.toLowerCase().includes(searchTerm.toLowerCase()))
   );
 
   const filteredDrivers = drivers.filter(d =>
-    d.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    d.empNo.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    d.iqama.includes(searchTerm) ||
-    d.mobile.includes(searchTerm)
+    (d.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (d.empNo || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (d.iqama || '').includes(searchTerm) ||
+    (d.mobile || '').includes(searchTerm)
   );
 
   const filteredEquipment = equipment.filter(e =>
-    e.equipNo.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    e.type.toLowerCase().includes(searchTerm.toLowerCase())
+    (e.equipNo || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (e.type || '').toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   // Form Handlers

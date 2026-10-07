@@ -21,13 +21,17 @@ service cloud.firestore {
     }
 
     function isBootstrappedAdmin() {
-      return isSignedIn() && request.auth.token.email == 'tayseerlogistic@gmail.com';
+      return isSignedIn() && (
+        request.auth.token.email == 'tayseerlogistic@gmail.com' ||
+        request.auth.token.email == 'admin@tls.com'
+      );
     }
 
     function isAdmin() {
       return isSignedIn() && (
         isBootstrappedAdmin() ||
-        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
       );
     }
 
@@ -35,8 +39,16 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
     }
 
+    function isOperator() {
+      return isAdmin() || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (getUserRole() == 'operator' || getUserRole() == 'dispatcher'));
+    }
+
+    function isEditor() {
+      return isAdmin() || isOperator() || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && getUserRole() == 'editor');
+    }
+
     function isDispatcher() {
-      return isAdmin() || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && getUserRole() == 'dispatcher');
+      return isOperator();
     }
 
     function isCashier() {
@@ -44,13 +56,13 @@ service cloud.firestore {
     }
 
     function isStaff() {
-      return isAdmin() || isDispatcher() || isCashier();
+      return isAdmin() || isEditor() || isOperator() || isCashier();
     }
 
     // Admin authorization table
     match /admins/{adminId} {
       allow read: if isSignedIn();
-      allow write: if isBootstrappedAdmin();
+      allow write: if isAdmin();
     }
 
     // User profiles

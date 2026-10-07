@@ -18,6 +18,16 @@ export const DriverPortalView: React.FC = () => {
     (user?.email && d.name.toLowerCase().includes(user.email.split('@')[0].toLowerCase()))
   ) || drivers[0];
 
+  if (!currentDriver) {
+    return (
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 text-center text-slate-400 font-mono">
+        <Truck className="w-10 h-10 mx-auto text-slate-600 mb-3" />
+        <p className="text-sm font-semibold text-slate-300">No Driver Records Found</p>
+        <p className="text-xs text-slate-500 mt-1">Please ensure drivers are registered in the Master Repository.</p>
+      </div>
+    );
+  }
+
   const today = new Date().toISOString().substring(0, 10);
   const driverIdx = drivers.findIndex(d => d.id === currentDriver.id);
   const currentTag = (manifests[today] && manifests[today][driverIdx]) || 'At Yanbu Base';

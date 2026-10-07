@@ -263,6 +263,14 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
+            {role === 'admin' && (
+              <button
+                onClick={() => onNavigate('users')}
+                className="bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs px-4 py-2.5 rounded-xl shadow-lg shadow-indigo-600/30 transition flex items-center gap-2"
+              >
+                🛡️ Manage Users &amp; Roles
+              </button>
+            )}
             <button
               onClick={() => onNavigate('timetable')}
               className="bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs px-4 py-2.5 rounded-xl shadow-lg transition flex items-center gap-2"
