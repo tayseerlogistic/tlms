@@ -52,6 +52,7 @@ interface LmsContextType {
   deleteCashTransaction: (id: string) => Promise<void>;
   
   addKmRecord: (rec: Omit<KmRecord, 'id'>) => Promise<void>;
+  batchSaveKmRecords: (records: (Omit<KmRecord, 'id'> | KmRecord)[]) => Promise<void>;
   deleteKmRecord: (id: string) => Promise<void>;
   addDieselLog: (log: Omit<DieselLog, 'id'>) => Promise<void>;
   
@@ -234,14 +235,61 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       console.warn("Trucks Firestore listener notice:", err.message);
     });
 
-    // Listen to drivers
+    // Listen to drivers (merge safely, preserving locked master 64 sequence)
     const unsubDrivers = onSnapshot(collection(db, 'drivers'), (snapshot) => {
       if (!snapshot.empty) {
         const remote = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Driver));
-        setDrivers(remote);
+        setDrivers(prev => {
+          if (remote.length >= prev.length) {
+            return remote;
+          }
+          // Merge remote updates with existing master fleet to prevent truncation
+          const map = new Map(prev.map(d => [d.id, d]));
+          remote.forEach(r => {
+            const existing = map.get(r.id);
+            map.set(r.id, existing ? { ...existing, ...r, history: { ...(existing.history || {}), ...(r.history || {}) } } : r);
+          });
+          return Array.from(map.values());
+        });
       }
     }, (err) => {
       console.warn("Drivers Firestore listener notice:", err.message);
+    });
+
+    // Listen to manifests
+    const unsubManifests = onSnapshot(collection(db, 'manifests'), (snapshot) => {
+      if (!snapshot.empty) {
+        setManifests(prev => {
+          const updated = { ...prev };
+          snapshot.docs.forEach(docSnap => {
+            const data = docSnap.data();
+            if (data?.date && data?.tags) {
+              updated[data.date] = { ...(updated[data.date] || {}), ...data.tags };
+            }
+          });
+          return updated;
+        });
+      }
+    }, (err) => {
+      console.warn("Manifests Firestore listener notice:", err.message);
+    });
+
+    // Listen to schedules
+    const unsubSchedules = onSnapshot(collection(db, 'schedules'), (snapshot) => {
+      if (!snapshot.empty) {
+        setSchedules(prev => {
+          const updated = { ...prev };
+          snapshot.docs.forEach(docSnap => {
+            const data = docSnap.data() as DailySchedule;
+            if (data?.date && data?.rows) {
+              updated[data.date] = data;
+            }
+          });
+          return updated;
+        });
+      }
+    }, (err) => {
+      console.warn("Schedules Firestore listener notice:", err.message);
     });
 
     // Listen to cash transactions
@@ -267,6 +315,8 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return () => {
       unsubTrucks();
       unsubDrivers();
+      unsubManifests();
+      unsubSchedules();
       unsubCash();
       unsubKm();
     };
@@ -586,6 +636,47 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  const batchSaveKmRecords = async (records: (Omit<KmRecord, 'id'> | KmRecord)[]) => {
+    if (!records.length) return;
+
+    setKmRecords(prev => {
+      const copy = [...prev];
+      records.forEach(rec => {
+        const id = 'id' in rec && rec.id ? rec.id : 'KM-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).substring(2, 6).toUpperCase();
+        const fullRec: KmRecord = {
+          ...rec,
+          id,
+          loggedBy: profile?.email || user?.email || 'Dispatcher'
+        };
+        const existingIdx = copy.findIndex(
+          r => r.date === rec.date && r.veh.toUpperCase().replace(/\s+/g, '') === rec.veh.toUpperCase().replace(/\s+/g, '')
+        );
+        if (existingIdx >= 0) {
+          copy[existingIdx] = { ...copy[existingIdx], ...fullRec, id: copy[existingIdx].id };
+        } else {
+          copy.push(fullRec);
+        }
+      });
+      return copy;
+    });
+
+    if (user || profile) {
+      try {
+        for (const rec of records) {
+          const id = 'id' in rec && rec.id ? rec.id : 'KM-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).substring(2, 6).toUpperCase();
+          const fullRec: KmRecord = {
+            ...rec,
+            id,
+            loggedBy: profile?.email || user?.email || 'Dispatcher'
+          };
+          await setDoc(doc(db, 'km_records', id), fullRec);
+        }
+      } catch (e) {
+        console.warn("Error saving batch KM records in Firestore:", e);
+      }
+    }
+  };
+
   const deleteKmRecord = async (id: string) => {
     setKmRecords(prev => prev.filter(r => r.id !== id));
     if (user || profile) {
@@ -735,6 +826,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     reverseCashTransaction,
     deleteCashTransaction,
     addKmRecord,
+    batchSaveKmRecords,
     deleteKmRecord,
     addDieselLog,
     resolveConflict,

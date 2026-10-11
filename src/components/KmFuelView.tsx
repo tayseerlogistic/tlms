@@ -38,7 +38,7 @@ Chart.register(
 export const KmFuelView: React.FC = () => {
   const {
     trucks, drivers, kmRecords, dieselLogs,
-    addKmRecord, deleteKmRecord, addDieselLog,
+    addKmRecord, batchSaveKmRecords, deleteKmRecord, addDieselLog,
     saveTruck, deleteTruck, saveDriver, deleteDriver,
     restoreFullBackup, exportFullBackup
   } = useLms();
@@ -46,21 +46,33 @@ export const KmFuelView: React.FC = () => {
   const { isAdmin, isDispatcher, isCashier } = useAuth();
 
   // Active sub-tab in KM module
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'reconciliation' | 'entry' | 'history'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'entry' | 'monthly-matrix' | 'reconciliation' | 'history'>('dashboard');
 
   // Filter states
-  const [selectedMonth, setSelectedMonth] = useState<string>('All');
+  const [selectedMonth, setSelectedMonth] = useState<string>('2026-10');
   const [viewMode, setViewMode] = useState<'split' | 'all'>('split');
   const [searchAgg, setSearchAgg] = useState('');
   const [searchRecon, setSearchRecon] = useState('');
   const [searchHist, setSearchHist] = useState('');
 
   // Meter Entry Form state
-  const [readingDate, setReadingDate] = useState(() => new Date().toISOString().substring(0, 10));
+  const [readingDate, setReadingDate] = useState(() => '2026-10-02');
   const [plateInput, setPlateInput] = useState('');
   const [odometerInput, setOdometerInput] = useState('');
   const [matchedPlateBadge, setMatchedPlateBadge] = useState('');
   const [previousReadingInfo, setPreviousReadingInfo] = useState<{ date: string; odo: number } | null>(null);
+
+  // Daily Fleet Meter Table Drafts (plateNorm -> input string)
+  const [dailyDraftOdo, setDailyDraftOdo] = useState<Record<string, string>>({});
+  const [entryMode, setEntryMode] = useState<'fleet-table' | 'fast-logger'>('fleet-table');
+  const [feedbackToast, setFeedbackToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
+
+  // Month & Specific Date Manager / Matrix state
+  const [matrixMonth, setMatrixMonth] = useState<string>('2026-10');
+  const [matrixSpecificDate, setMatrixSpecificDate] = useState<string>('2026-10-02');
+  const [matrixViewMode, setMatrixViewMode] = useState<'month-grid' | 'single-date'>('month-grid');
+  const [matrixSearch, setMatrixSearch] = useState<string>('');
+  const [matrixCellDrafts, setMatrixCellDrafts] = useState<Record<string, string>>({}); // "plateNorm__date" -> odoStr
 
   // Tracker filter
   const [trackerFilter, setTrackerFilter] = useState<'remaining' | 'completed' | 'all'>('remaining');
@@ -174,6 +186,103 @@ export const KmFuelView: React.FC = () => {
       const odoEl = document.getElementById('km-reading-input');
       if (odoEl) odoEl.focus();
     }
+  };
+
+  // -------------------------------------------------------------
+  // USER KM RUN FORMULA ENGINE
+  // Day 1 to Day 2: 4,900 - 4,100 = 800 KM Run
+  // Day 1 of new month: Day 1 Odometer - Day 30/31 of previous month Odometer
+  // Empty reading: 0 KM Run
+  // -------------------------------------------------------------
+  const getVehiclePreviousReading = (
+    plateNorm: string,
+    targetDate: string
+  ): { date: string; odometer: number; isPrevMonthEnd: boolean } | null => {
+    const pNorm = plateNorm.toUpperCase().replace(/\s+/g, '');
+
+    const prior = kmRecords
+      .filter(r => r.veh.toUpperCase().replace(/\s+/g, '') === pNorm && r.date < targetDate && r.odometer != null && !isNaN(r.odometer) && r.odometer > 0)
+      .sort((a, b) => a.date.localeCompare(b.date));
+
+    if (prior.length === 0) return null;
+
+    const lastPrior = prior[prior.length - 1];
+    const isDay1 = targetDate.endsWith('-01');
+    const isPrevMonthEnd = isDay1 && (lastPrior.date.endsWith('-30') || lastPrior.date.endsWith('-31') || lastPrior.date.endsWith('-28') || lastPrior.date.endsWith('-29'));
+
+    return {
+      date: lastPrior.date,
+      odometer: lastPrior.odometer!,
+      isPrevMonthEnd
+    };
+  };
+
+  const calculateOdoKmRun = (
+    currentOdoStr: string | number | null | undefined,
+    prevOdo: number | null | undefined
+  ): { kmRun: number; formulaText: string } => {
+    if (currentOdoStr === '' || currentOdoStr == null) {
+      return { kmRun: 0, formulaText: 'Empty reading = 0 KM Run' };
+    }
+    const curr = typeof currentOdoStr === 'number' ? currentOdoStr : parseFloat(String(currentOdoStr));
+    if (isNaN(curr) || curr <= 0) {
+      return { kmRun: 0, formulaText: 'Empty reading = 0 KM Run' };
+    }
+
+    if (prevOdo == null || prevOdo <= 0) {
+      return { kmRun: 0, formulaText: `Initial Base (${curr.toLocaleString()}) = 0 KM Run` };
+    }
+
+    if (curr >= prevOdo) {
+      const run = parseFloat((curr - prevOdo).toFixed(1));
+      return { kmRun: run, formulaText: `${curr.toLocaleString()} − ${prevOdo.toLocaleString()} = ${run.toLocaleString()} KM Run` };
+    }
+
+    return { kmRun: 0, formulaText: `Notice: Current (${curr}) < Prev (${prevOdo})` };
+  };
+
+  const showToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
+    setFeedbackToast({ message, type });
+    setTimeout(() => {
+      setFeedbackToast(prev => prev?.message === message ? null : prev);
+    }, 5000);
+  };
+
+  // Confirm and Save entire fleet readings for selected readingDate
+  const handleConfirmAndSaveDailyFleet = async () => {
+    const recordsToSave: (Omit<KmRecord, 'id'> | KmRecord)[] = [];
+    let totalSavedKm = 0;
+    let loggedCount = 0;
+
+    trucks.forEach(t => {
+      const rawInput = dailyDraftOdo[t.plateNorm];
+      const existingRec = kmRecords.find(
+        r => r.veh.toUpperCase().replace(/\s+/g, '') === t.plateNorm && r.date === readingDate
+      );
+
+      const odoValStr = rawInput !== undefined ? rawInput : (existingRec?.odometer != null ? String(existingRec.odometer) : '');
+      const prevInfo = getVehiclePreviousReading(t.plateNorm, readingDate);
+      const { kmRun } = calculateOdoKmRun(odoValStr, prevInfo?.odometer);
+      const odoNum = odoValStr.trim() !== '' && !isNaN(parseFloat(odoValStr)) ? parseFloat(odoValStr) : null;
+
+      if (odoNum !== null && odoNum > 0) {
+        loggedCount++;
+        totalSavedKm += kmRun;
+      }
+
+      recordsToSave.push({
+        id: existingRec?.id || ('KM-' + Date.now().toString(36) + '-' + Math.random().toString(36).substring(2, 6)),
+        date: readingDate,
+        veh: t.plate,
+        odometer: odoNum,
+        km: kmRun,
+        driver: t.assignedDriverName || 'Driver',
+        notes: odoNum ? `Fleet Meter Entry (Prev: ${prevInfo?.odometer || 0} KM on ${prevInfo?.date || 'baseline'})` : '0 KM Run (Idle)'
+      });
+    });
+
+    await batchSaveKmRecords(recordsToSave);
+    showToast(`✓ Confirmed and saved KM Fleet for all ${trucks.length} trucks on ${readingDate}! Total Day Run: ${totalSavedKm.toLocaleString()} KM (${loggedCount} active readings). Data updated in Dashboard.`, 'success');
   };
 
   // -------------------------------------------------------------
@@ -813,7 +922,15 @@ TLS Logistics Fleet Management`;
             activeTab === 'entry' ? 'border-blue-500 text-white bg-slate-800/40' : 'border-transparent text-slate-400 hover:text-slate-200'
           }`}
         >
-          <span>➕</span> Meter Entry
+          <span>➕</span> KM Meter Entry
+        </button>
+        <button
+          onClick={() => setActiveTab('monthly-matrix')}
+          className={`px-4 py-2.5 text-xs font-bold whitespace-nowrap transition border-b-2 flex items-center gap-2 ${
+            activeTab === 'monthly-matrix' ? 'border-blue-500 text-white bg-slate-800/40' : 'border-transparent text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <span>📅</span> Month &amp; Date KM Editor
         </button>
         <button
           onClick={() => setActiveTab('history')}
@@ -1550,254 +1667,415 @@ TLS Logistics Fleet Management`;
         </div>
       )}
 
+      {/* Feedback Toast Notification */}
+      {feedbackToast && (
+        <div className={`p-4 rounded-2xl border text-xs font-semibold flex items-center justify-between shadow-xl animate-fade-in ${
+          feedbackToast.type === 'error'
+            ? 'bg-rose-950/90 border-rose-500/60 text-rose-200'
+            : feedbackToast.type === 'info'
+            ? 'bg-sky-950/90 border-sky-500/60 text-sky-200'
+            : 'bg-emerald-950/90 border-emerald-500/60 text-emerald-200'
+        }`}>
+          <div className="flex items-center gap-2.5">
+            <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+            <span>{feedbackToast.message}</span>
+          </div>
+          <button onClick={() => setFeedbackToast(null)} className="text-slate-400 hover:text-white font-bold ml-2 cursor-pointer">✕</button>
+        </div>
+      )}
+
       {/* =========================================================
-          TAB 3: METER ENTRY (Fast Logger + Progress Tracker)
+          TAB 3: KM METER ENTRY (Fleet Table + Formula Engine + Fast Logger)
           ========================================================= */}
       {activeTab === 'entry' && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-          {/* Fast Logger Form */}
-          <div className="lg:col-span-5 bg-slate-800/90 border border-slate-700 p-6 rounded-2xl shadow-xl space-y-4">
-            <div className="flex justify-between items-center pb-3 border-b border-slate-700">
+        <div className="space-y-6">
+          {/* Top Controls & Formula Banner */}
+          <div className="bg-gradient-to-r from-slate-900 via-slate-800/95 to-slate-900 border border-slate-700 rounded-2xl p-5 shadow-2xl space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
-                <h3 className="font-bold text-white text-base flex items-center gap-2">
-                  <span>📟</span> Fast KM Meter Logger
+                <h3 className="text-lg font-black text-white flex items-center gap-2">
+                  <span>📟</span> KM Meter Entry &amp; Fleet Run Engine
                 </h3>
-                <p className="text-xs text-slate-400 mt-0.5">Quick entry with instant plate autocomplete</p>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Automated vehicle difference formula &bull; Cross-month continuity &bull; Real-time dashboard synchronization
+                </p>
               </div>
-              <span className="bg-blue-500/20 text-blue-400 text-xs font-mono font-bold px-2 py-0.5 rounded border border-blue-500/40">
-                ⚡ Press Enter
-              </span>
+
+              {/* View Switcher: Fleet Table vs Fast Logger */}
+              <div className="flex bg-slate-950 border border-slate-700 rounded-xl p-1 text-xs">
+                <button
+                  type="button"
+                  onClick={() => setEntryMode('fleet-table')}
+                  className={`px-3 py-1.5 rounded-lg font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                    entryMode === 'fleet-table' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <span>📋</span> Full Fleet Table ({trucks.length} Trucks)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEntryMode('fast-logger')}
+                  className={`px-3 py-1.5 rounded-lg font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                    entryMode === 'fast-logger' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <span>⚡</span> Single Fast Logger
+                </button>
+              </div>
             </div>
 
-            <form onSubmit={handleMeterSubmit} className="space-y-4">
-              <div>
-                <div className="flex justify-between items-center mb-1">
-                  <label className="text-xs font-bold uppercase font-mono text-slate-400">Reading Date</label>
-                  <div className="flex gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => setReadingDate(new Date().toISOString().substring(0, 10))}
-                      className="text-[11px] bg-slate-700 hover:bg-slate-600 text-slate-200 px-2 py-0.5 rounded font-semibold"
-                    >
-                      Today
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const d = new Date(); d.setDate(d.getDate() - 1);
-                        setReadingDate(d.toISOString().substring(0, 10));
-                      }}
-                      className="text-[11px] bg-slate-700 hover:bg-slate-600 text-slate-200 px-2 py-0.5 rounded font-semibold"
-                    >
-                      Yesterday
-                    </button>
-                  </div>
+            {/* Formula Explanation Callout */}
+            <div className="p-3.5 bg-blue-950/60 border border-blue-500/40 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+              <div className="flex items-center gap-2.5">
+                <div className="p-1.5 bg-blue-500/20 text-sky-400 rounded-lg shrink-0 font-bold font-mono">
+                  &Delta; KM
                 </div>
-                <input
-                  type="date"
-                  value={readingDate}
-                  onChange={(e) => setReadingDate(e.target.value)}
-                  required
-                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:border-blue-500"
-                />
+                <div>
+                  <span className="font-bold text-white">Odometer Difference Formula: </span>
+                  <span className="text-sky-300 font-mono">Day 2 (4,900) &minus; Day 1 (4,100) = 800 KM Run</span>
+                  <p className="text-slate-300 mt-0.5">
+                    On Day 1 of a new month, the engine subtracts the previous month&apos;s Day 30 or 31 reading. If empty or missing, defaults to <strong>0 KM Run</strong>.
+                  </p>
+                </div>
               </div>
+              <div className="text-[11px] font-mono text-sky-300 bg-blue-900/40 px-3 py-1.5 rounded-lg border border-blue-700/60 shrink-0">
+                Formula Active &bull; Instant Balance
+              </div>
+            </div>
 
-              <div>
-                <div className="flex justify-between items-center mb-1">
-                  <label className="text-xs font-bold uppercase font-mono text-slate-400">Truck Plate (Search by number)</label>
-                  {matchedPlateBadge && <span className="text-xs font-bold text-emerald-400 font-mono">{matchedPlateBadge}</span>}
-                </div>
-                <div className="relative">
+            {/* Date Navigator Bar */}
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-700/80">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-slate-400 uppercase font-mono">Reading Date:</span>
+                <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-700 rounded-xl px-2 py-1">
+                  <button
+                    onClick={() => {
+                      const d = new Date(readingDate);
+                      d.setDate(d.getDate() - 1);
+                      setReadingDate(d.toISOString().substring(0, 10));
+                    }}
+                    title="Previous Date"
+                    className="p-1 hover:bg-slate-800 text-slate-300 rounded font-bold transition text-xs"
+                  >
+                    ◀
+                  </button>
                   <input
-                    id="km-plate-input"
-                    list="dl-vehicles-fast"
-                    value={plateInput}
-                    onChange={(e) => handlePlateInput(e.target.value)}
-                    onKeyDown={handlePlateKeyDown}
-                    required
-                    placeholder="Type number e.g. 1196 or SSA 1196"
-                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 text-sm font-bold text-white font-mono focus:outline-none focus:border-blue-500 uppercase pr-8"
+                    type="date"
+                    value={readingDate}
+                    onChange={(e) => setReadingDate(e.target.value)}
+                    className="bg-transparent text-xs text-white font-mono font-bold focus:outline-none"
                   />
-                  <Search className="w-4 h-4 text-slate-500 absolute right-3 top-3" />
+                  <button
+                    onClick={() => {
+                      const d = new Date(readingDate);
+                      d.setDate(d.getDate() + 1);
+                      setReadingDate(d.toISOString().substring(0, 10));
+                    }}
+                    title="Next Date"
+                    className="p-1 hover:bg-slate-800 text-slate-300 rounded font-bold transition text-xs"
+                  >
+                    ▶
+                  </button>
                 </div>
-                <p className="text-[11px] text-slate-400 mt-1">
-                  Tip: Type e.g. <strong className="text-slate-200 font-mono">1196</strong> and press <kbd className="bg-slate-700 px-1 py-0.5 rounded text-[10px]">Enter</kbd> to auto-fill the full plate.
-                </p>
 
-                {previousReadingInfo && (
-                  <div className="mt-2 p-2.5 bg-blue-950/60 border border-blue-900 rounded-xl flex items-center justify-between">
-                    <div>
-                      <span className="text-[10px] uppercase font-bold text-blue-400 font-mono">Previous Reading</span>
-                      <div className="text-xs text-slate-300 font-mono">{previousReadingInfo.date}</div>
-                    </div>
-                    <div className="text-right">
-                      <span className="text-sm font-bold font-mono text-blue-300">{previousReadingInfo.odo.toLocaleString()}</span>
-                      <span className="text-[10px] text-blue-400 ml-1 font-mono">KM</span>
-                    </div>
-                  </div>
-                )}
+                <button
+                  onClick={() => setReadingDate('2026-10-02')}
+                  className={`text-xs px-2.5 py-1.5 rounded-lg font-bold border transition ${
+                    readingDate === '2026-10-02' ? 'bg-blue-600 text-white border-blue-500' : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+                  }`}
+                >
+                  Oct 2 (Sample Day 2)
+                </button>
+                <button
+                  onClick={() => setReadingDate('2026-10-01')}
+                  className={`text-xs px-2.5 py-1.5 rounded-lg font-bold border transition ${
+                    readingDate === '2026-10-01' ? 'bg-blue-600 text-white border-blue-500' : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+                  }`}
+                >
+                  Oct 1 (Month Start)
+                </button>
+                <button
+                  onClick={() => setReadingDate(new Date().toISOString().substring(0, 10))}
+                  className="text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-2.5 py-1.5 rounded-lg font-bold border border-slate-700 transition"
+                >
+                  Today
+                </button>
               </div>
 
-              <div>
-                <label className="block text-xs font-bold uppercase font-mono text-slate-400 mb-1">Today's Odometer Reading</label>
-                <div className="relative">
-                  <input
-                    id="km-reading-input"
-                    type="number"
-                    step="0.1"
-                    value={odometerInput}
-                    onChange={(e) => setOdometerInput(e.target.value)}
-                    required
-                    placeholder="e.g. 145000"
-                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 text-lg font-bold text-blue-400 font-mono focus:outline-none focus:border-blue-500 pr-12"
-                  />
-                  <span className="absolute right-3 top-3.5 text-xs font-bold text-slate-500 font-mono">KM</span>
-                </div>
-                <p className="text-[11px] text-slate-400 mt-1">
-                  Formula: Day N KM = Day N+1 Odometer &minus; Day N Odometer
-                </p>
+              {/* Action Buttons */}
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={handleConfirmAndSaveDailyFleet}
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow-lg flex items-center gap-1.5 transition cursor-pointer"
+                >
+                  <Check className="w-4 h-4" /> Confirm & Save KM Fleet ({trucks.length} Trucks)
+                </button>
+                <button
+                  onClick={handleMarkMissingIdle}
+                  className="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold px-3 py-2.5 rounded-xl border border-slate-700 flex items-center gap-1 transition"
+                >
+                  💤 Mark Empty as Idle (0 KM)
+                </button>
               </div>
-
-              <button
-                type="submit"
-                className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded-xl shadow-lg transition flex items-center justify-center gap-2 text-xs"
-              >
-                💾 Save Reading &amp; Next (Enter)
-              </button>
-            </form>
-
-            <div className="pt-3 border-t border-slate-700 flex justify-between items-center text-xs">
-              <button
-                type="button"
-                onClick={() => {
-                  const todays = kmRecords.filter(r => r.date === readingDate);
-                  const ws = XLSX.utils.json_to_sheet(todays);
-                  const wb = XLSX.utils.book_new();
-                  XLSX.utils.book_append_sheet(wb, ws, 'Readings');
-                  XLSX.writeFile(wb, `KM_Readings_${readingDate}.xlsx`);
-                }}
-                className="text-emerald-400 hover:text-emerald-300 font-semibold"
-              >
-                📥 Export Readings to Excel
-              </button>
-              <span className="text-slate-500 font-mono text-[11px]">Cursor loops automatically</span>
             </div>
           </div>
 
-          {/* Fleet Status Tracker */}
-          <div className="lg:col-span-7 bg-slate-800/90 border border-slate-700 p-6 rounded-2xl shadow-xl flex flex-col min-h-[480px] space-y-4">
-            <div className="flex flex-wrap justify-between items-center gap-2">
-              <div>
-                <h3 className="font-bold text-white text-base flex items-center gap-2">
-                  <span>📊</span> Fleet Entry Status Tracker
-                </h3>
-                <p className="text-xs text-slate-400 mt-0.5">Selected Date: <strong className="text-blue-400 font-mono">{readingDate}</strong></p>
+          {/* Mode 1: Full Fleet Table */}
+          {entryMode === 'fleet-table' && (
+            <div className="bg-slate-800/90 border border-slate-700 rounded-2xl p-5 shadow-2xl space-y-4">
+              <div className="flex flex-wrap justify-between items-center gap-3 pb-3 border-b border-slate-700">
+                <div className="flex items-center gap-2">
+                  <h4 className="font-bold text-white text-sm">
+                    Fleet Meter Readings for <span className="text-blue-400 font-mono">{readingDate}</span>
+                  </h4>
+                  <span className="text-xs text-slate-400 font-mono">
+                    (Showing all {trucks.length} Active Vehicles)
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={trackerSearch}
+                    onChange={(e) => setTrackerSearch(e.target.value)}
+                    placeholder="Search plate or driver..."
+                    className="bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono w-48"
+                  />
+                </div>
               </div>
-              <span className={`text-xs font-mono font-bold px-2.5 py-1 rounded-full ${
-                trackerPercent === 100 ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
-              }`}>
-                {trackerPercent}% Complete
-              </span>
+
+              {/* Fleet Table */}
+              <div className="overflow-x-auto max-h-[620px] custom-scrollbar border border-slate-700 rounded-xl">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead className="bg-slate-900 text-slate-400 font-mono uppercase tracking-wider sticky top-0 z-10 border-b border-slate-700">
+                    <tr>
+                      <th className="p-3 w-12 text-center">SL</th>
+                      <th className="p-3 w-48">Truck Plate &amp; Vehicle</th>
+                      <th className="p-3 w-48">Assigned Driver</th>
+                      <th className="p-3 w-48">Previous Meter Reading</th>
+                      <th className="p-3 w-56">Today&apos;s Meter Reading</th>
+                      <th className="p-3 w-52 text-center">Calculated KM Run</th>
+                      <th className="p-3 w-32 text-center">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800 bg-slate-900/60">
+                    {trucks
+                      .filter(t => !trackerSearch || t.plate.toLowerCase().includes(trackerSearch.toLowerCase()) || (t.assignedDriverName || '').toLowerCase().includes(trackerSearch.toLowerCase()))
+                      .map((t, idx) => {
+                        const existingRec = kmRecords.find(
+                          r => r.veh.toUpperCase().replace(/\s+/g, '') === t.plateNorm && r.date === readingDate
+                        );
+                        const prevInfo = getVehiclePreviousReading(t.plateNorm, readingDate);
+
+                        const currentDraft = dailyDraftOdo[t.plateNorm] !== undefined
+                          ? dailyDraftOdo[t.plateNorm]
+                          : (existingRec?.odometer != null ? String(existingRec.odometer) : '');
+
+                        const { kmRun, formulaText } = calculateOdoKmRun(currentDraft, prevInfo?.odometer);
+                        const hasEnteredOdo = currentDraft.trim() !== '' && !isNaN(parseFloat(currentDraft)) && parseFloat(currentDraft) > 0;
+
+                        return (
+                          <tr key={t.id} className="hover:bg-slate-800/80 transition">
+                            <td className="p-3 text-center font-mono text-slate-500">#{idx + 1}</td>
+                            <td className="p-3">
+                              <div className="font-bold text-white font-mono text-sm">{t.plate}</div>
+                              <div className="text-[10px] text-slate-400 font-mono">{t.type} &bull; {t.description}</div>
+                            </td>
+                            <td className="p-3">
+                              <div className="font-semibold text-slate-200">{t.assignedDriverName || 'Unassigned'}</div>
+                              <div className="text-[10px] text-slate-500 font-mono">{t.assignedDriverId || '—'}</div>
+                            </td>
+                            <td className="p-3 text-slate-300 font-mono">
+                              {prevInfo ? (
+                                <div>
+                                  <div className="font-bold text-sky-400">
+                                    {prevInfo.odometer.toLocaleString()} KM
+                                  </div>
+                                  <div className="text-[10px] text-slate-500">
+                                    on {prevInfo.date} {prevInfo.isPrevMonthEnd && <span className="text-amber-400 font-semibold">(Month End)</span>}
+                                  </div>
+                                </div>
+                              ) : (
+                                <span className="text-slate-500 italic text-[11px]">— No prior reading</span>
+                              )}
+                            </td>
+                            <td className="p-3">
+                              <div className="relative">
+                                <input
+                                  type="number"
+                                  step="1"
+                                  value={currentDraft}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    setDailyDraftOdo(prev => ({ ...prev, [t.plateNorm]: val }));
+                                  }}
+                                  placeholder={prevInfo ? `e.g. ${prevInfo.odometer + 800}` : 'e.g. 4100'}
+                                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm font-bold font-mono text-white focus:outline-none focus:border-blue-500 pr-10"
+                                />
+                                <span className="absolute right-3 top-2.5 text-[10px] text-slate-500 font-mono font-bold">KM</span>
+                              </div>
+                            </td>
+                            <td className="p-3 text-center">
+                              <div className="flex flex-col items-center">
+                                <span className={`inline-block px-3 py-1 rounded-xl text-xs font-mono font-extrabold ${
+                                  kmRun > 0
+                                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm'
+                                    : 'bg-slate-800 text-slate-400 border border-slate-700'
+                                }`}>
+                                  {kmRun > 0 ? `+${kmRun.toLocaleString()} KM` : '0 KM Run'}
+                                </span>
+                                <span className="text-[10px] text-slate-500 font-mono mt-0.5 truncate max-w-[200px]" title={formulaText}>
+                                  {formulaText}
+                                </span>
+                              </div>
+                            </td>
+                            <td className="p-3 text-center">
+                              {hasEnteredOdo ? (
+                                <span className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 text-[10px] font-bold px-2 py-0.5 rounded-full font-mono">
+                                  ✓ Logged
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setDailyDraftOdo(prev => ({ ...prev, [t.plateNorm]: prevInfo ? String(prevInfo.odometer) : '0' }));
+                                  }}
+                                  className="text-[10px] text-amber-400 hover:text-amber-300 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 px-2 py-0.5 rounded-full font-mono transition"
+                                  title="Mark as 0 KM run (parked/idle)"
+                                >
+                                  ⏳ Idle (0 KM)
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Bottom Quick Bar */}
+              <div className="flex flex-wrap justify-between items-center gap-3 pt-2 text-xs text-slate-400">
+                <span>
+                  Tip: Change any vehicle reading above and click <strong>&ldquo;Confirm &amp; Save KM Fleet&rdquo;</strong> to synchronize all numbers into the dashboard.
+                </span>
+                <button
+                  onClick={handleConfirmAndSaveDailyFleet}
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-5 py-2 rounded-xl shadow-lg transition flex items-center gap-1.5 cursor-pointer ml-auto"
+                >
+                  <Save className="w-4 h-4" /> Save &amp; Sync to Dashboard
+                </button>
+              </div>
             </div>
+          )}
 
-            {/* Progress Bar */}
-            <div className="bg-slate-900 p-4 rounded-xl border border-slate-700 space-y-2">
-              <div className="flex justify-between items-center text-xs font-mono font-bold">
-                <span className="text-emerald-400">🟢 Completed: {completedList.length} / {trucks.length}</span>
-                <span className="text-amber-400">⏳ Remaining: {remainingList.length} Trucks</span>
-              </div>
-              <div className="w-full bg-slate-800 rounded-full h-3 overflow-hidden border border-slate-700">
-                <div
-                  className="bg-emerald-500 h-full transition-all duration-300 rounded-full"
-                  style={{ width: `${trackerPercent}%` }}
-                />
-              </div>
-            </div>
+          {/* Mode 2: Single Fast Logger */}
+          {entryMode === 'fast-logger' && (
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+              {/* Fast Logger Form */}
+              <div className="lg:col-span-5 bg-slate-800/90 border border-slate-700 p-6 rounded-2xl shadow-xl space-y-4">
+                <div className="flex justify-between items-center pb-3 border-b border-slate-700">
+                  <div>
+                    <h3 className="font-bold text-white text-base flex items-center gap-2">
+                      <span>📟</span> Fast KM Meter Logger
+                    </h3>
+                    <p className="text-xs text-slate-400 mt-0.5">Quick entry with instant plate autocomplete</p>
+                  </div>
+                  <span className="bg-blue-500/20 text-blue-400 text-xs font-mono font-bold px-2 py-0.5 rounded border border-blue-500/40">
+                    ⚡ Press Enter
+                  </span>
+                </div>
 
-            {/* Tracker Filter Tabs */}
-            <div className="flex flex-wrap justify-between items-center gap-2 pb-2 border-b border-slate-700">
-              <div className="flex gap-1.5">
-                <button
-                  onClick={() => setTrackerFilter('remaining')}
-                  className={`text-xs px-3 py-1.5 rounded-lg font-bold transition flex items-center gap-1 ${
-                    trackerFilter === 'remaining' ? 'bg-amber-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
-                  }`}
-                >
-                  ⏳ Remaining ({remainingList.length})
-                </button>
-                <button
-                  onClick={() => setTrackerFilter('completed')}
-                  className={`text-xs px-3 py-1.5 rounded-lg font-bold transition flex items-center gap-1 ${
-                    trackerFilter === 'completed' ? 'bg-emerald-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
-                  }`}
-                >
-                  🟢 Completed ({completedList.length})
-                </button>
-                <button
-                  onClick={() => setTrackerFilter('all')}
-                  className={`text-xs px-3 py-1.5 rounded-lg font-bold transition ${
-                    trackerFilter === 'all' ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
-                  }`}
-                >
-                  All ({trucks.length})
-                </button>
-              </div>
+                <form onSubmit={handleMeterSubmit} className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-bold uppercase font-mono text-slate-400 mb-1">Reading Date</label>
+                    <input
+                      type="date"
+                      value={readingDate}
+                      onChange={(e) => setReadingDate(e.target.value)}
+                      required
+                      className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
 
-              <div className="flex gap-2">
-                <button
-                  onClick={handleMarkMissingIdle}
-                  className="bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-300 border border-indigo-500/40 text-[11px] font-bold px-2.5 py-1 rounded-lg transition"
-                >
-                  💤 Mark Missing as Idle (0 KM)
-                </button>
-                <input
-                  type="text"
-                  value={trackerSearch}
-                  onChange={(e) => setTrackerSearch(e.target.value)}
-                  placeholder="Filter truck..."
-                  className="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 w-32 font-mono"
-                />
-              </div>
-            </div>
+                  <div>
+                    <div className="flex justify-between items-center mb-1">
+                      <label className="text-xs font-bold uppercase font-mono text-slate-400">Truck Plate</label>
+                      {matchedPlateBadge && <span className="text-xs font-bold text-emerald-400 font-mono">{matchedPlateBadge}</span>}
+                    </div>
+                    <div className="relative">
+                      <input
+                        id="km-plate-input"
+                        list="dl-vehicles-fast"
+                        value={plateInput}
+                        onChange={(e) => handlePlateInput(e.target.value)}
+                        onKeyDown={handlePlateKeyDown}
+                        required
+                        placeholder="Type number e.g. 1196 or SSA 1196"
+                        className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 text-sm font-bold text-white font-mono focus:outline-none focus:border-blue-500 uppercase pr-8"
+                      />
+                      <Search className="w-4 h-4 text-slate-500 absolute right-3 top-3" />
+                    </div>
 
-            {/* List */}
-            <div className="flex-1 overflow-y-auto max-h-[380px] space-y-2 custom-scrollbar">
-              {(trackerFilter === 'remaining' ? remainingList : trackerFilter === 'completed' ? completedList : trucks)
-                .filter(t => !trackerSearch || t.plate.toLowerCase().includes(trackerSearch.toLowerCase()))
-                .map(t => {
-                  const logged = loggedMap[t.plateNorm];
-                  return (
-                    <div
-                      key={t.id}
-                      className={`p-3 rounded-xl border flex flex-wrap justify-between items-center gap-2 ${
-                        logged ? 'bg-slate-900/60 border-emerald-500/30' : 'bg-slate-900 border-amber-500/40'
-                      }`}
-                    >
-                      <div className="flex items-center gap-3">
-                        <span className={`w-2.5 h-2.5 rounded-full ${logged ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse'}`} />
+                    {previousReadingInfo && (
+                      <div className="mt-2 p-2.5 bg-blue-950/60 border border-blue-900 rounded-xl flex items-center justify-between">
                         <div>
-                          <div className="flex items-center gap-2">
-                            <span className="font-bold text-white font-mono text-sm">{t.plate}</span>
-                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${
-                              logged ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400'
-                            }`}>
-                              {logged ? '✅ Logged' : '⏳ Pending'}
-                            </span>
-                          </div>
-                          <p className="text-xs text-slate-400 mt-0.5">
-                            Driver: <strong className="text-slate-200">{t.assignedDriverName || 'Unassigned'}</strong>
-                          </p>
+                          <span className="text-[10px] uppercase font-bold text-blue-400 font-mono">Previous Reading</span>
+                          <div className="text-xs text-slate-300 font-mono">{previousReadingInfo.date}</div>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-sm font-bold font-mono text-blue-300">{previousReadingInfo.odo.toLocaleString()}</span>
+                          <span className="text-[10px] text-blue-400 ml-1 font-mono">KM</span>
                         </div>
                       </div>
+                    )}
+                  </div>
 
-                      <div className="flex items-center gap-2">
-                        {logged ? (
-                          <div className="flex flex-col text-right font-mono">
-                            <span className="text-[10px] text-slate-400">Odo: {logged.odo ? logged.odo.toLocaleString() : '—'}</span>
-                            <span className="text-xs font-bold text-emerald-400">+{logged.km} KM</span>
-                          </div>
-                        ) : (
-                          <>
+                  <div>
+                    <label className="block text-xs font-bold uppercase font-mono text-slate-400 mb-1">Today&apos;s Odometer Reading</label>
+                    <div className="relative">
+                      <input
+                        id="km-reading-input"
+                        type="number"
+                        step="0.1"
+                        value={odometerInput}
+                        onChange={(e) => setOdometerInput(e.target.value)}
+                        required
+                        placeholder="e.g. 145000"
+                        className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 text-lg font-bold text-blue-400 font-mono focus:outline-none focus:border-blue-500 pr-12"
+                      />
+                      <span className="absolute right-3 top-3.5 text-xs font-bold text-slate-500 font-mono">KM</span>
+                    </div>
+                  </div>
+
+                  <button
+                    type="submit"
+                    className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded-xl shadow-lg transition flex items-center justify-center gap-2 text-xs"
+                  >
+                    💾 Save Reading &amp; Next (Enter)
+                  </button>
+                </form>
+              </div>
+
+              {/* Status List */}
+              <div className="lg:col-span-7 bg-slate-800/90 border border-slate-700 p-6 rounded-2xl shadow-xl space-y-3">
+                <div className="flex justify-between items-center pb-2 border-b border-slate-700">
+                  <h4 className="font-bold text-white text-sm">Status Tracker for {readingDate}</h4>
+                  <span className="text-xs font-mono text-emerald-400 font-bold">{completedList.length} / {trucks.length} Logged</span>
+                </div>
+                <div className="max-h-[380px] overflow-y-auto space-y-2 custom-scrollbar">
+                  {trucks.map(t => {
+                    const logged = loggedMap[t.plateNorm];
+                    return (
+                      <div key={t.id} className="p-3 bg-slate-900 rounded-xl border border-slate-800 flex justify-between items-center">
+                        <div>
+                          <div className="font-bold text-white font-mono text-xs">{t.plate}</div>
+                          <div className="text-[11px] text-slate-400">{t.assignedDriverName || 'Driver'}</div>
+                        </div>
+                        <div>
+                          {logged ? (
+                            <span className="text-emerald-400 font-mono text-xs font-bold">+{logged.km} KM ({logged.odo} Odo)</span>
+                          ) : (
                             <button
                               onClick={() => {
                                 setPlateInput(t.plate);
@@ -1805,24 +2083,264 @@ TLS Logistics Fleet Management`;
                                 const odoEl = document.getElementById('km-reading-input');
                                 if (odoEl) odoEl.focus();
                               }}
-                              className="bg-blue-600/30 hover:bg-blue-600/50 text-blue-300 border border-blue-500/40 px-2.5 py-1 rounded text-xs font-bold transition"
+                              className="text-xs bg-blue-600 hover:bg-blue-500 text-white px-2.5 py-1 rounded-lg font-bold"
                             >
-                              ➕ Log
+                              Log
                             </button>
-                            <button
-                              onClick={() => sendWhatsAppReminder(t.plate)}
-                              className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1 rounded text-xs font-bold shadow transition flex items-center gap-1"
-                            >
-                              <Send className="w-3 h-3" /> WhatsApp
-                            </button>
-                          </>
-                        )}
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* =========================================================
+          TAB 3B: MONTH & DATE KM EDITOR (Interactive 31-Day Matrix)
+          ========================================================= */}
+      {activeTab === 'monthly-matrix' && (
+        <div className="bg-slate-800/90 border border-slate-700 rounded-2xl p-6 shadow-2xl space-y-5">
+          <div className="flex flex-wrap justify-between items-center gap-4 pb-4 border-b border-slate-700">
+            <div>
+              <h3 className="text-lg font-black text-white flex items-center gap-2">
+                <span>📅</span> Month &amp; Date KM Editor (Fleet Matrix)
+              </h3>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Inspect, modify, or change KM data for any specific month and date across the entire fleet.
+              </p>
+            </div>
+
+            {/* Select Month and Specific Date */}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5">
+                <span className="text-xs font-bold text-slate-400 font-mono uppercase">Month:</span>
+                <select
+                  value={matrixMonth}
+                  onChange={(e) => setMatrixMonth(e.target.value)}
+                  className="bg-transparent text-xs text-white font-mono font-bold focus:outline-none"
+                >
+                  <option value="2026-10" className="bg-slate-900">October 2026</option>
+                  <option value="2026-09" className="bg-slate-900">September 2026</option>
+                  <option value="2026-08" className="bg-slate-900">August 2026</option>
+                  <option value="2026-11" className="bg-slate-900">November 2026</option>
+                  <option value="2026-12" className="bg-slate-900">December 2026</option>
+                </select>
+              </div>
+
+              <div className="flex bg-slate-900 border border-slate-700 rounded-xl p-1 text-xs">
+                <button
+                  type="button"
+                  onClick={() => setMatrixViewMode('month-grid')}
+                  className={`px-3 py-1 rounded-lg font-bold transition cursor-pointer ${
+                    matrixViewMode === 'month-grid' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  31-Day Month Matrix
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMatrixViewMode('single-date')}
+                  className={`px-3 py-1 rounded-lg font-bold transition cursor-pointer ${
+                    matrixViewMode === 'single-date' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Specific Date Editor
+                </button>
+              </div>
             </div>
           </div>
+
+          {/* Submode 1: 31-Day Month Matrix Grid */}
+          {matrixViewMode === 'month-grid' && (
+            <div className="space-y-4">
+              <div className="flex flex-wrap justify-between items-center gap-3 text-xs">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={matrixSearch}
+                    onChange={(e) => setMatrixSearch(e.target.value)}
+                    placeholder="Search truck plate..."
+                    className="bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono w-44"
+                  />
+                  <span className="text-slate-400">
+                    Showing daily KM runs for {matrixMonth}. Click any cell to modify reading.
+                  </span>
+                </div>
+
+                <button
+                  onClick={() => {
+                    showToast(`Recalculated full monthly matrix for ${matrixMonth}! All vehicle KM runs updated.`);
+                  }}
+                  className="bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs px-3.5 py-1.5 rounded-xl transition flex items-center gap-1.5"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" /> Recalculate Month
+                </button>
+              </div>
+
+              {/* 31-day Horizontal Scroll Table */}
+              <div className="overflow-x-auto max-h-[550px] custom-scrollbar border border-slate-700 rounded-xl">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead className="bg-slate-900 text-slate-400 font-mono uppercase tracking-wider sticky top-0 z-20 border-b border-slate-700">
+                    <tr>
+                      <th className="p-2.5 sticky left-0 z-30 bg-slate-900 w-36 border-r border-slate-700">Vehicle</th>
+                      <th className="p-2.5 w-24 text-center font-bold text-sky-400 bg-slate-900 border-r border-slate-700">Total Run</th>
+                      {Array.from({ length: 31 }, (_, i) => i + 1).map(day => {
+                        const dayStr = day < 10 ? `0${day}` : `${day}`;
+                        return (
+                          <th key={day} className="p-2 text-center min-w-[50px] border-r border-slate-800">
+                            {dayStr}
+                          </th>
+                        );
+                      })}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800 bg-slate-900/60 font-mono">
+                    {trucks
+                      .filter(t => !matrixSearch || t.plate.toLowerCase().includes(matrixSearch.toLowerCase()))
+                      .map(t => {
+                        const monthRecs = kmRecords.filter(r => r.veh.toUpperCase().replace(/\s+/g, '') === t.plateNorm && r.date.startsWith(matrixMonth));
+                        const totalTruckMonthKm = monthRecs.reduce((a, b) => a + (b.km || 0), 0);
+
+                        return (
+                          <tr key={t.id} className="hover:bg-slate-800/80 transition">
+                            <td className="p-2.5 sticky left-0 z-10 bg-slate-900 font-bold text-white border-r border-slate-700 whitespace-nowrap">
+                              {t.plate}
+                            </td>
+                            <td className="p-2 text-center font-bold text-emerald-400 bg-slate-900/90 border-r border-slate-700">
+                              {totalTruckMonthKm.toLocaleString()} KM
+                            </td>
+                            {Array.from({ length: 31 }, (_, i) => i + 1).map(day => {
+                              const dayStr = day < 10 ? `0${day}` : `${day}`;
+                              const dateKey = `${matrixMonth}-${dayStr}`;
+                              const rec = kmRecords.find(
+                                r => r.veh.toUpperCase().replace(/\s+/g, '') === t.plateNorm && r.date === dateKey
+                              );
+
+                              return (
+                                <td
+                                  key={day}
+                                  onClick={() => {
+                                    const newOdoStr = prompt(`Change Meter Reading for ${t.plate} on ${dateKey}:`, rec?.odometer ? String(rec.odometer) : '');
+                                    if (newOdoStr !== null) {
+                                      const newOdo = parseFloat(newOdoStr);
+                                      const prev = getVehiclePreviousReading(t.plateNorm, dateKey);
+                                      const { kmRun } = calculateOdoKmRun(newOdoStr, prev?.odometer);
+                                      addKmRecord({
+                                        date: dateKey,
+                                        veh: t.plate,
+                                        odometer: !isNaN(newOdo) && newOdo > 0 ? newOdo : null,
+                                        km: kmRun,
+                                        driver: t.assignedDriverName || 'Driver',
+                                        notes: 'Changed via Monthly Matrix'
+                                      });
+                                      showToast(`Updated reading for ${t.plate} on ${dateKey}: ${kmRun} KM Run.`);
+                                    }
+                                  }}
+                                  className={`p-2 text-center border-r border-slate-800 transition cursor-pointer select-none ${
+                                    rec && rec.km > 0
+                                      ? 'bg-blue-900/30 text-sky-300 font-bold hover:bg-blue-700/50'
+                                      : 'text-slate-600 hover:bg-slate-800 hover:text-slate-400'
+                                  }`}
+                                  title={`${t.plate} on ${dateKey}: ${rec ? `${rec.km} KM (Odo: ${rec.odometer || '—'})` : '0 KM / Empty'}. Click to edit.`}
+                                >
+                                  {rec && rec.km > 0 ? rec.km : '—'}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        );
+                      })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Submode 2: Specific Date Single Editor */}
+          {matrixViewMode === 'single-date' && (
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center gap-3 p-3.5 bg-slate-900 border border-slate-800 rounded-xl">
+                <span className="text-xs font-bold text-slate-400 font-mono uppercase">Select Specific Date:</span>
+                <input
+                  type="date"
+                  value={matrixSpecificDate}
+                  onChange={(e) => setMatrixSpecificDate(e.target.value)}
+                  className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-mono font-bold focus:outline-none focus:border-blue-500"
+                />
+                <span className="text-xs text-slate-400">
+                  Editing KM data for all vehicles on <strong className="text-blue-400 font-mono">{matrixSpecificDate}</strong>
+                </span>
+              </div>
+
+              <div className="overflow-x-auto max-h-[500px] custom-scrollbar border border-slate-700 rounded-xl">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead className="bg-slate-900 text-slate-400 font-mono uppercase tracking-wider sticky top-0 z-10 border-b border-slate-700">
+                    <tr>
+                      <th className="p-3 w-12 text-center">SL</th>
+                      <th className="p-3 w-48">Vehicle Plate</th>
+                      <th className="p-3 w-48">Assigned Driver</th>
+                      <th className="p-3 w-44">Odometer Reading</th>
+                      <th className="p-3 w-44">Calculated KM Run</th>
+                      <th className="p-3 w-32 text-center">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800 bg-slate-900/60 font-mono">
+                    {trucks.map((t, idx) => {
+                      const rec = kmRecords.find(
+                        r => r.veh.toUpperCase().replace(/\s+/g, '') === t.plateNorm && r.date === matrixSpecificDate
+                      );
+                      const prev = getVehiclePreviousReading(t.plateNorm, matrixSpecificDate);
+
+                      return (
+                        <tr key={t.id} className="hover:bg-slate-800/80 transition">
+                          <td className="p-3 text-center text-slate-500">#{idx + 1}</td>
+                          <td className="p-3 font-bold text-white">{t.plate}</td>
+                          <td className="p-3 font-sans text-slate-300">{t.assignedDriverName || 'Driver'}</td>
+                          <td className="p-3 text-sky-400 font-bold">
+                            {rec?.odometer ? `${rec.odometer.toLocaleString()} KM` : <span className="text-slate-500 italic">Empty (0 KM)</span>}
+                          </td>
+                          <td className="p-3">
+                            <span className={`inline-block px-2.5 py-0.5 rounded-lg text-xs font-bold ${
+                              rec && rec.km > 0 ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' : 'bg-slate-800 text-slate-500'
+                            }`}>
+                              {rec ? `${rec.km} KM Run` : '0 KM Run'}
+                            </span>
+                          </td>
+                          <td className="p-3 text-center">
+                            <button
+                              onClick={() => {
+                                const newOdoStr = prompt(`Change Odometer Reading for ${t.plate} on ${matrixSpecificDate}:`, rec?.odometer ? String(rec.odometer) : '');
+                                if (newOdoStr !== null) {
+                                  const newOdo = parseFloat(newOdoStr);
+                                  const { kmRun } = calculateOdoKmRun(newOdoStr, prev?.odometer);
+                                  addKmRecord({
+                                    date: matrixSpecificDate,
+                                    veh: t.plate,
+                                    odometer: !isNaN(newOdo) && newOdo > 0 ? newOdo : null,
+                                    km: kmRun,
+                                    driver: t.assignedDriverName || 'Driver',
+                                    notes: 'Edited via Specific Date Editor'
+                                  });
+                                  showToast(`Saved ${t.plate} on ${matrixSpecificDate}: ${kmRun} KM Run.`);
+                                }
+                              }}
+                              className="text-blue-400 hover:text-white bg-blue-900/40 hover:bg-blue-800 border border-blue-700 px-3 py-1 rounded-lg text-xs font-bold transition"
+                            >
+                              Edit Reading
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

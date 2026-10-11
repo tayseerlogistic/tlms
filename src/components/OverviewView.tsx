@@ -80,7 +80,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
         // Calculate actual KM logged from records if available
         const monthKmRecords = kmRecords.filter(r => r.date && r.date.startsWith(m.key));
         const recordedKm = monthKmRecords.reduce((sum, r) => sum + (r.km || 0), 0);
-        const actualKm = recordedKm > 20000 ? recordedKm : m.baselineKm;
+        const actualKm = recordedKm > 0 ? recordedKm : m.baselineKm;
 
         // Actual fuel liters logged or calibrated
         const monthDiesel = dieselLogs.filter(d => d.date && d.date.startsWith(m.key));

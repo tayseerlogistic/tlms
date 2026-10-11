@@ -11,7 +11,9 @@ import { CashbookView } from './components/CashbookView';
 import { KmFuelView } from './components/KmFuelView';
 import { DriverPortalView } from './components/DriverPortalView';
 import { UserManagementView } from './components/UserManagementView';
+import { SettingsView } from './components/SettingsView';
 import { LoginView } from './components/LoginView';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { Lock, LogIn } from 'lucide-react';
 
 const MainAppContent: React.FC = () => {
@@ -86,14 +88,17 @@ const MainAppContent: React.FC = () => {
         )}
 
         {/* View Router */}
-        {currentTab === 'overview' && <OverviewView onNavigate={setCurrentTab} />}
-        {currentTab === 'master' && <MasterDataView />}
-        {currentTab === 'timetable' && <TimetableParserView />}
-        {currentTab === 'manifest' && <DailyManifestView />}
-        {currentTab === 'cashbook' && <CashbookView />}
-        {currentTab === 'km-fuel' && <KmFuelView />}
-        {currentTab === 'driver-portal' && <DriverPortalView />}
-        {currentTab === 'users' && (isAdmin || profile?.role === 'admin' ? <UserManagementView /> : <OverviewView onNavigate={setCurrentTab} />)}
+        <ErrorBoundary key={currentTab} fallbackTitle={`Error displaying ${currentTab}`}>
+          {currentTab === 'overview' && <OverviewView onNavigate={setCurrentTab} />}
+          {currentTab === 'timetable' && <TimetableParserView />}
+          {currentTab === 'manifest' && <DailyManifestView />}
+          {currentTab === 'km-fuel' && <KmFuelView />}
+          {currentTab === 'cashbook' && <CashbookView />}
+          {currentTab === 'settings' && <SettingsView onBackToCommandCenter={() => setCurrentTab('overview')} />}
+          {currentTab === 'master' && <SettingsView initialTab="master" onBackToCommandCenter={() => setCurrentTab('overview')} />}
+          {currentTab === 'driver-portal' && <SettingsView initialTab="driver-portal" onBackToCommandCenter={() => setCurrentTab('overview')} />}
+          {currentTab === 'users' && <SettingsView initialTab="users" onBackToCommandCenter={() => setCurrentTab('overview')} />}
+        </ErrorBoundary>
       </main>
 
       {/* Login Modal (if opened while in guest mode) */}

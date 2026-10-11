@@ -5,9 +5,7 @@ import { useTheme } from '../context/ThemeContext';
 import { UserRole } from '../types';
 import {
   Truck, FileSpreadsheet, ClipboardList, Wallet, Gauge,
-  Database, Shield, LogOut, LogIn, UserCheck, Smartphone,
-  Download, Upload, AlertTriangle, ShieldAlert, Users, Edit2,
-  Sun, Moon
+  Shield, LogOut, LogIn, Settings, Sun, Moon
 } from 'lucide-react';
 
 interface NavbarProps {
@@ -17,53 +15,21 @@ interface NavbarProps {
 }
 
 export const Navbar: React.FC<NavbarProps> = ({ currentTab, setCurrentTab, onOpenLogin }) => {
-  const { user, profile, role, logout, switchRole, isAdmin, isDriver } = useAuth();
-  const { conflicts, exportFullBackup, restoreFullBackup } = useLms();
-  const { theme, toggleTheme } = useTheme();
+  const { user, profile, role, logout, switchRole } = useAuth();
+  const { conflicts } = useLms();
+  const { theme } = useTheme();
   const [showRoleMenu, setShowRoleMenu] = useState(false);
-  const [isUploading, setIsUploading] = useState(false);
 
   const openConflictsCount = conflicts.filter(c => c.status === 'open').length;
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setIsUploading(true);
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-      try {
-        const json = JSON.parse(event.target?.result as string);
-        const res = await restoreFullBackup(json);
-        alert(res.message);
-      } catch (err: any) {
-        alert("Failed to parse backup JSON: " + err.message);
-      } finally {
-        setIsUploading(false);
-      }
-    };
-    reader.readAsText(file);
-    e.target.value = '';
-  };
-
   const navItems = [
     { id: 'overview', label: 'Command Center', icon: Gauge },
-    { id: 'master', label: 'Master Repository', icon: Database, badge: openConflictsCount > 0 ? openConflictsCount : undefined },
     { id: 'timetable', label: 'Timetable Dispatch', icon: FileSpreadsheet },
     { id: 'manifest', label: 'Daily Manifest', icon: ClipboardList },
-    { id: 'cashbook', label: 'Cashbook Pro', icon: Wallet },
     { id: 'km-fuel', label: 'KM & Fuel Balancing', icon: Truck },
-    { id: 'driver-portal', label: 'Driver Portal', icon: Smartphone },
+    { id: 'cashbook', label: 'Cashbook Pro', icon: Wallet },
+    { id: 'settings', label: 'Settings', icon: Settings, badge: openConflictsCount > 0 ? openConflictsCount : undefined },
   ];
-
-  // If user is admin, add the User & Permissions tab
-  if (isAdmin || profile?.role === 'admin') {
-    navItems.push({
-      id: 'users',
-      label: 'User & Permissions',
-      icon: ShieldAlert,
-      badge: undefined
-    });
-  }
 
   const roleColors: Record<UserRole, { bg: string; text: string; border: string }> = {
     admin: { bg: 'bg-rose-500/20', text: 'text-rose-400', border: 'border-rose-500/40' },
@@ -101,43 +67,24 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, setCurrentTab, onOpe
 
         {/* Auth & Role Status Bar */}
         <div className="flex items-center gap-3">
-          {/* Dark / Light Mode Toggle Button */}
+          {/* Quick Settings Shortcut button */}
           <button
-            onClick={toggleTheme}
-            title={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
-            className={`px-2.5 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 transition shadow-sm cursor-pointer ${
-              theme === 'dark'
-                ? 'bg-slate-800 hover:bg-slate-700 text-amber-300 border-slate-700'
-                : 'bg-white hover:bg-slate-100 text-indigo-600 border-slate-300'
+            onClick={() => setCurrentTab('settings')}
+            title="Open Settings (Master Repository, Mood, Driver Portal, Permissions, Backup)"
+            className={`px-3 py-1.5 rounded-lg border text-xs font-bold flex items-center gap-1.5 transition shadow-sm cursor-pointer ${
+              currentTab === 'settings'
+                ? 'bg-blue-600 text-white border-blue-500 shadow-blue-500/30'
+                : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
             }`}
           >
-            {theme === 'dark' ? (
-              <>
-                <Sun className="w-3.5 h-3.5 text-amber-400" />
-                <span className="hidden sm:inline text-[11px] font-mono">Light Mode</span>
-              </>
-            ) : (
-              <>
-                <Moon className="w-3.5 h-3.5 text-indigo-600" />
-                <span className="hidden sm:inline text-[11px] font-mono">Dark Mode</span>
-              </>
+            <Settings className={`w-3.5 h-3.5 ${currentTab === 'settings' ? 'text-white animate-spin-slow' : 'text-blue-400'}`} />
+            <span className="hidden sm:inline">Settings</span>
+            {openConflictsCount > 0 && (
+              <span className="bg-amber-500 text-slate-950 font-bold text-[9px] px-1.5 py-0.2 rounded-full font-mono">
+                {openConflictsCount}
+              </span>
             )}
           </button>
-
-          {/* Backup & Restore controls */}
-          <div className="hidden lg:flex items-center gap-1.5 bg-slate-800/80 p-1 rounded-lg border border-slate-700/60">
-            <button
-              onClick={exportFullBackup}
-              title="Download full JSON Master Clean Backup"
-              className="text-slate-300 hover:text-white px-2 py-1 text-xs font-medium rounded flex items-center gap-1 hover:bg-slate-700 transition"
-            >
-              <Download className="w-3.5 h-3.5 text-sky-400" /> Backup
-            </button>
-            <label className="text-slate-300 hover:text-white px-2 py-1 text-xs font-medium rounded flex items-center gap-1 hover:bg-slate-700 transition cursor-pointer">
-              <Upload className="w-3.5 h-3.5 text-emerald-400" /> Restore
-              <input type="file" accept=".json" onChange={handleFileUpload} className="hidden" disabled={isUploading} />
-            </label>
-          </div>
 
           {/* Active Role Badge & Simulator */}
           <div className="relative">

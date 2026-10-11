@@ -17,6 +17,30 @@ import {
   FileSpreadsheet, Database, Layers, ArrowDown
 } from 'lucide-react';
 
+// -------------------------------------------------------------
+// HELPER FUNCTIONS (Declared at module scope to avoid TDZ / hoisting issues)
+// -------------------------------------------------------------
+function norm(s: string): string {
+  return String(s || '').toUpperCase().replace(/\s+/g, ' ').trim();
+}
+
+function shiftDateStr(dateStr: string, deltaDays: number): string {
+  try {
+    const parts = (dateStr || '').split('-').map(Number);
+    if (parts.length === 3 && !isNaN(parts[0]) && !isNaN(parts[1]) && !isNaN(parts[2])) {
+      const dt = new Date(parts[0], parts[1] - 1, parts[2]);
+      dt.setDate(dt.getDate() + deltaDays);
+      const y = dt.getFullYear();
+      const m = String(dt.getMonth() + 1).padStart(2, '0');
+      const d = String(dt.getDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    }
+  } catch (e) {
+    // fallback
+  }
+  return dateStr;
+}
+
 export const DailyManifestView: React.FC = () => {
   const {
     drivers, manifests, schedules, saveDailyManifest, saveMultiDayManifests,
@@ -101,11 +125,6 @@ export const DailyManifestView: React.FC = () => {
     });
     return Array.from(map.values());
   }, [currentSchedule, drivers]);
-
-  // -------------------------------------------------------------
-  // HELPER: Normalize strings
-  // -------------------------------------------------------------
-  const norm = (s: string) => String(s || '').toUpperCase().replace(/\s+/g, ' ').trim();
 
   // -------------------------------------------------------------
   // AI TRAINING & RETRAINING ENGINE
@@ -413,22 +432,39 @@ export const DailyManifestView: React.FC = () => {
 
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1.5 bg-slate-800 border border-slate-700 rounded-xl px-2 py-1">
-            <Calendar className="w-3.5 h-3.5 text-slate-400 ml-1" />
+            <button
+              onClick={() => setSelectedDate(shiftDateStr(selectedDate, -1))}
+              title="Previous Day"
+              className="p-1 hover:bg-slate-700 text-slate-300 rounded font-bold transition text-xs cursor-pointer"
+            >
+              ◀
+            </button>
+            <Calendar className="w-3.5 h-3.5 text-blue-400" />
             <input
               type="date"
               value={selectedDate}
               onChange={(e) => setSelectedDate(e.target.value)}
-              className="bg-transparent text-xs text-white font-mono focus:outline-none"
+              className="bg-transparent text-xs text-white font-mono font-bold focus:outline-none"
             />
+            <button
+              onClick={() => setSelectedDate(shiftDateStr(selectedDate, 1))}
+              title="Next Day"
+              className="p-1 hover:bg-slate-700 text-slate-300 rounded font-bold transition text-xs cursor-pointer"
+            >
+              ▶
+            </button>
           </div>
 
           <div className="flex flex-wrap items-center gap-1 bg-slate-900 border border-slate-700/80 p-1 rounded-xl text-[11px] font-mono">
             {[
-              { dt: '2026-10-01', label: 'Thu 1' },
-              { dt: '2026-10-02', label: 'Fri 2' },
-              { dt: '2026-10-03', label: 'Sat 3' },
-              { dt: '2026-10-04', label: 'Sun 4' },
-              { dt: '2026-10-05', label: 'Mon 5 (Today)' }
+              { dt: '2026-10-01', label: '1 Thu' },
+              { dt: '2026-10-02', label: '2 Fri' },
+              { dt: '2026-10-03', label: '3 Sat' },
+              { dt: '2026-10-04', label: '4 Sun' },
+              { dt: '2026-10-05', label: '5 Mon' },
+              { dt: '2026-10-06', label: '6 Tue' },
+              { dt: '2026-10-07', label: '7 Wed' },
+              { dt: '2026-10-08', label: '8 Today' }
             ].map(({ dt, label }) => {
               const isSelected = selectedDate === dt;
               const hasData = manifests[dt] && Object.keys(manifests[dt]).length > 0;
@@ -437,7 +473,7 @@ export const DailyManifestView: React.FC = () => {
                 <button
                   key={dt}
                   onClick={() => setSelectedDate(dt)}
-                  className={`px-2.5 py-1 rounded-lg transition flex items-center gap-1.5 cursor-pointer ${
+                  className={`px-2 py-1 rounded-lg transition flex items-center gap-1.5 cursor-pointer ${
                     isSelected
                       ? 'bg-emerald-600 text-white font-bold shadow'
                       : 'text-slate-400 hover:text-white hover:bg-slate-800'
@@ -463,7 +499,7 @@ export const DailyManifestView: React.FC = () => {
             onClick={handleConfirmAndSave}
             className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-4 py-2 rounded-xl shadow-lg flex items-center gap-1.5 transition cursor-pointer"
           >
-            <Save className="w-4 h-4" /> &check; Confirm &amp; Save Today
+            <Check className="w-4 h-4" /> Confirm & Save Today
           </button>
         </div>
       </div>
@@ -751,7 +787,7 @@ export const DailyManifestView: React.FC = () => {
                   .map((d, idx) => {
                     const prev = getPreviousTag(idx, selectedDate);
                     const pred = predictManifestTag(idx, selectedDate);
-                    const currentVal = localTags[idx] !== undefined ? localTags[idx] : (todayTags[idx] || pred.text);
+                    const currentVal = localTags[idx] !== undefined ? localTags[idx] : (todayTags[idx] || todayTags[String(idx)] || pred.text);
 
                     const matchedRow = currentSchedule.find(r => {
                       const rn = norm(r.driverName);
@@ -839,7 +875,32 @@ export const DailyManifestView: React.FC = () => {
                               </button>
                             )}
                           </div>
-                          <div className="text-[10px] text-slate-400 mt-0.5 flex items-center gap-1">
+                          {/* Quick Status Chips */}
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {[
+                              'At Yanbu',
+                              'Under Loading at Yanbu',
+                              'On the way to Riyadh',
+                              'Under Offloading at Destination',
+                              'Coming Back to Yanbu',
+                              'Truck Under Maintenance',
+                              'Standby at Base'
+                            ].map((preset) => (
+                              <button
+                                key={preset}
+                                type="button"
+                                onClick={() => handleTagChange(idx, preset)}
+                                className={`text-[9px] px-1.5 py-0.5 rounded font-mono transition border ${
+                                  currentVal === preset
+                                    ? 'bg-blue-600 text-white border-blue-400 font-bold'
+                                    : 'bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-slate-200 border-slate-800'
+                                }`}
+                              >
+                                {preset.replace(' at Destination', '').replace(' at Yanbu', '')}
+                              </button>
+                            ))}
+                          </div>
+                          <div className="text-[10px] text-slate-400 mt-1 flex items-center gap-1">
                             <span className="text-sky-400 font-mono">💡 AI:</span> {pred.reason}
                           </div>
                         </td>
