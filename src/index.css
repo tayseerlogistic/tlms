@@ -450,7 +450,7 @@ button, input, select, textarea {
 button, [role="button"] {
   touch-action: manipulation;
 }
-input, select, textarea {
+input:not([type="checkbox"]):not([type="radio"]), select, textarea {
   min-height: 2.25rem;
 }
 :focus-visible {
