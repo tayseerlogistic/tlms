@@ -274,17 +274,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return { success: false, error: 'Invalid password for Master Administrator (admin@tls.com).' };
       }
 
-      // Valid master admin! Try Firebase Auth sign-in or create
+      // A local directory match is not a Firebase session. Require Firebase Auth
+      // to succeed before granting a session that can write to protected collections.
       try {
         await signInWithEmailAndPassword(auth, MASTER_ADMIN_EMAIL, cleanPass);
       } catch (authErr: any) {
-        if (authErr.code === 'auth/user-not-found' || authErr.code === 'auth/invalid-credential' || authErr.code === 'auth/invalid-login-credentials') {
-          try {
-            await createUserWithEmailAndPassword(auth, MASTER_ADMIN_EMAIL, cleanPass);
-          } catch (createErr) {
-            console.warn('Firebase Auth user creation note:', createErr);
-          }
-        }
+        const code = authErr?.code || '';
+        const message = code === 'auth/user-not-found'
+          ? 'This administrator is not registered in Firebase Authentication yet. Ask the Firebase project administrator to create the account, then sign in again.'
+          : code === 'auth/invalid-credential' || code === 'auth/wrong-password' || code === 'auth/invalid-login-credentials'
+            ? 'Firebase rejected these credentials. Check the Firebase Authentication account and password; the locally saved demo password is not enough.'
+            : 'Firebase sign-in failed (' + (code || 'unknown error') + '). Check the Firebase Authentication setup and try again.';
+        return { success: false, error: message };
+      }
+
+      if (!auth.currentUser) {
+        return { success: false, error: 'Firebase sign-in has not completed. Please try signing in again.' };
       }
 
       const adminProfile: UserProfile = {
@@ -322,13 +327,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return { success: false, error: 'Incorrect password for ' + cleanEmail + '.' };
       }
 
-      // Try Firebase Auth in parallel
+      // Never fall back to a localStorage-only session for protected operations.
       try {
         await signInWithEmailAndPassword(auth, cleanEmail, cleanPass);
-      } catch (e) {
-        // Continue with provisioned user session
+      } catch (authErr: any) {
+        const code = authErr?.code || '';
+        const message = code === 'auth/user-not-found'
+          ? 'This user exists in the TLMS directory but not in Firebase Authentication. Ask the administrator to create the Firebase Authentication account.'
+          : code === 'auth/invalid-credential' || code === 'auth/wrong-password' || code === 'auth/invalid-login-credentials'
+            ? 'Firebase rejected these credentials. The local TLMS password is not a substitute for a Firebase Authentication password.'
+            : 'Firebase sign-in failed (' + (code || 'unknown error') + '). Please try again or contact the administrator.';
+        return { success: false, error: message };
       }
 
+      if (!auth.currentUser) {
+        return { success: false, error: 'Firebase sign-in has not completed. Please try signing in again.' };
+      }
       setProfile(provisionedUser);
       setSimulatedRole(null);
       return { success: true };
