@@ -378,7 +378,14 @@ export const MasterDataView: React.FC = () => {
                           </button>
                           {isAdmin && (
                             <button
-                              onClick={() => { if (confirm(`Delete driver ${d.name}?`)) deleteDriver(d.id); }}
+                              onClick={async () => {
+                                if (!confirm(`Delete driver ${d.name}?`)) return;
+                                try {
+                                  await deleteDriver(d.id);
+                                } catch (error) {
+                                  alert(error instanceof Error ? error.message : 'Could not delete driver.');
+                                }
+                              }}
                               className="text-rose-400 hover:text-rose-300 p-1"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
