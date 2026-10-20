@@ -89,20 +89,27 @@ export const CashbookView: React.FC = () => {
       return;
     }
 
-    await addCashTransaction({
-      date: (fd.get('date') as string) || new Date().toISOString().substring(0, 10),
-      dateISO: (fd.get('date') as string) || new Date().toISOString().substring(0, 10),
-      account: fd.get('account') as string,
-      type,
-      employee,
-      category: (fd.get('category') as string) || 'General',
-      amount,
-      description: (fd.get('description') as string) || '',
-      receipt: (fd.get('receipt') as string) || '',
-      status: 'Posted'
-    });
-
-    setIsModalOpen(false);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      alert('Enter a valid transaction amount greater than zero.');
+      return;
+    }
+    try {
+      await addCashTransaction({
+        date: (fd.get('date') as string) || new Date().toISOString().substring(0, 10),
+        dateISO: (fd.get('date') as string) || new Date().toISOString().substring(0, 10),
+        account: fd.get('account') as string,
+        type,
+        employee,
+        category: (fd.get('category') as string) || 'General',
+        amount,
+        description: (fd.get('description') as string) || '',
+        receipt: (fd.get('receipt') as string) || '',
+        status: 'Posted'
+      });
+      setIsModalOpen(false);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Unable to save transaction. Check your connection and permissions.');
+    }
   };
 
   const handleAddEmployee = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -146,9 +153,13 @@ export const CashbookView: React.FC = () => {
       setAccountError('An account with this name already exists.');
       return;
     }
-    await addCashAccount({ name, opening, active: true });
-    setAccountName('');
-    setAccountOpening('0');
+    try {
+      await addCashAccount({ name, opening, active: true });
+      setAccountName('');
+      setAccountOpening('0');
+    } catch (error) {
+      setAccountError(error instanceof Error ? error.message : 'Unable to create account. Check your connection and permissions.');
+    }
   };
 
   const handleRemoveAccount = async (id: string, name: string) => {
@@ -208,7 +219,7 @@ export const CashbookView: React.FC = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {(isCashier || isAdmin) && <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <section className="rounded-2xl border border-slate-700 bg-slate-800/70 p-4 space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2 text-white font-bold text-sm"><Building2 className="w-4 h-4 text-blue-400" /> Accounts</div>
@@ -252,7 +263,7 @@ export const CashbookView: React.FC = () => {
             </div>
           </>}
         </section>
-      </div>
+      </div>}
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
