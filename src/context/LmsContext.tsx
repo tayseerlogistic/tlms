@@ -308,9 +308,11 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     // Listen to cash accounts
     const unsubCashAccounts = onSnapshot(collection(db, 'cash_accounts'), (snapshot) => {
-      if (!snapshot.empty) {
-        setCashAccounts(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as CashAccount)));
-      }
+      const remote = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as CashAccount));
+      const remoteIds = new Set(remote.map(account => account.id));
+      // Keep built-in accounts available until explicitly migrated; overlay remote versions by ID.
+      const defaults = INITIAL_CASH_ACCOUNTS.filter(account => !remoteIds.has(account.id));
+      setCashAccounts([...defaults, ...remote]);
     }, (err) => {
       console.warn("Cash accounts Firestore listener notice:", err.message);
     });
