@@ -251,6 +251,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             });
           }
         }
+      } else {
+        // A cached local profile is not proof of a Firebase-authenticated session.
+        // Clear it so the UI cannot look signed in while Firestore writes are unauthenticated.
+        setProfile(null);
+        setSimulatedRole(null);
       }
       setLoading(false);
     });
@@ -343,7 +348,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (!auth.currentUser) {
         return { success: false, error: 'Firebase sign-in has not completed. Please try signing in again.' };
       }
-      setProfile(provisionedUser);
+      const signedInUser = auth.currentUser;
+      if (!signedInUser) {
+        return { success: false, error: 'Firebase sign-in has not completed. Please try signing in again.' };
+      }
+      // Never expose the locally cached password as part of the active user profile.
+      const signedInProfile: UserProfile = {
+        uid: signedInUser.uid,
+        email: signedInUser.email || provisionedUser.email,
+        name: provisionedUser.name,
+        role: provisionedUser.role,
+        status: provisionedUser.status,
+        driverId: provisionedUser.driverId,
+        driverName: provisionedUser.driverName,
+        notes: provisionedUser.notes,
+        createdAt: provisionedUser.createdAt,
+        updatedAt: provisionedUser.updatedAt,
+        createdBy: provisionedUser.createdBy
+      };
+      setProfile(signedInProfile);
       setSimulatedRole(null);
       return { success: true };
     }
