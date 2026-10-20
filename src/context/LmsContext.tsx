@@ -582,15 +582,12 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       createdBy: profile?.email || user?.email || 'Cashier'
     };
 
-    setCashTransactions(prev => [newTx, ...prev]);
-
-    if (user || profile) {
-      try {
-        await setDoc(doc(db, 'cashbook', id), newTx);
-      } catch (e) {
-        console.warn("Error saving cash transaction to Firestore:", e);
-      }
+    if (user) {
+      await setDoc(doc(db, 'cashbook', id), newTx);
+    } else {
+      throw new Error('A valid signed-in Firebase account is required to post Cashbook transactions.');
     }
+    setCashTransactions(prev => [newTx, ...prev]);
   };
 
   const addCashAccount = async (accountData: Omit<CashAccount, 'id'>) => {
@@ -598,14 +595,9 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       ...accountData,
       id: 'acc-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).slice(2, 6).toUpperCase()
     };
+    if (!user) throw new Error('A valid signed-in Firebase account is required to create Cashbook accounts.');
+    await setDoc(doc(db, 'cash_accounts', account.id), account);
     setCashAccounts(prev => [...prev, account]);
-    if (user || profile) {
-      try {
-        await setDoc(doc(db, 'cash_accounts', account.id), account);
-      } catch (e) {
-        console.warn('Error saving cash account to Firestore (cached locally):', e);
-      }
-    }
   };
 
   const addCashEmployee = async (rawName: string) => {
@@ -632,14 +624,9 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteCashAccount = async (id: string) => {
+    if (!user) throw new Error('A valid signed-in Firebase account is required to remove Cashbook accounts.');
+    await deleteDoc(doc(db, 'cash_accounts', id));
     setCashAccounts(prev => prev.filter(account => account.id !== id));
-    if (user || profile) {
-      try {
-        await deleteDoc(doc(db, 'cash_accounts', id));
-      } catch (e) {
-        console.warn('Error deleting cash account from Firestore:', e);
-      }
-    }
   };
 
   const reverseCashTransaction = async (id: string, reason?: string) => {
