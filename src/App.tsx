@@ -58,7 +58,7 @@ const MainAppContent: React.FC = () => {
       />
 
       {/* Main Body */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6">
+      <main className="flex-1 w-full min-w-0 max-w-none mx-auto px-[clamp(0.75rem,2vw,2rem)] py-6">
         {/* If user is browsing in guest mode, show notice that self-registration is locked and account login is required for modifications */}
         {!isAuthenticated && (
           <div className="mb-6 p-4 bg-gradient-to-r from-blue-900/40 via-indigo-900/30 to-blue-900/40 border border-blue-500/30 rounded-2xl flex flex-wrap items-center justify-between gap-4 shadow-lg">
