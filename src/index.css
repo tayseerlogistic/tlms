@@ -528,14 +528,15 @@ main, main > *, section, article, form, .grid, .flex {
 input, select, textarea, button {
   font: inherit;
 }
-input:not([type="checkbox"]):not([type="radio"]),
-select,
-textarea {
+html.light input:not([type="checkbox"]):not([type="radio"]),
+html.light select,
+html.light textarea {
   color: #0f172a;
   background-color: #ffffff;
   border-color: #94a3b8;
 }
-input::placeholder, textarea::placeholder {
+html.light input::placeholder,
+html.light textarea::placeholder {
   color: #64748b;
   opacity: 1;
 }
