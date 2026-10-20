@@ -22,7 +22,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     } catch {
       // fallback
     }
-    return 'dark'; // default enterprise logistics dark theme
+    return 'light'; // default high-contrast corporate light theme
   });
 
   useEffect(() => {
