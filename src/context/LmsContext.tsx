@@ -90,13 +90,9 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        // Only accept if count and sequence exactly match locked master 64 sequence
-        if (
-          Array.isArray(parsed) &&
-          parsed.length === INITIAL_DRIVERS.length &&
-          parsed[0]?.name === INITIAL_DRIVERS[0]?.name &&
-          parsed[30]?.name === INITIAL_DRIVERS[30]?.name
-        ) {
+        // Accept the user-managed offline list, including intentional deletions.
+        // A fixed-length check restored deleted drivers after refresh.
+        if (Array.isArray(parsed)) {
           base = parsed;
         }
       } catch (e) {
@@ -249,22 +245,11 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       console.warn("Trucks Firestore listener notice:", err.message);
     });
 
-    // Listen to drivers (merge safely, preserving locked master 64 sequence)
+    // Firestore is authoritative: merging a smaller remote list resurrected deleted drivers.
     const unsubDrivers = onSnapshot(collection(db, 'drivers'), (snapshot) => {
       if (!snapshot.empty) {
         const remote = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Driver));
-        setDrivers(prev => {
-          if (remote.length >= prev.length) {
-            return remote;
-          }
-          // Merge remote updates with existing master fleet to prevent truncation
-          const map = new Map(prev.map(d => [d.id, d]));
-          remote.forEach(r => {
-            const existing = map.get(r.id);
-            map.set(r.id, existing ? { ...existing, ...r, history: { ...(existing.history || {}), ...(r.history || {}) } } : r);
-          });
-          return Array.from(map.values());
-        });
+        setDrivers(remote);
       }
     }, (err) => {
       console.warn("Drivers Firestore listener notice:", err.message);
@@ -440,13 +425,15 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteDriver = async (id: string) => {
-    setDrivers(prev => prev.filter(d => d.id !== id));
-    if (user || profile) {
-      try {
-        await deleteDoc(doc(db, 'drivers', id));
-      } catch (e) {
-        console.warn("Error deleting driver from Firestore:", e);
-      }
+    if (!auth.currentUser) {
+      throw new Error('A valid signed-in Firebase account is required to delete a driver.');
+    }
+    try {
+      await deleteDoc(doc(db, 'drivers', id));
+      setDrivers(prev => prev.filter(d => d.id !== id));
+    } catch (e) {
+      console.error("Error deleting driver from Firestore:", e);
+      throw new Error('Driver could not be deleted from the database. Check Firebase Authentication and Firestore rules, then try again.');
     }
   };
 
