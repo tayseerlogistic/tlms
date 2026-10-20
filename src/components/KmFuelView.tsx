@@ -1822,9 +1822,9 @@ TLS Logistics Fleet Management`;
                 </div>
 
                 <button
-                  onClick={() => setReadingDate('2026-10-02')}
+                  onClick={() => setReadingDate(localISODate())}
                   className={`text-xs px-2.5 py-1.5 rounded-lg font-bold border transition ${
-                    readingDate === '2026-10-02' ? 'bg-blue-600 text-white border-blue-500' : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+                    readingDate === localISODate() ? 'bg-blue-600 text-white border-blue-500' : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
                   }`}
                 >
                   Oct 2 (Sample Day 2)
