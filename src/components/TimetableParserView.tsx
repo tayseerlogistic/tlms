@@ -1805,6 +1805,8 @@ export const TimetableParserView: React.FC = () => {
                         <input
                           type="checkbox"
                           checked={visibleColumns.includes(c.key)}
+                          disabled
+                          aria-label={`${c.label} is a required schedule column`}
                           onChange={() => toggleColumn(c.key)}
                           className="rounded text-blue-600 focus:ring-0"
                         />
