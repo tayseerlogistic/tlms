@@ -607,7 +607,6 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       throw new Error('This employee already exists in the Cashbook directory.');
     }
     const id = 'emp-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).slice(2, 7).toUpperCase();
-    const employee = { id, name };
     if (!user) throw new Error('A valid signed-in Firebase account is required to manage Cashbook employees.');
     await setDoc(doc(db, 'cash_employees', id), { name, createdAt: new Date().toISOString() });
   };
