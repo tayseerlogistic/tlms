@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { useLms } from '../context/LmsContext';
 import { useAuth } from '../context/AuthContext';
 import { CashTransaction } from '../types';
@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 
 export const CashbookView: React.FC = () => {
-  const { cashTransactions, cashAccounts, drivers, addCashTransaction, addCashAccount, deleteCashAccount, reverseCashTransaction, deleteCashTransaction } = useLms();
+  const { cashTransactions, cashAccounts, cashEmployees, drivers, addCashTransaction, addCashAccount, deleteCashAccount, addCashEmployee, deleteCashEmployee, reverseCashTransaction, deleteCashTransaction } = useLms();
   const { isCashier, isAdmin } = useAuth();
 
   const [searchTerm, setSearchTerm] = useState('');
@@ -20,28 +20,10 @@ export const CashbookView: React.FC = () => {
   const [showAccountManager, setShowAccountManager] = useState(false);
   const [showEmployeeManager, setShowEmployeeManager] = useState(false);
   const [newEmployeeName, setNewEmployeeName] = useState('');
-  const [employeeNames, setEmployeeNames] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem('tls_cashbook_employees_v1');
-      return saved ? JSON.parse(saved) as string[] : [];
-    } catch {
-      return [];
-    }
-  });
+  const employeeNames = cashEmployees.map(employee => employee.name);
   const [accountName, setAccountName] = useState('');
   const [accountOpening, setAccountOpening] = useState('0');
   const [accountError, setAccountError] = useState('');
-  useEffect(() => {
-    if (employeeNames.length === 0 && drivers.length > 0 && !localStorage.getItem('tls_cashbook_employees_initialized')) {
-      const initial = Array.from(new Set(drivers.map(d => d.name).filter(Boolean))).sort();
-      setEmployeeNames(initial);
-      localStorage.setItem('tls_cashbook_employees_v1', JSON.stringify(initial));
-      localStorage.setItem('tls_cashbook_employees_initialized', '1');
-    }
-  }, [drivers, employeeNames.length]);
-  useEffect(() => {
-    localStorage.setItem('tls_cashbook_employees_v1', JSON.stringify(employeeNames));
-  }, [employeeNames]);
 
   // Statement view state
   const [statementEmployee, setStatementEmployee] = useState<string | null>(null);
@@ -123,24 +105,32 @@ export const CashbookView: React.FC = () => {
     setIsModalOpen(false);
   };
 
-  const handleAddEmployee = (e: React.FormEvent<HTMLFormElement>) => {
+  const handleAddEmployee = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const name = newEmployeeName.trim();
     if (!name) return;
-    if (employeeNames.some(existing => existing.toLowerCase() === name.toLowerCase())) {
-      alert('This employee is already in the Cashbook directory.');
+    if (employeeNames.some(existing => existing.toLowerCase() === name.toLowerCase()) || drivers.some(driver => driver.name.toLowerCase() === name.toLowerCase())) {
+      alert('This employee already exists in the Cashbook directory or fleet driver list.');
       return;
     }
-    setEmployeeNames(prev => [...prev, name].sort((a, b) => a.localeCompare(b)));
-    setNewEmployeeName('');
+    try {
+      await addCashEmployee(name);
+      setNewEmployeeName('');
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Unable to add employee. Please check your access and try again.');
+    }
   };
 
-  const handleRemoveEmployee = (name: string) => {
+  const handleRemoveEmployee = async (id: string, name: string) => {
     if (cashTransactions.some(t => t.employee === name && t.status !== 'Reversed')) {
-      const ok = confirm(`\u201c${name}\u201d has transactions in the ledger. Remove them from the employee picker? Historical transactions will remain.`);
+      const ok = confirm(`“${name}” has transactions in the ledger. Remove them from the employee picker? Historical transactions will remain.`);
       if (!ok) return;
     }
-    setEmployeeNames(prev => prev.filter(employee => employee !== name));
+    try {
+      await deleteCashEmployee(id);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Unable to remove employee. Please check your access and try again.');
+    }
   };
 
   const handleAddAccount = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -235,7 +225,7 @@ export const CashbookView: React.FC = () => {
             <div className="sm:col-span-3 space-y-1">
               {cashAccounts.map(account => <div key={account.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-slate-900/80 px-3 py-2 text-xs">
                 <span className="text-slate-100">{account.name} <span className="text-slate-400">· opening SAR {account.opening.toLocaleString()}</span></span>
-                <button type="button" onClick={() => handleRemoveAccount(account.id, account.name)} className="text-rose-300 hover:text-rose-200" aria-label={`Remove ${account.name}`}>Remove</button>
+                {isAdmin && <button type="button" onClick={() => handleRemoveAccount(account.id, account.name)} className="text-rose-300 hover:text-rose-200" aria-label={`Remove ${account.name}`}>Remove</button>}
               </div>)}
             </div>
           </form>}
@@ -254,11 +244,11 @@ export const CashbookView: React.FC = () => {
               <button type="submit" className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-500">Add Employee</button>
             </form>
             <div className="max-h-48 overflow-y-auto space-y-1">
-              {employeeNames.map(name => <div key={name} className="flex items-center justify-between gap-2 rounded-lg bg-slate-900/80 px-3 py-2 text-xs">
-                <span className="text-slate-100">{name}</span>
-                <button type="button" onClick={() => handleRemoveEmployee(name)} className="text-rose-300 hover:text-rose-200">Remove</button>
+              {cashEmployees.map(employee => <div key={employee.id} className="flex items-center justify-between gap-2 rounded-lg bg-slate-900/80 px-3 py-2 text-xs">
+                <span className="text-slate-100">{employee.name}</span>
+                <button type="button" onClick={() => handleRemoveEmployee(employee.id, employee.name)} className="text-rose-300 hover:text-rose-200">Remove</button>
               </div>)}
-              {!employeeNames.length && <p className="text-xs text-slate-400">No Cashbook employees yet. Add one above.</p>}
+              {!cashEmployees.length && <p className="text-xs text-slate-400">No custom Cashbook employees yet. Fleet drivers remain available in the transaction picker.</p>}
             </div>
           </>}
         </section>
