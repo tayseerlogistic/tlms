@@ -126,9 +126,34 @@ service cloud.firestore {
     }
 
     // Cashbook Accounts
+    // The client uses cash_accounts; keep the legacy path readable for existing deployments.
+    match /cash_accounts/{accId} {
+      allow read: if isSignedIn();
+      allow create, update: if (isAdmin() || isCashier()) && isValidId(accId)
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 80
+        && request.resource.data.opening is number
+        && request.resource.data.opening >= 0;
+      allow delete: if isAdmin() && isValidId(accId);
+    }
     match /cashbook_accounts/{accId} {
       allow read: if isSignedIn();
       allow write: if isAdmin() && isValidId(accId);
+    }
+
+    // Separate Cashbook employee directory; this never modifies fleet driver records.
+    match /cash_employees/{employeeId} {
+      allow read: if isSignedIn() && isStaff();
+      allow create: if (isAdmin() || isCashier()) && isValidId(employeeId)
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 120;
+      allow update: if (isAdmin() || isCashier()) && isValidId(employeeId)
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 120;
+      allow delete: if (isAdmin() || isCashier()) && isValidId(employeeId);
     }
 
     // KM meter records
