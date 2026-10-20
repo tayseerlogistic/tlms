@@ -167,7 +167,13 @@ export const CashbookView: React.FC = () => {
       alert('This account has ledger history and cannot be removed safely. Keep it for reporting and create a new account instead.');
       return;
     }
-    if (confirm(`Delete account “${name}”?`)) await deleteCashAccount(id);
+    if (confirm(`Delete account “${name}”?`)) {
+      try {
+        await deleteCashAccount(id);
+      } catch (error) {
+        alert(error instanceof Error ? error.message : 'Unable to remove account. Check your connection and permissions.');
+      }
+    }
   };
 
   const exportExcel = () => {
@@ -236,7 +242,7 @@ export const CashbookView: React.FC = () => {
             <div className="sm:col-span-3 space-y-1">
               {cashAccounts.map(account => <div key={account.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-slate-900/80 px-3 py-2 text-xs">
                 <span className="text-slate-100">{account.name} <span className="text-slate-400">· opening SAR {account.opening.toLocaleString()}</span></span>
-                {isAdmin && <button type="button" onClick={() => handleRemoveAccount(account.id, account.name)} className="text-rose-300 hover:text-rose-200" aria-label={`Remove ${account.name}`}>Remove</button>}
+                {isAdmin && !['acc-001', 'acc-002', 'acc-003'].includes(account.id) && <button type="button" onClick={() => handleRemoveAccount(account.id, account.name)} className="text-rose-300 hover:text-rose-200" aria-label={`Remove ${account.name}`}>Remove</button>}
               </div>)}
             </div>
           </form>}
