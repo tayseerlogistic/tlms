@@ -619,6 +619,9 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteCashAccount = async (id: string) => {
+    if (INITIAL_CASH_ACCOUNTS.some(account => account.id === id)) {
+      throw new Error('Built-in Cashbook accounts cannot be deleted.');
+    }
     if (!user) throw new Error('A valid signed-in Firebase account is required to remove Cashbook accounts.');
     await deleteDoc(doc(db, 'cash_accounts', id));
     setCashAccounts(prev => prev.filter(account => account.id !== id));
