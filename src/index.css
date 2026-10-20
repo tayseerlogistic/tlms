@@ -678,3 +678,16 @@ html.light .bg-amber-700,
 html.light .bg-rose-600 {
   color: #ffffff !important;
 }
+
+/* Preserve white labels on solid primary action buttons in light mode */
+html.light button[class~="bg-blue-600"],
+html.light button[class~="bg-blue-700"],
+html.light button[class~="bg-indigo-600"],
+html.light button[class~="bg-indigo-700"],
+html.light button[class~="bg-emerald-600"],
+html.light button[class~="bg-emerald-700"],
+html.light button[class~="bg-amber-700"],
+html.light button[class~="bg-rose-600"],
+html.light button[class~="bg-purple-600"] {
+  color: #ffffff !important;
+}
