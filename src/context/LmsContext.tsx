@@ -90,13 +90,9 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        // Only accept if count and sequence exactly match locked master 64 sequence
-        if (
-          Array.isArray(parsed) &&
-          parsed.length === INITIAL_DRIVERS.length &&
-          parsed[0]?.name === INITIAL_DRIVERS[0]?.name &&
-          parsed[30]?.name === INITIAL_DRIVERS[30]?.name
-        ) {
+        // Accept the user-managed offline list, including intentional deletions.
+        // A fixed-length check restored deleted drivers after refresh.
+        if (Array.isArray(parsed)) {
           base = parsed;
         }
       } catch (e) {
@@ -249,22 +245,11 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       console.warn("Trucks Firestore listener notice:", err.message);
     });
 
-    // Listen to drivers (merge safely, preserving locked master 64 sequence)
+    // Firestore is authoritative: merging a smaller remote list resurrected deleted drivers.
     const unsubDrivers = onSnapshot(collection(db, 'drivers'), (snapshot) => {
       if (!snapshot.empty) {
         const remote = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Driver));
-        setDrivers(prev => {
-          if (remote.length >= prev.length) {
-            return remote;
-          }
-          // Merge remote updates with existing master fleet to prevent truncation
-          const map = new Map(prev.map(d => [d.id, d]));
-          remote.forEach(r => {
-            const existing = map.get(r.id);
-            map.set(r.id, existing ? { ...existing, ...r, history: { ...(existing.history || {}), ...(r.history || {}) } } : r);
-          });
-          return Array.from(map.values());
-        });
+        setDrivers(remote);
       }
     }, (err) => {
       console.warn("Drivers Firestore listener notice:", err.message);
@@ -440,13 +425,15 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteDriver = async (id: string) => {
-    setDrivers(prev => prev.filter(d => d.id !== id));
-    if (user || profile) {
-      try {
-        await deleteDoc(doc(db, 'drivers', id));
-      } catch (e) {
-        console.warn("Error deleting driver from Firestore:", e);
-      }
+    if (!auth.currentUser) {
+      throw new Error('A valid signed-in Firebase account is required to delete a driver.');
+    }
+    try {
+      await deleteDoc(doc(db, 'drivers', id));
+      setDrivers(prev => prev.filter(d => d.id !== id));
+    } catch (e) {
+      console.error("Error deleting driver from Firestore:", e);
+      throw new Error('Driver could not be deleted from the database. Check Firebase Authentication and Firestore rules, then try again.');
     }
   };
 
@@ -739,17 +726,30 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const batchSaveKmRecords = async (records: (Omit<KmRecord, 'id'> | KmRecord)[]) => {
     if (!records.length) return;
 
+    // Generate each record ID once and reuse it for both local state and Firestore.
+    // Previously the two loops generated different IDs, which could duplicate records on refresh.
+    const preparedByKey = new Map<string, KmRecord>();
+    records.forEach(rec => {
+      const normalizedPlate = rec.veh.toUpperCase().replace(/\s+/g, '');
+      const key = `${rec.date}__${normalizedPlate}`;
+      const existing = kmRecords.find(
+        item => item.date === rec.date && item.veh.toUpperCase().replace(/\s+/g, '') === normalizedPlate
+      );
+      const id = ('id' in rec && rec.id) ? rec.id : existing?.id ||
+        ('KM-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).substring(2, 6).toUpperCase());
+      preparedByKey.set(key, {
+        ...rec,
+        id,
+        loggedBy: profile?.email || user?.email || 'Dispatcher'
+      } as KmRecord);
+    });
+    const prepared = Array.from(preparedByKey.values());
+
     setKmRecords(prev => {
       const copy = [...prev];
-      records.forEach(rec => {
-        const id = 'id' in rec && rec.id ? rec.id : 'KM-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).substring(2, 6).toUpperCase();
-        const fullRec: KmRecord = {
-          ...rec,
-          id,
-          loggedBy: profile?.email || user?.email || 'Dispatcher'
-        };
+      prepared.forEach(fullRec => {
         const existingIdx = copy.findIndex(
-          r => r.date === rec.date && r.veh.toUpperCase().replace(/\s+/g, '') === rec.veh.toUpperCase().replace(/\s+/g, '')
+          item => item.date === fullRec.date && item.veh.toUpperCase().replace(/\s+/g, '') === fullRec.veh.toUpperCase().replace(/\s+/g, '')
         );
         if (existingIdx >= 0) {
           copy[existingIdx] = { ...copy[existingIdx], ...fullRec, id: copy[existingIdx].id };
@@ -762,17 +762,12 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     if (user || profile) {
       try {
-        for (const rec of records) {
-          const id = 'id' in rec && rec.id ? rec.id : 'KM-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).substring(2, 6).toUpperCase();
-          const fullRec: KmRecord = {
-            ...rec,
-            id,
-            loggedBy: profile?.email || user?.email || 'Dispatcher'
-          };
-          await setDoc(doc(db, 'km_records', id), fullRec);
+        for (const record of prepared) {
+          await setDoc(doc(db, 'km_records', record.id), record);
         }
       } catch (e) {
-        console.warn("Error saving batch KM records in Firestore:", e);
+        console.error("Error saving batch KM records in Firestore:", e);
+        throw new Error('KM records were added to the local view but could not be fully synced to Firestore. Check your connection, Firebase Authentication, and Firestore rules.');
       }
     }
   };

@@ -41,6 +41,11 @@ function shiftDateStr(dateStr: string, deltaDays: number): string {
   return dateStr;
 }
 
+function localTodayISO(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+}
+
 export const DailyManifestView: React.FC = () => {
   const {
     drivers, manifests, schedules, saveDailyManifest, saveMultiDayManifests,
@@ -49,7 +54,7 @@ export const DailyManifestView: React.FC = () => {
 
   const { isDispatcher, isAdmin } = useAuth();
 
-  const [selectedDate, setSelectedDate] = useState(() => '2026-10-05');
+  const [selectedDate, setSelectedDate] = useState(() => localTodayISO());
   const [subTab, setSubTab] = useState<'manifest' | 'history' | 'learning' | 'bulk' | 'paste-multi'>('manifest');
   const [selectedDriverIdx, setSelectedDriverIdx] = useState(0);
 
@@ -242,12 +247,12 @@ export const DailyManifestView: React.FC = () => {
 
     setIsSyncingMulti(false);
     showToast(
-      `⚡ Successfully synchronized ${parsedMultiResult.totalEntriesCount} manifest tags across ${parsedMultiResult.detectedDates.length} dates (${parsedMultiResult.detectedDates.join(', ')})! Real-time suggestions updated for 2026-10-05.`,
+      `⚡ Successfully synchronized ${parsedMultiResult.totalEntriesCount} manifest tags across ${parsedMultiResult.detectedDates.length} dates (${parsedMultiResult.detectedDates.join(', ')})! Real-time suggestions updated for today.`,
       'success'
     );
 
     // Switch to Oct 5 (today) and manifest view
-    setSelectedDate('2026-10-05');
+    setSelectedDate(localTodayISO());
     setSubTab('manifest');
   };
 
@@ -456,16 +461,12 @@ export const DailyManifestView: React.FC = () => {
           </div>
 
           <div className="flex flex-wrap items-center gap-1 bg-slate-900 border border-slate-700/80 p-1 rounded-xl text-[11px] font-mono">
-            {[
-              { dt: '2026-10-01', label: '1 Thu' },
-              { dt: '2026-10-02', label: '2 Fri' },
-              { dt: '2026-10-03', label: '3 Sat' },
-              { dt: '2026-10-04', label: '4 Sun' },
-              { dt: '2026-10-05', label: '5 Mon' },
-              { dt: '2026-10-06', label: '6 Tue' },
-              { dt: '2026-10-07', label: '7 Wed' },
-              { dt: '2026-10-08', label: '8 Today' }
-            ].map(({ dt, label }) => {
+            {Array.from({ length: 7 }, (_, index) => {
+              const dt = shiftDateStr(localTodayISO(), index - 3);
+              const dayDate = new Date(`${dt}T12:00:00`);
+              const label = `${Number(dt.slice(8))} ${dayDate.toLocaleDateString('en-US', { weekday: 'short' })}${dt === localTodayISO() ? ' Today' : ''}`;
+              return { dt, label };
+            }).map(({ dt, label }) => {
               const isSelected = selectedDate === dt;
               const hasData = manifests[dt] && Object.keys(manifests[dt]).length > 0;
               const hasSchedule = schedules[dt] && schedules[dt].rows && schedules[dt].rows.length > 0;
@@ -1317,7 +1318,7 @@ FC Supply for ZAMIL - Under Loading at Yanbu
                     Manifest Sheet Validated &amp; Ready for Synchronization
                   </h4>
                   <p className="text-xs text-sky-200 mt-0.5">
-                    Clicking sync updates manifests for <strong>{parsedMultiResult.detectedDates.join(', ')}</strong>, saves each driver&apos;s history timeline, retrains the progression engine, and immediately generates high-confidence predictions for <strong>2026-10-05</strong>.
+                    Clicking sync updates manifests for <strong>{parsedMultiResult.detectedDates.join(', ')}</strong>, saves each driver&apos;s history timeline, retrains the progression engine, and immediately generates high-confidence predictions for <strong>{selectedDate}</strong>.
                   </p>
                 </div>
                 <button

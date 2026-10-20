@@ -23,6 +23,27 @@ import {
   Sparkles, Filter, Check, Phone, Eye, Save
 } from 'lucide-react';
 
+function localISODate(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+}
+
+function monthKeyToISO(value: unknown): string | null {
+  const raw = String(value ?? '').trim();
+  const numeric = raw.match(/^(\d{4})[-/](\d{1,2})(?:[-/]\d{1,2})?$/);
+  if (numeric) {
+    const month = Number(numeric[2]);
+    if (month >= 1 && month <= 12) return `${numeric[1]}-${String(month).padStart(2, '0')}`;
+  }
+  const monthNames = ['january','february','march','april','may','june','july','august','september','october','november','december'];
+  const normalized = raw.toLowerCase();
+  const monthIndex = monthNames.findIndex(name => normalized.includes(name) || normalized.slice(0, 3) === name.slice(0, 3));
+  if (monthIndex < 0) return null;
+  const yearMatch = normalized.match(/(?:19|20)\d{2}/);
+  const year = yearMatch ? Number(yearMatch[0]) : new Date().getFullYear();
+  return `${year}-${String(monthIndex + 1).padStart(2, '0')}`;
+}
+
 // Register Chart.js elements
 Chart.register(
   BarController,
@@ -45,18 +66,34 @@ export const KmFuelView: React.FC = () => {
 
   const { isAdmin, isDispatcher, isCashier } = useAuth();
 
+  const monthOptions = (() => {
+    const currentYear = new Date().getFullYear();
+    const years = new Set<number>(Array.from({ length: 7 }, (_, i) => currentYear - 3 + i));
+    kmRecords.forEach(record => {
+      const match = String(record.date || '').match(/^(\d{4})-/);
+      if (match) years.add(Number(match[1]));
+    });
+    return Array.from(years)
+      .sort((a, b) => b - a)
+      .flatMap(year => Array.from({ length: 12 }, (_, index) => {
+        const value = `${year}-${String(index + 1).padStart(2, '0')}`;
+        return { value, label: new Date(year, index, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) };
+      }))
+      .sort((a, b) => b.value.localeCompare(a.value));
+  })();
+
   // Active sub-tab in KM module
   const [activeTab, setActiveTab] = useState<'dashboard' | 'entry' | 'monthly-matrix' | 'reconciliation' | 'history'>('dashboard');
 
   // Filter states
-  const [selectedMonth, setSelectedMonth] = useState<string>('2026-10');
+  const [selectedMonth, setSelectedMonth] = useState<string>(() => localISODate().slice(0, 7));
   const [viewMode, setViewMode] = useState<'split' | 'all'>('split');
   const [searchAgg, setSearchAgg] = useState('');
   const [searchRecon, setSearchRecon] = useState('');
   const [searchHist, setSearchHist] = useState('');
 
   // Meter Entry Form state
-  const [readingDate, setReadingDate] = useState(() => '2026-10-02');
+  const [readingDate, setReadingDate] = useState(() => localISODate());
   const [plateInput, setPlateInput] = useState('');
   const [odometerInput, setOdometerInput] = useState('');
   const [matchedPlateBadge, setMatchedPlateBadge] = useState('');
@@ -68,8 +105,8 @@ export const KmFuelView: React.FC = () => {
   const [feedbackToast, setFeedbackToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
 
   // Month & Specific Date Manager / Matrix state
-  const [matrixMonth, setMatrixMonth] = useState<string>('2026-10');
-  const [matrixSpecificDate, setMatrixSpecificDate] = useState<string>('2026-10-02');
+  const [matrixMonth, setMatrixMonth] = useState<string>(() => localISODate().slice(0, 7));
+  const [matrixSpecificDate, setMatrixSpecificDate] = useState<string>(() => localISODate());
   const [matrixViewMode, setMatrixViewMode] = useState<'month-grid' | 'single-date'>('month-grid');
   const [matrixSearch, setMatrixSearch] = useState<string>('');
   const [matrixCellDrafts, setMatrixCellDrafts] = useState<Record<string, string>>({}); // "plateNorm__date" -> odoStr
@@ -653,56 +690,70 @@ TLS Logistics Fleet Management`;
   // -------------------------------------------------------------
   const handleMonthlyKmUpload = async () => {
     if (!uploadJsonText.trim()) {
-      alert("Please paste the monthly JSON data.");
+      alert("Please paste JSON data or choose a .json file.");
       return;
     }
 
     try {
       const data = JSON.parse(uploadJsonText);
-      let count = 0;
+      const fallbackMonth = uploadMonthSelect !== 'auto' ? uploadMonthSelect : localISODate().slice(0, 7);
+      const groups: Array<{ month: string; rows: any[] }> = [];
 
-      if (typeof data === 'object' && !Array.isArray(data)) {
-        for (const monthKey in data) {
-          const rows = data[monthKey];
-          if (Array.isArray(rows)) {
-            for (const row of rows) {
-              const plate = resolvePlate(row['Truck Plate#'] || row['Truck Plate'] || row['vehicle'] || row['Plate'] || '');
-              const kmVal = parseFloat(row['Total KM/M'] ?? row['km'] ?? 0);
-              if (plate && !isNaN(kmVal) && kmVal >= 0) {
-                await addKmRecord({
-                  date: `${uploadMonthSelect !== 'auto' ? uploadMonthSelect : '2026-08'}-15`,
-                  veh: plate,
-                  odometer: 100000 + kmVal,
-                  km: kmVal,
-                  notes: `Uploaded Monthly Run (${monthKey})`
-                });
-                count++;
-              }
-            }
-          }
+      if (Array.isArray(data)) {
+        groups.push({ month: fallbackMonth, rows: data });
+      } else if (data && typeof data === 'object') {
+        const root = data.months && typeof data.months === 'object' && !Array.isArray(data.months)
+          ? data.months
+          : data;
+        for (const [key, value] of Object.entries(root)) {
+          if (!Array.isArray(value)) continue;
+          groups.push({ month: monthKeyToISO(key) || fallbackMonth, rows: value as any[] });
         }
-      } else if (Array.isArray(data)) {
-        for (const row of data) {
-          const plate = resolvePlate(row['Truck Plate#'] || row['Truck Plate'] || row['veh'] || '');
-          const kmVal = parseFloat(row['Total KM/M'] ?? row['km'] ?? 0);
-          if (plate && !isNaN(kmVal) && kmVal >= 0) {
-            await addKmRecord({
-              date: row['date'] || `${uploadMonthSelect !== 'auto' ? uploadMonthSelect : '2026-08'}-15`,
-              veh: plate,
-              odometer: row['odometer'] || 100000 + kmVal,
-              km: kmVal,
-              notes: 'Uploaded KM Record'
-            });
-            count++;
-          }
+        if (groups.length === 0 && Array.isArray((data as any).records)) {
+          groups.push({ month: fallbackMonth, rows: (data as any).records });
         }
       }
 
-      alert(`Successfully integrated ${count} monthly KM records!`);
+      if (!groups.length) {
+        throw new Error('JSON must be an array of records or an object whose month keys contain arrays of records.');
+      }
+
+      const records: Array<Omit<KmRecord, 'id'> | KmRecord> = [];
+      for (const group of groups) {
+        for (const row of group.rows) {
+          if (!row || typeof row !== 'object') continue;
+          const plate = resolvePlate(row['Truck Plate#'] || row['Truck Plate'] || row.vehicle || row.Plate || row.veh || row.plate || '');
+          const rawKm = row['Total KM/M'] ?? row['Total KM'] ?? row.km ?? row.KM ?? row.distance;
+          const kmVal = Number.parseFloat(String(rawKm ?? ''));
+          if (!plate || !Number.isFinite(kmVal) || kmVal < 0) continue;
+
+          const rowMonth = monthKeyToISO(row.month || row.Month || row.period || row.Period);
+          const rawDate = String(row.date || row.Date || '').trim();
+          const date = /^\d{4}-\d{2}-\d{2}$/.test(rawDate)
+            ? rawDate
+            : `${rowMonth || group.month}-15`;
+          const rawOdometer = Number(row.odometer ?? row.Odometer);
+          records.push({
+            date,
+            veh: plate,
+            odometer: Number.isFinite(rawOdometer) && rawOdometer > 0 ? rawOdometer : 100000 + kmVal,
+            km: kmVal,
+            notes: `Uploaded Monthly Run (${group.month})`
+          });
+        }
+      }
+
+      if (!records.length) {
+        throw new Error('No valid records found. Each row needs a truck plate and a non-negative KM value.');
+      }
+
+      await batchSaveKmRecords(records);
+      const importedMonths = new Set(records.map(record => record.date.slice(0, 7))).size;
+      alert(`Successfully integrated ${records.length} KM records across ${importedMonths} month(s).`);
       setIsUploadModalOpen(false);
       setUploadJsonText('');
     } catch (err: any) {
-      alert("Failed to parse JSON: " + err.message);
+      alert("Failed to import JSON: " + (err?.message || String(err)));
     }
   };
 
@@ -1028,15 +1079,7 @@ TLS Logistics Fleet Management`;
                   className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-semibold focus:outline-none focus:border-blue-500"
                 >
                   <option value="All">All Months</option>
-                  <option value="2026-01">January 2026</option>
-                  <option value="2026-02">February 2026</option>
-                  <option value="2026-03">March 2026</option>
-                  <option value="2026-04">April 2026</option>
-                  <option value="2026-05">May 2026</option>
-                  <option value="2026-06">June 2026</option>
-                  <option value="2026-07">July 2026</option>
-                  <option value="2026-08">August 2026</option>
-                  <option value="2026-09">September 2026</option>
+                  {monthOptions.map(month => <option key={month.value} value={month.value}>{month.label}</option>)}
                 </select>
               </div>
 
@@ -1779,9 +1822,9 @@ TLS Logistics Fleet Management`;
                 </div>
 
                 <button
-                  onClick={() => setReadingDate('2026-10-02')}
+                  onClick={() => setReadingDate(localISODate())}
                   className={`text-xs px-2.5 py-1.5 rounded-lg font-bold border transition ${
-                    readingDate === '2026-10-02' ? 'bg-blue-600 text-white border-blue-500' : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+                    readingDate === localISODate() ? 'bg-blue-600 text-white border-blue-500' : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
                   }`}
                 >
                   Oct 2 (Sample Day 2)
@@ -2123,11 +2166,7 @@ TLS Logistics Fleet Management`;
                   onChange={(e) => setMatrixMonth(e.target.value)}
                   className="bg-transparent text-xs text-white font-mono font-bold focus:outline-none"
                 >
-                  <option value="2026-10" className="bg-slate-900">October 2026</option>
-                  <option value="2026-09" className="bg-slate-900">September 2026</option>
-                  <option value="2026-08" className="bg-slate-900">August 2026</option>
-                  <option value="2026-11" className="bg-slate-900">November 2026</option>
-                  <option value="2026-12" className="bg-slate-900">December 2026</option>
+                  {monthOptions.map(month => <option key={month.value} value={month.value} className="bg-slate-900">{month.label}</option>)}
                 </select>
               </div>
 
@@ -2423,32 +2462,42 @@ TLS Logistics Fleet Management`;
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-slate-400 uppercase font-mono mb-1">Target Month</label>
+              <label className="block text-xs font-bold text-slate-400 uppercase font-mono mb-1">Fallback Month (for unlabelled data)</label>
               <select
                 value={uploadMonthSelect}
                 onChange={(e) => setUploadMonthSelect(e.target.value)}
                 className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none"
               >
-                <option value="auto">⚡ Auto-Detect Month from JSON Key</option>
-                <option value="2026-01">January 2026</option>
-                <option value="2026-02">February 2026</option>
-                <option value="2026-03">March 2026</option>
-                <option value="2026-04">April 2026</option>
-                <option value="2026-05">May 2026</option>
-                <option value="2026-06">June 2026</option>
-                <option value="2026-07">July 2026</option>
-                <option value="2026-08">August 2026</option>
-                <option value="2026-09">September 2026</option>
+                <option value="auto">Auto-detect each month from JSON keys</option>
+                {monthOptions.map(month => <option key={month.value} value={month.value}>{month.label}</option>)}
               </select>
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-slate-400 uppercase font-mono mb-1">Paste JSON Data</label>
+              <label className="block text-xs font-bold text-slate-400 uppercase font-mono mb-1">Choose JSON file (optional)</label>
+              <input
+                type="file"
+                accept=".json,application/json"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  try {
+                    setUploadJsonText(await file.text());
+                  } catch {
+                    alert('Could not read the selected JSON file.');
+                  }
+                }}
+                className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-400 uppercase font-mono mb-1">JSON Data (paste or load from file)</label>
               <textarea
                 rows={6}
                 value={uploadJsonText}
                 onChange={(e) => setUploadJsonText(e.target.value)}
-                placeholder='{"August - 2026": [{"Truck Plate#": "D J A 4827", "Total KM/M": 15400}]}'
+                placeholder='{"August 2026": [{"Truck Plate#": "D J A 4827", "Total KM/M": 15400}], "September 2026": [{"Truck Plate#": "K R A 7501", "Total KM/M": 12800}]}'
                 className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-white font-mono focus:outline-none focus:border-blue-500"
               />
             </div>

@@ -101,13 +101,8 @@ export const TimetableParserView: React.FC = () => {
   // App navigation state
   const [page, setPage] = useState<'new' | 'schedule' | 'drivers' | 'vehicles' | 'settings'>('new');
   const [view, setView] = useState<'list' | 'daily'>('list');
-  const [currentDate, setCurrentDate] = useState<string>(() => {
-    const dates = Object.keys(db.schedules).sort();
-    if (db.uiPrefs.lastDate && db.schedules[db.uiPrefs.lastDate]) {
-      return db.uiPrefs.lastDate;
-    }
-    return dates.length ? dates[dates.length - 1] : todayISO();
-  });
+  // Always open on today's date after refresh; historical dates remain selectable manually.
+  const [currentDate, setCurrentDate] = useState<string>(() => todayISO());
 
   // Open dropdown
   const [isOpenDropdownOpen, setIsOpenDropdownOpen] = useState(false);
