@@ -149,8 +149,8 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, setCurrentTab, onOpe
       </div>
 
       {/* Main Navigation Tabs */}
-      <div className="bg-slate-950/60 border-t border-slate-800/80 overflow-x-auto scrollbar-none">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 flex items-center gap-1">
+      <div className="bg-slate-950/60 border-t border-slate-800/80 overflow-visible">
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 flex flex-wrap items-center gap-1">
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = currentTab === item.id;
@@ -158,7 +158,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, setCurrentTab, onOpe
               <button
                 key={item.id}
                 onClick={() => setCurrentTab(item.id)}
-                className={`flex items-center gap-2 px-3.5 py-2.5 text-xs font-semibold whitespace-nowrap transition-all border-b-2 ${
+                className={`flex flex-1 sm:flex-none justify-center sm:justify-start items-center gap-2 px-2 sm:px-3.5 py-2.5 text-[11px] sm:text-xs font-semibold whitespace-nowrap transition-all border-b-2 min-w-0 ${
                   isActive
                     ? 'border-blue-500 text-white bg-slate-800/60 font-bold'
                     : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800/30'
