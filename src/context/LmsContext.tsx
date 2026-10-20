@@ -726,17 +726,30 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const batchSaveKmRecords = async (records: (Omit<KmRecord, 'id'> | KmRecord)[]) => {
     if (!records.length) return;
 
+    // Generate each record ID once and reuse it for both local state and Firestore.
+    // Previously the two loops generated different IDs, which could duplicate records on refresh.
+    const preparedByKey = new Map<string, KmRecord>();
+    records.forEach(rec => {
+      const normalizedPlate = rec.veh.toUpperCase().replace(/\s+/g, '');
+      const key = `${rec.date}__${normalizedPlate}`;
+      const existing = kmRecords.find(
+        item => item.date === rec.date && item.veh.toUpperCase().replace(/\s+/g, '') === normalizedPlate
+      );
+      const id = ('id' in rec && rec.id) ? rec.id : existing?.id ||
+        ('KM-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).substring(2, 6).toUpperCase());
+      preparedByKey.set(key, {
+        ...rec,
+        id,
+        loggedBy: profile?.email || user?.email || 'Dispatcher'
+      } as KmRecord);
+    });
+    const prepared = Array.from(preparedByKey.values());
+
     setKmRecords(prev => {
       const copy = [...prev];
-      records.forEach(rec => {
-        const id = 'id' in rec && rec.id ? rec.id : 'KM-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).substring(2, 6).toUpperCase();
-        const fullRec: KmRecord = {
-          ...rec,
-          id,
-          loggedBy: profile?.email || user?.email || 'Dispatcher'
-        };
+      prepared.forEach(fullRec => {
         const existingIdx = copy.findIndex(
-          r => r.date === rec.date && r.veh.toUpperCase().replace(/\s+/g, '') === rec.veh.toUpperCase().replace(/\s+/g, '')
+          item => item.date === fullRec.date && item.veh.toUpperCase().replace(/\s+/g, '') === fullRec.veh.toUpperCase().replace(/\s+/g, '')
         );
         if (existingIdx >= 0) {
           copy[existingIdx] = { ...copy[existingIdx], ...fullRec, id: copy[existingIdx].id };
@@ -749,17 +762,12 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     if (user || profile) {
       try {
-        for (const rec of records) {
-          const id = 'id' in rec && rec.id ? rec.id : 'KM-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).substring(2, 6).toUpperCase();
-          const fullRec: KmRecord = {
-            ...rec,
-            id,
-            loggedBy: profile?.email || user?.email || 'Dispatcher'
-          };
-          await setDoc(doc(db, 'km_records', id), fullRec);
+        for (const record of prepared) {
+          await setDoc(doc(db, 'km_records', record.id), record);
         }
       } catch (e) {
-        console.warn("Error saving batch KM records in Firestore:", e);
+        console.error("Error saving batch KM records in Firestore:", e);
+        throw new Error('KM records were added to the local view but could not be fully synced to Firestore. Check your connection, Firebase Authentication, and Firestore rules.');
       }
     }
   };
