@@ -430,3 +430,84 @@ html.light [class*="bg-gradient-to-r"][class*="from-blue-900"] {
   background: linear-gradient(to right, #eff6ff, #eef2ff, #eff6ff) !important;
   border-color: #bfdbfe !important;
 }
+
+
+/* Responsive layout and accessible contrast improvements */
+html, body, #root {
+  min-height: 100%;
+  width: 100%;
+}
+body {
+  overflow-x: hidden;
+  -webkit-text-size-adjust: 100%;
+}
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+button, input, select, textarea {
+  max-width: 100%;
+}
+button, [role="button"] {
+  touch-action: manipulation;
+}
+input:not([type="checkbox"]):not([type="radio"]), select, textarea {
+  min-height: 2.25rem;
+}
+:focus-visible {
+  outline: 2px solid #60a5fa;
+  outline-offset: 2px;
+}
+table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+@media (max-width: 768px) {
+  main {
+    padding-left: 0.75rem !important;
+    padding-right: 0.75rem !important;
+    padding-top: 1rem !important;
+  }
+  .overflow-x-auto {
+    -webkit-overflow-scrolling: touch;
+  }
+  table {
+    min-width: max-content;
+  }
+  input:not([type="checkbox"]):not([type="radio"]),
+  select, textarea {
+    font-size: 16px;
+  }
+  .fixed.inset-0 {
+    align-items: flex-start;
+    overflow-y: auto;
+  }
+  .fixed.inset-0 > div {
+    max-height: calc(100dvh - 1rem);
+    overflow-y: auto;
+    margin-top: 0.5rem;
+    margin-bottom: 0.5rem;
+  }
+}
+@media (max-width: 480px) {
+  .text-2xl { font-size: 1.25rem; line-height: 1.75rem; }
+  .p-6 { padding: 1rem; }
+  .p-5 { padding: 1rem; }
+  .gap-4 { gap: 0.75rem; }
+}
+
+/* Consistent dark-theme readability */
+html:not(.light) body {
+  background-color: #020617;
+  color: #f1f5f9;
+}
+html:not(.light) input::placeholder,
+html:not(.light) textarea::placeholder {
+  color: #94a3b8;
+  opacity: 1;
+}
+html:not(.light) .text-slate-500 {
+  color: #94a3b8;
+}
+html:not(.light) thead {
+  color: #cbd5e1;
+}

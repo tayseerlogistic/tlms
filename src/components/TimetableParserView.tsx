@@ -212,17 +212,10 @@ export const TimetableParserView: React.FC = () => {
   // VISIBLE COLUMNS MANAGEMENT (Independent per view!)
   // -------------------------------------------------------------------
   const visibleColumns = useMemo(() => {
-    const prefKey = view === 'daily' ? 'visibleColumnsDaily' : 'visibleColumnsList';
-    const arr = db.uiPrefs[prefKey];
-    if (Array.isArray(arr) && arr.length > 0) {
-      // Ensure both equipmentNo (unit ID) and equipmentType (category) are included
-      const list = [...arr];
-      if (!list.includes('equipmentNo')) list.push('equipmentNo');
-      if (!list.includes('equipmentType')) list.push('equipmentType');
-      return COLUMNS.filter(c => list.includes(c.key)).map(c => c.key);
-    }
-    return COLUMNS.filter(c => c.def).map(c => c.key);
-  }, [view, db.uiPrefs]);
+    // The dispatch schedule is an operational record: keep all requested columns visible
+    // in both list and daily views, regardless of older saved column preferences.
+    return COLUMNS.map(c => c.key);
+  }, []);
 
   const toggleColumn = (key: keyof TimetableRow) => {
     const prefKey = view === 'daily' ? 'visibleColumnsDaily' : 'visibleColumnsList';
@@ -1812,6 +1805,8 @@ export const TimetableParserView: React.FC = () => {
                         <input
                           type="checkbox"
                           checked={visibleColumns.includes(c.key)}
+                          disabled
+                          aria-label={`${c.label} is a required schedule column`}
                           onChange={() => toggleColumn(c.key)}
                           className="rounded text-blue-600 focus:ring-0"
                         />

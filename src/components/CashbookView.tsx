@@ -6,17 +6,24 @@ import * as XLSX from 'xlsx';
 import {
   Wallet, DollarSign, Plus, Download, Printer, Search,
   RotateCcw, Trash2, ArrowUpRight, ArrowDownRight, User,
-  CheckCircle2, AlertCircle, FileText
+  CheckCircle2, AlertCircle, FileText, Users, Building2
 } from 'lucide-react';
 
 export const CashbookView: React.FC = () => {
-  const { cashTransactions, cashAccounts, drivers, addCashTransaction, reverseCashTransaction, deleteCashTransaction } = useLms();
+  const { cashTransactions, cashAccounts, cashEmployees, drivers, addCashTransaction, addCashAccount, deleteCashAccount, addCashEmployee, deleteCashEmployee, reverseCashTransaction, deleteCashTransaction } = useLms();
   const { isCashier, isAdmin } = useAuth();
 
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState('');
   const [filterAccount, setFilterAccount] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [showAccountManager, setShowAccountManager] = useState(false);
+  const [showEmployeeManager, setShowEmployeeManager] = useState(false);
+  const [newEmployeeName, setNewEmployeeName] = useState('');
+  const employeeNames = cashEmployees.map(employee => employee.name);
+  const [accountName, setAccountName] = useState('');
+  const [accountOpening, setAccountOpening] = useState('0');
+  const [accountError, setAccountError] = useState('');
 
   // Statement view state
   const [statementEmployee, setStatementEmployee] = useState<string | null>(null);
@@ -82,20 +89,91 @@ export const CashbookView: React.FC = () => {
       return;
     }
 
-    await addCashTransaction({
-      date: (fd.get('date') as string) || new Date().toISOString().substring(0, 10),
-      dateISO: (fd.get('date') as string) || new Date().toISOString().substring(0, 10),
-      account: fd.get('account') as string,
-      type,
-      employee,
-      category: (fd.get('category') as string) || 'General',
-      amount,
-      description: (fd.get('description') as string) || '',
-      receipt: (fd.get('receipt') as string) || '',
-      status: 'Posted'
-    });
+    if (!Number.isFinite(amount) || amount <= 0) {
+      alert('Enter a valid transaction amount greater than zero.');
+      return;
+    }
+    try {
+      await addCashTransaction({
+        date: (fd.get('date') as string) || new Date().toISOString().substring(0, 10),
+        dateISO: (fd.get('date') as string) || new Date().toISOString().substring(0, 10),
+        account: fd.get('account') as string,
+        type,
+        employee,
+        category: (fd.get('category') as string) || 'General',
+        amount,
+        description: (fd.get('description') as string) || '',
+        receipt: (fd.get('receipt') as string) || '',
+        status: 'Posted'
+      });
+      setIsModalOpen(false);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Unable to save transaction. Check your connection and permissions.');
+    }
+  };
 
-    setIsModalOpen(false);
+  const handleAddEmployee = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const name = newEmployeeName.trim();
+    if (!name) return;
+    if (employeeNames.some(existing => existing.toLowerCase() === name.toLowerCase()) || drivers.some(driver => driver.name.toLowerCase() === name.toLowerCase())) {
+      alert('This employee already exists in the Cashbook directory or fleet driver list.');
+      return;
+    }
+    try {
+      await addCashEmployee(name);
+      setNewEmployeeName('');
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Unable to add employee. Please check your access and try again.');
+    }
+  };
+
+  const handleRemoveEmployee = async (id: string, name: string) => {
+    if (cashTransactions.some(t => t.employee === name && t.status !== 'Reversed')) {
+      const ok = confirm(`“${name}” has transactions in the ledger. Remove them from the employee picker? Historical transactions will remain.`);
+      if (!ok) return;
+    }
+    try {
+      await deleteCashEmployee(id);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Unable to remove employee. Please check your access and try again.');
+    }
+  };
+
+  const handleAddAccount = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setAccountError('');
+    const name = accountName.trim();
+    const opening = Number(accountOpening);
+    if (!name || !Number.isFinite(opening) || opening < 0) {
+      setAccountError('Enter an account name and a valid non-negative opening balance.');
+      return;
+    }
+    if (cashAccounts.some(account => account.name.toLowerCase() === name.toLowerCase())) {
+      setAccountError('An account with this name already exists.');
+      return;
+    }
+    try {
+      await addCashAccount({ name, opening, active: true });
+      setAccountName('');
+      setAccountOpening('0');
+    } catch (error) {
+      setAccountError(error instanceof Error ? error.message : 'Unable to create account. Check your connection and permissions.');
+    }
+  };
+
+  const handleRemoveAccount = async (id: string, name: string) => {
+    if (cashTransactions.some(t => t.account === name)) {
+      alert('This account has ledger history and cannot be removed safely. Keep it for reporting and create a new account instead.');
+      return;
+    }
+    if (confirm(`Delete account “${name}”?`)) {
+      try {
+        await deleteCashAccount(id);
+      } catch (error) {
+        alert(error instanceof Error ? error.message : 'Unable to remove account. Check your connection and permissions.');
+      }
+    }
   };
 
   const exportExcel = () => {
@@ -146,6 +224,52 @@ export const CashbookView: React.FC = () => {
           )}
         </div>
       </div>
+
+      {(isCashier || isAdmin) && <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <section className="rounded-2xl border border-slate-700 bg-slate-800/70 p-4 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2 text-white font-bold text-sm"><Building2 className="w-4 h-4 text-blue-400" /> Accounts</div>
+            <button type="button" onClick={() => setShowAccountManager(v => !v)} className="rounded-lg border border-slate-600 px-3 py-2 text-xs font-semibold text-slate-100 hover:bg-slate-700">
+              {showAccountManager ? 'Close' : 'Open / Manage Accounts'}
+            </button>
+          </div>
+          <p className="text-xs text-slate-300">Create a new account with an opening balance. Use Cash In / Cash Out transactions to add or remove funds with a dated ledger entry.</p>
+          {showAccountManager && <form onSubmit={handleAddAccount} className="grid grid-cols-1 sm:grid-cols-[1fr_150px_auto] gap-2">
+            <input value={accountName} onChange={e => setAccountName(e.target.value)} required maxLength={80} placeholder="New account name" className="min-w-0 rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-sm text-white" />
+            <input value={accountOpening} onChange={e => setAccountOpening(e.target.value)} required type="number" min="0" step="0.01" aria-label="Opening balance SAR" placeholder="Opening balance" className="min-w-0 rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-sm text-white" />
+            <button type="submit" className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white hover:bg-blue-500">Create Account</button>
+            {accountError && <p role="alert" className="sm:col-span-3 text-xs text-rose-300">{accountError}</p>}
+            <div className="sm:col-span-3 space-y-1">
+              {cashAccounts.map(account => <div key={account.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-slate-900/80 px-3 py-2 text-xs">
+                <span className="text-slate-100">{account.name} <span className="text-slate-400">· opening SAR {account.opening.toLocaleString()}</span></span>
+                {isAdmin && !['acc-001', 'acc-002', 'acc-003'].includes(account.id) && <button type="button" onClick={() => handleRemoveAccount(account.id, account.name)} className="text-rose-300 hover:text-rose-200" aria-label={`Remove ${account.name}`}>Remove</button>}
+              </div>)}
+            </div>
+          </form>}
+        </section>
+        <section className="rounded-2xl border border-slate-700 bg-slate-800/70 p-4 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2 text-white font-bold text-sm"><Users className="w-4 h-4 text-emerald-400" /> Cashbook Employees</div>
+            <button type="button" onClick={() => setShowEmployeeManager(v => !v)} className="rounded-lg border border-slate-600 px-3 py-2 text-xs font-semibold text-slate-100 hover:bg-slate-700">
+              {showEmployeeManager ? 'Close' : 'Add / Remove Employees'}
+            </button>
+          </div>
+          <p className="text-xs text-slate-300">Manage the employee list used by new Cashbook transactions. Removing an employee keeps their historical ledger entries intact.</p>
+          {showEmployeeManager && <>
+            <form onSubmit={handleAddEmployee} className="flex flex-col sm:flex-row gap-2">
+              <input value={newEmployeeName} onChange={e => setNewEmployeeName(e.target.value)} required maxLength={120} placeholder="Employee full name" className="min-w-0 flex-1 rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-sm text-white" />
+              <button type="submit" className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-500">Add Employee</button>
+            </form>
+            <div className="max-h-48 overflow-y-auto space-y-1">
+              {cashEmployees.map(employee => <div key={employee.id} className="flex items-center justify-between gap-2 rounded-lg bg-slate-900/80 px-3 py-2 text-xs">
+                <span className="text-slate-100">{employee.name}</span>
+                <button type="button" onClick={() => handleRemoveEmployee(employee.id, employee.name)} className="text-rose-300 hover:text-rose-200">Remove</button>
+              </div>)}
+              {!cashEmployees.length && <p className="text-xs text-slate-400">No custom Cashbook employees yet. Fleet drivers remain available in the transaction picker.</p>}
+            </div>
+          </>}
+        </section>
+      </div>}
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -359,8 +483,8 @@ export const CashbookView: React.FC = () => {
                     <option value="Advance Given">Advance Given (Float Out)</option>
                     <option value="Expense Settlement">Expense Settlement (Verified Receipt)</option>
                     <option value="Advance Returned">Advance Returned (Float In)</option>
-                    <option value="Cash In">Cash In (Funding)</option>
-                    <option value="Cash Out">Cash Out (General)</option>
+                    <option value="Cash In">Add Money / Cash In (Funding)</option>
+                    <option value="Cash Out">Remove Money / Cash Out (General)</option>
                     <option value="Transfer In">Transfer In</option>
                     <option value="Transfer Out">Transfer Out</option>
                   </select>
@@ -386,8 +510,8 @@ export const CashbookView: React.FC = () => {
                   className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:border-blue-500"
                 >
                   <option value="">— Non-employee / General —</option>
-                  {drivers.map(d => (
-                    <option key={d.id} value={d.name}>{d.name} ({d.empNo})</option>
+                  {Array.from(new Set([...employeeNames, ...drivers.map(d => d.name)])).sort().map(name => (
+                    <option key={name} value={name}>{name}</option>
                   ))}
                 </select>
               </div>

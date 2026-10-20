@@ -30,6 +30,7 @@ interface LmsContextType {
   manifests: Record<string, Record<string, string>>; // date -> { driverIndex/name -> tag }
   cashTransactions: CashTransaction[];
   cashAccounts: CashAccount[];
+  cashEmployees: { id: string; name: string }[];
   kmRecords: KmRecord[];
   dieselLogs: DieselLog[];
   conflicts: DataConflict[];
@@ -48,6 +49,10 @@ interface LmsContextType {
   saveMultiDayManifests: (batchData: Record<string, Record<number, string>>) => Promise<void>;
   
   addCashTransaction: (tx: Omit<CashTransaction, 'id' | 'createdAt'>) => Promise<void>;
+  addCashAccount: (account: Omit<CashAccount, 'id'>) => Promise<void>;
+  deleteCashAccount: (id: string) => Promise<void>;
+  addCashEmployee: (name: string) => Promise<void>;
+  deleteCashEmployee: (id: string) => Promise<void>;
   reverseCashTransaction: (id: string, reason?: string) => Promise<void>;
   deleteCashTransaction: (id: string) => Promise<void>;
   
@@ -118,7 +123,15 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [commodities] = useState<Commodity[]>(INITIAL_COMMODITIES);
   const [stores] = useState<StoreMapItem[]>(INITIAL_STORES);
   const [conflicts, setConflicts] = useState<DataConflict[]>(INITIAL_DATA_CONFLICTS);
-  const [cashAccounts] = useState<CashAccount[]>(INITIAL_CASH_ACCOUNTS);
+  const [cashEmployees, setCashEmployees] = useState<{ id: string; name: string }[]>([]);
+  const [cashAccounts, setCashAccounts] = useState<CashAccount[]>(() => {
+    try {
+      const saved = localStorage.getItem(LOCAL_STORAGE_KEY + '_accounts');
+      return saved ? JSON.parse(saved) as CashAccount[] : INITIAL_CASH_ACCOUNTS;
+    } catch {
+      return INITIAL_CASH_ACCOUNTS;
+    }
+  });
 
   const [schedules, setSchedules] = useState<Record<string, DailySchedule>>(() => {
     const seedSched: Record<string, DailySchedule> = { ...generateSeedSchedules(), ...OCTOBER_DAILY_SCHEDULES };
@@ -217,9 +230,10 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.setItem(LOCAL_STORAGE_KEY + '_schedules_v3', JSON.stringify(schedules));
     localStorage.setItem(LOCAL_STORAGE_KEY + '_manifests_v3', JSON.stringify(manifests));
     localStorage.setItem(LOCAL_STORAGE_KEY + '_cash', JSON.stringify(cashTransactions));
+    localStorage.setItem(LOCAL_STORAGE_KEY + '_accounts', JSON.stringify(cashAccounts));
     localStorage.setItem(LOCAL_STORAGE_KEY + '_km', JSON.stringify(kmRecords));
     localStorage.setItem(LOCAL_STORAGE_KEY + '_diesel', JSON.stringify(dieselLogs));
-  }, [trucks, equipment, drivers, schedules, manifests, cashTransactions, kmRecords, dieselLogs]);
+  }, [trucks, equipment, drivers, schedules, manifests, cashTransactions, cashAccounts, kmRecords, dieselLogs]);
 
   // Firestore real-time subscriptions if user or profile is authenticated
   useEffect(() => {
@@ -292,6 +306,24 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       console.warn("Schedules Firestore listener notice:", err.message);
     });
 
+    // Listen to cash accounts
+    const unsubCashAccounts = onSnapshot(collection(db, 'cash_accounts'), (snapshot) => {
+      const remote = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as CashAccount));
+      const remoteIds = new Set(remote.map(account => account.id));
+      // Keep built-in accounts available until explicitly migrated; overlay remote versions by ID.
+      const defaults = INITIAL_CASH_ACCOUNTS.filter(account => !remoteIds.has(account.id));
+      setCashAccounts([...defaults, ...remote]);
+    }, (err) => {
+      console.warn("Cash accounts Firestore listener notice:", err.message);
+    });
+
+    // Listen to Cashbook employee directory (separate from fleet driver records)
+    const unsubCashEmployees = onSnapshot(collection(db, 'cash_employees'), (snapshot) => {
+      setCashEmployees(snapshot.docs.map(d => ({ id: d.id, name: String(d.data().name || '') })).filter(e => e.name));
+    }, (err) => {
+      console.warn("Cashbook employee listener notice:", err.message);
+    });
+
     // Listen to cash transactions
     const unsubCash = onSnapshot(query(collection(db, 'cashbook'), orderBy('dateISO', 'desc'), limit(300)), (snapshot) => {
       if (!snapshot.empty) {
@@ -318,6 +350,8 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       unsubManifests();
       unsubSchedules();
       unsubCash();
+      unsubCashAccounts();
+      unsubCashEmployees();
       unsubKm();
     };
   }, [user, profile]);
@@ -550,15 +584,47 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       createdBy: profile?.email || user?.email || 'Cashier'
     };
 
-    setCashTransactions(prev => [newTx, ...prev]);
-
-    if (user || profile) {
-      try {
-        await setDoc(doc(db, 'cashbook', id), newTx);
-      } catch (e) {
-        console.warn("Error saving cash transaction to Firestore:", e);
-      }
+    if (user) {
+      await setDoc(doc(db, 'cashbook', id), newTx);
+    } else {
+      throw new Error('A valid signed-in Firebase account is required to post Cashbook transactions.');
     }
+    setCashTransactions(prev => [newTx, ...prev]);
+  };
+
+  const addCashAccount = async (accountData: Omit<CashAccount, 'id'>) => {
+    const account: CashAccount = {
+      ...accountData,
+      id: 'acc-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).slice(2, 6).toUpperCase()
+    };
+    if (!user) throw new Error('A valid signed-in Firebase account is required to create Cashbook accounts.');
+    await setDoc(doc(db, 'cash_accounts', account.id), account);
+    setCashAccounts(prev => [...prev, account]);
+  };
+
+  const addCashEmployee = async (rawName: string) => {
+    const name = rawName.trim();
+    if (!name) throw new Error('Employee name is required.');
+    if (cashEmployees.some(employee => employee.name.toLowerCase() === name.toLowerCase())) {
+      throw new Error('This employee already exists in the Cashbook directory.');
+    }
+    const id = 'emp-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).slice(2, 7).toUpperCase();
+    if (!user) throw new Error('A valid signed-in Firebase account is required to manage Cashbook employees.');
+    await setDoc(doc(db, 'cash_employees', id), { name, createdAt: new Date().toISOString() });
+  };
+
+  const deleteCashEmployee = async (id: string) => {
+    if (!user) throw new Error('A valid signed-in Firebase account is required to manage Cashbook employees.');
+    await deleteDoc(doc(db, 'cash_employees', id));
+  };
+
+  const deleteCashAccount = async (id: string) => {
+    if (INITIAL_CASH_ACCOUNTS.some(account => account.id === id)) {
+      throw new Error('Built-in Cashbook accounts cannot be deleted.');
+    }
+    if (!user) throw new Error('A valid signed-in Firebase account is required to remove Cashbook accounts.');
+    await deleteDoc(doc(db, 'cash_accounts', id));
+    setCashAccounts(prev => prev.filter(account => account.id !== id));
   };
 
   const reverseCashTransaction = async (id: string, reason?: string) => {
@@ -809,6 +875,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     manifests,
     cashTransactions,
     cashAccounts,
+    cashEmployees,
     kmRecords,
     dieselLogs,
     conflicts,
@@ -823,6 +890,10 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     saveDailyManifest,
     saveMultiDayManifests,
     addCashTransaction,
+    addCashAccount,
+    deleteCashAccount,
+    addCashEmployee,
+    deleteCashEmployee,
     reverseCashTransaction,
     deleteCashTransaction,
     addKmRecord,
