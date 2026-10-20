@@ -608,19 +608,13 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
     const id = 'emp-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).slice(2, 7).toUpperCase();
     const employee = { id, name };
-    if (user) {
-      await setDoc(doc(db, 'cash_employees', id), { name, createdAt: new Date().toISOString() });
-    } else {
-      setCashEmployees(prev => [...prev, employee]);
-    }
+    if (!user) throw new Error('A valid signed-in Firebase account is required to manage Cashbook employees.');
+    await setDoc(doc(db, 'cash_employees', id), { name, createdAt: new Date().toISOString() });
   };
 
   const deleteCashEmployee = async (id: string) => {
-    if (user) {
-      await deleteDoc(doc(db, 'cash_employees', id));
-    } else {
-      setCashEmployees(prev => prev.filter(employee => employee.id !== id));
-    }
+    if (!user) throw new Error('A valid signed-in Firebase account is required to manage Cashbook employees.');
+    await deleteDoc(doc(db, 'cash_employees', id));
   };
 
   const deleteCashAccount = async (id: string) => {
