@@ -30,6 +30,7 @@ interface LmsContextType {
   manifests: Record<string, Record<string, string>>; // date -> { driverIndex/name -> tag }
   cashTransactions: CashTransaction[];
   cashAccounts: CashAccount[];
+  cashEmployees: { id: string; name: string }[];
   kmRecords: KmRecord[];
   dieselLogs: DieselLog[];
   conflicts: DataConflict[];
@@ -50,6 +51,8 @@ interface LmsContextType {
   addCashTransaction: (tx: Omit<CashTransaction, 'id' | 'createdAt'>) => Promise<void>;
   addCashAccount: (account: Omit<CashAccount, 'id'>) => Promise<void>;
   deleteCashAccount: (id: string) => Promise<void>;
+  addCashEmployee: (name: string) => Promise<void>;
+  deleteCashEmployee: (id: string) => Promise<void>;
   reverseCashTransaction: (id: string, reason?: string) => Promise<void>;
   deleteCashTransaction: (id: string) => Promise<void>;
   
@@ -120,6 +123,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [commodities] = useState<Commodity[]>(INITIAL_COMMODITIES);
   const [stores] = useState<StoreMapItem[]>(INITIAL_STORES);
   const [conflicts, setConflicts] = useState<DataConflict[]>(INITIAL_DATA_CONFLICTS);
+  const [cashEmployees, setCashEmployees] = useState<{ id: string; name: string }[]>([]);
   const [cashAccounts, setCashAccounts] = useState<CashAccount[]>(() => {
     try {
       const saved = localStorage.getItem(LOCAL_STORAGE_KEY + '_accounts');
@@ -311,6 +315,13 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       console.warn("Cash accounts Firestore listener notice:", err.message);
     });
 
+    // Listen to Cashbook employee directory (separate from fleet driver records)
+    const unsubCashEmployees = onSnapshot(collection(db, 'cash_employees'), (snapshot) => {
+      setCashEmployees(snapshot.docs.map(d => ({ id: d.id, name: String(d.data().name || '') })).filter(e => e.name));
+    }, (err) => {
+      console.warn("Cashbook employee listener notice:", err.message);
+    });
+
     // Listen to cash transactions
     const unsubCash = onSnapshot(query(collection(db, 'cashbook'), orderBy('dateISO', 'desc'), limit(300)), (snapshot) => {
       if (!snapshot.empty) {
@@ -338,6 +349,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       unsubSchedules();
       unsubCash();
       unsubCashAccounts();
+      unsubCashEmployees();
       unsubKm();
     };
   }, [user, profile]);
@@ -593,6 +605,29 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       } catch (e) {
         console.warn('Error saving cash account to Firestore (cached locally):', e);
       }
+    }
+  };
+
+  const addCashEmployee = async (rawName: string) => {
+    const name = rawName.trim();
+    if (!name) throw new Error('Employee name is required.');
+    if (cashEmployees.some(employee => employee.name.toLowerCase() === name.toLowerCase())) {
+      throw new Error('This employee already exists in the Cashbook directory.');
+    }
+    const id = 'emp-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).slice(2, 7).toUpperCase();
+    const employee = { id, name };
+    if (user) {
+      await setDoc(doc(db, 'cash_employees', id), { name, createdAt: new Date().toISOString() });
+    } else {
+      setCashEmployees(prev => [...prev, employee]);
+    }
+  };
+
+  const deleteCashEmployee = async (id: string) => {
+    if (user) {
+      await deleteDoc(doc(db, 'cash_employees', id));
+    } else {
+      setCashEmployees(prev => prev.filter(employee => employee.id !== id));
     }
   };
 
@@ -855,6 +890,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     manifests,
     cashTransactions,
     cashAccounts,
+    cashEmployees,
     kmRecords,
     dieselLogs,
     conflicts,
@@ -871,6 +907,8 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     addCashTransaction,
     addCashAccount,
     deleteCashAccount,
+    addCashEmployee,
+    deleteCashEmployee,
     reverseCashTransaction,
     deleteCashTransaction,
     addKmRecord,
