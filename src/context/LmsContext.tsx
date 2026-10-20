@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc, query, orderBy, limit } from 'firebase/firestore';
-import { db } from '../firebase/config';
+import { auth, db } from '../firebase/config';
 import { handleFirestoreError, OperationType } from '../firebase/errors';
 import { useAuth } from './AuthContext';
 import {
@@ -584,10 +584,16 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       createdBy: profile?.email || user?.email || 'Cashier'
     };
 
-    if (user) {
+    if (!(auth.currentUser || user)) {
+      throw new Error('You are not signed in to Firebase. Sign out, then sign in using your Firebase Authentication account before posting Cashbook transactions.');
+    }
+    try {
       await setDoc(doc(db, 'cashbook', id), newTx);
-    } else {
-      throw new Error('A valid signed-in Firebase account is required to post Cashbook transactions.');
+    } catch (error) {
+      if (error instanceof Error && /permission-denied|insufficient permissions/i.test(error.message)) {
+        throw new Error('Firebase denied this Cashbook transaction. Confirm Firestore rules are published to the TLMS database and that your Firebase user has the Admin or Cashier role.');
+      }
+      throw error;
     }
     setCashTransactions(prev => [newTx, ...prev]);
   };
@@ -597,8 +603,15 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       ...accountData,
       id: 'acc-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).slice(2, 6).toUpperCase()
     };
-    if (!user) throw new Error('A valid signed-in Firebase account is required to create Cashbook accounts.');
-    await setDoc(doc(db, 'cash_accounts', account.id), account);
+    if (!(auth.currentUser || user)) throw new Error('You are not signed in to Firebase. Sign in with your Firebase Authentication account to create Cashbook accounts.');
+    try {
+      await setDoc(doc(db, 'cash_accounts', account.id), account);
+    } catch (error) {
+      if (error instanceof Error && /permission-denied|insufficient permissions/i.test(error.message)) {
+        throw new Error('Firebase denied this account change. Confirm Firestore rules are published to the TLMS database and that your Firebase user has the Admin or Cashier role.');
+      }
+      throw error;
+    }
     setCashAccounts(prev => [...prev, account]);
   };
 
@@ -609,21 +622,42 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       throw new Error('This employee already exists in the Cashbook directory.');
     }
     const id = 'emp-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).slice(2, 7).toUpperCase();
-    if (!user) throw new Error('A valid signed-in Firebase account is required to manage Cashbook employees.');
-    await setDoc(doc(db, 'cash_employees', id), { name, createdAt: new Date().toISOString() });
+    if (!(auth.currentUser || user)) throw new Error('You are not signed in to Firebase. Sign out, then sign in using your Firebase Authentication account before managing Cashbook employees.');
+    try {
+      await setDoc(doc(db, 'cash_employees', id), { name, createdAt: new Date().toISOString() });
+    } catch (error) {
+      if (error instanceof Error && /permission-denied|insufficient permissions/i.test(error.message)) {
+        throw new Error('Firebase denied this employee change. Confirm Firestore rules are published to the TLMS database and that your Firebase user has the Admin or Cashier role.');
+      }
+      throw error;
+    }
   };
 
   const deleteCashEmployee = async (id: string) => {
-    if (!user) throw new Error('A valid signed-in Firebase account is required to manage Cashbook employees.');
-    await deleteDoc(doc(db, 'cash_employees', id));
+    if (!(auth.currentUser || user)) throw new Error('You are not signed in to Firebase. Sign in with your Firebase Authentication account to manage Cashbook employees.');
+    try {
+      await deleteDoc(doc(db, 'cash_employees', id));
+    } catch (error) {
+      if (error instanceof Error && /permission-denied|insufficient permissions/i.test(error.message)) {
+        throw new Error('Firebase denied this employee removal. Confirm Firestore rules are published to the TLMS database and that your Firebase user has the Admin or Cashier role.');
+      }
+      throw error;
+    }
   };
 
   const deleteCashAccount = async (id: string) => {
     if (INITIAL_CASH_ACCOUNTS.some(account => account.id === id)) {
       throw new Error('Built-in Cashbook accounts cannot be deleted.');
     }
-    if (!user) throw new Error('A valid signed-in Firebase account is required to remove Cashbook accounts.');
-    await deleteDoc(doc(db, 'cash_accounts', id));
+    if (!(auth.currentUser || user)) throw new Error('You are not signed in to Firebase. Sign in with your Firebase Authentication account to remove Cashbook accounts.');
+    try {
+      await deleteDoc(doc(db, 'cash_accounts', id));
+    } catch (error) {
+      if (error instanceof Error && /permission-denied|insufficient permissions/i.test(error.message)) {
+        throw new Error('Firebase denied this account deletion. Confirm Firestore rules are published to the TLMS database and that your Firebase user has the Admin role.');
+      }
+      throw error;
+    }
     setCashAccounts(prev => prev.filter(account => account.id !== id));
   };
 
