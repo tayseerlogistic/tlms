@@ -12,7 +12,7 @@ interface ThemeContextType {
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
-const THEME_STORAGE_KEY = 'TLS_APP_THEME_MODE';
+const THEME_STORAGE_KEY = 'TLS_APP_THEME_MODE_V2';
 
 export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [theme, setThemeState] = useState<Theme>(() => {
@@ -22,7 +22,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     } catch {
       // fallback
     }
-    return 'dark'; // default enterprise logistics dark theme
+    return 'light'; // default high-contrast corporate light theme
   });
 
   useEffect(() => {

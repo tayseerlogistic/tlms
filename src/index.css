@@ -511,3 +511,184 @@ html:not(.light) .text-slate-500 {
 html:not(.light) thead {
   color: #cbd5e1;
 }
+
+
+/* 2026 responsive and high-contrast pass */
+html, body, #root {
+  min-width: 0;
+  max-width: 100%;
+}
+body {
+  margin: 0;
+  overflow-x: clip;
+}
+main, main > *, section, article, form, .grid, .flex {
+  min-width: 0;
+}
+input, select, textarea, button {
+  font: inherit;
+}
+html.light input:not([type="checkbox"]):not([type="radio"]),
+html.light select,
+html.light textarea {
+  color: #0f172a;
+  background-color: #ffffff;
+  border-color: #94a3b8;
+}
+html.light input::placeholder,
+html.light textarea::placeholder {
+  color: #64748b;
+  opacity: 1;
+}
+button:disabled {
+  cursor: not-allowed;
+  opacity: .6;
+}
+@media (max-width: 767px) {
+  header {
+    position: relative !important;
+  }
+  main {
+    padding-left: .75rem !important;
+    padding-right: .75rem !important;
+    max-width: 100% !important;
+  }
+  main > * {
+    max-width: 100%;
+  }
+  .grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+  .overflow-x-auto {
+    max-width: 100%;
+    -webkit-overflow-scrolling: touch;
+  }
+  table {
+    min-width: 720px;
+  }
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea {
+    max-width: 100%;
+    min-width: 0;
+    font-size: 16px;
+  }
+  .fixed.inset-0 {
+    padding: .5rem !important;
+    align-items: flex-start !important;
+    overflow-y: auto !important;
+  }
+  .fixed.inset-0 > div {
+    width: 100%;
+    max-width: 100%;
+    max-height: calc(100dvh - 1rem);
+    overflow-y: auto;
+    margin: .25rem 0;
+  }
+}
+@media (min-width: 768px) and (max-width: 1023px) {
+  main {
+    padding-left: 1rem !important;
+    padding-right: 1rem !important;
+  }
+}
+
+/* Default light theme: calm neutral surfaces with clear readable text */
+html.light body,
+html.light #root {
+  background-color: #f1f5f9 !important;
+  color: #0f172a !important;
+}
+html.light header,
+html.light footer {
+  background-color: #ffffff !important;
+  border-color: #cbd5e1 !important;
+}
+html.light [class*="bg-slate-950"],
+html.light [class*="bg-slate-900"],
+html.light [class*="bg-slate-800"] {
+  background-color: #ffffff !important;
+  border-color: #cbd5e1 !important;
+}
+html.light [class*="bg-slate-950/60"],
+html.light [class*="bg-slate-950/70"],
+html.light [class*="bg-slate-950/80"],
+html.light [class*="bg-slate-900/60"],
+html.light [class*="bg-slate-900/70"],
+html.light [class*="bg-slate-900/80"],
+html.light [class*="bg-slate-800/30"],
+html.light [class*="bg-slate-800/40"],
+html.light [class*="bg-slate-800/50"],
+html.light [class*="bg-slate-800/60"],
+html.light [class*="bg-slate-800/70"],
+html.light [class*="bg-slate-800/80"],
+html.light [class*="bg-slate-800/90"] {
+  background-color: #f8fafc !important;
+}
+html.light [class*="text-slate-100"],
+html.light [class*="text-slate-200"],
+html.light [class*="text-slate-300"],
+html.light [class*="text-white"] {
+  color: #0f172a !important;
+}
+html.light [class*="text-slate-400"],
+html.light [class*="text-slate-500"] {
+  color: #475569 !important;
+}
+html.light input,
+html.light select,
+html.light textarea {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border-color: #94a3b8 !important;
+}
+html.light input::placeholder,
+html.light textarea::placeholder {
+  color: #64748b !important;
+}
+html.light thead,
+html.light th {
+  background-color: #e2e8f0 !important;
+  color: #1e293b !important;
+}
+html.light tbody tr:hover {
+  background-color: #f1f5f9 !important;
+}
+html.light .text-blue-400,
+html.light .text-cyan-400,
+html.light .text-indigo-400 {
+  color: #1d4ed8 !important;
+}
+html.light .text-emerald-400,
+html.light .text-emerald-300 {
+  color: #047857 !important;
+}
+html.light .text-amber-400,
+html.light .text-amber-300 {
+  color: #92400e !important;
+}
+html.light .text-rose-400,
+html.light .text-rose-300,
+html.light .text-rose-200 {
+  color: #be123c !important;
+}
+html.light .bg-blue-600,
+html.light .bg-emerald-600,
+html.light .bg-emerald-700,
+html.light .bg-amber-700,
+html.light .bg-rose-600 {
+  color: #ffffff !important;
+}
+
+/* Preserve white labels on solid primary action buttons in light mode */
+html.light button[class~="bg-blue-600"],
+html.light button[class~="bg-blue-700"],
+html.light button[class~="bg-indigo-600"],
+html.light button[class~="bg-indigo-700"],
+html.light button[class~="bg-emerald-600"],
+html.light button[class~="bg-emerald-700"],
+html.light button[class~="bg-amber-700"],
+html.light button[class~="bg-rose-600"],
+html.light button[class~="bg-purple-600"] {
+  color: #ffffff !important;
+}

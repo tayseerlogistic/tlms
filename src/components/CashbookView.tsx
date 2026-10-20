@@ -17,6 +17,8 @@ export const CashbookView: React.FC = () => {
   const [filterType, setFilterType] = useState('');
   const [filterAccount, setFilterAccount] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [transactionType, setTransactionType] = useState('Cash In');
+  const [transactionAccount, setTransactionAccount] = useState('');
   const [showAccountManager, setShowAccountManager] = useState(false);
   const [showEmployeeManager, setShowEmployeeManager] = useState(false);
   const [newEmployeeName, setNewEmployeeName] = useState('');
@@ -216,7 +218,11 @@ export const CashbookView: React.FC = () => {
           </button>
           {(isCashier || isAdmin) && (
             <button
-              onClick={() => setIsModalOpen(true)}
+              onClick={() => {
+                setTransactionType('Cash In');
+                setTransactionAccount(cashAccounts[0]?.name || '');
+                setIsModalOpen(true);
+              }}
               className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-4 py-2 rounded-xl shadow-lg flex items-center gap-1.5 transition"
             >
               <Plus className="w-4 h-4" /> New Cash Transaction
@@ -241,8 +247,15 @@ export const CashbookView: React.FC = () => {
             {accountError && <p role="alert" className="sm:col-span-3 text-xs text-rose-300">{accountError}</p>}
             <div className="sm:col-span-3 space-y-1">
               {cashAccounts.map(account => <div key={account.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-slate-900/80 px-3 py-2 text-xs">
-                <span className="text-slate-100">{account.name} <span className="text-slate-400">· opening SAR {account.opening.toLocaleString()}</span></span>
-                {isAdmin && !['acc-001', 'acc-002', 'acc-003'].includes(account.id) && <button type="button" onClick={() => handleRemoveAccount(account.id, account.name)} className="text-rose-300 hover:text-rose-200" aria-label={`Remove ${account.name}`}>Remove</button>}
+                <div className="min-w-0 flex-1">
+                  <div className="font-semibold text-slate-100 break-words">{account.name}</div>
+                  <div className="text-slate-300">Opening balance: SAR {account.opening.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button type="button" onClick={() => { setTransactionAccount(account.name); setTransactionType('Cash In'); setIsModalOpen(true); }} className="rounded-md bg-emerald-700 px-2.5 py-1.5 font-bold text-white hover:bg-emerald-600">+ Add Money</button>
+                  <button type="button" onClick={() => { setTransactionAccount(account.name); setTransactionType('Cash Out'); setIsModalOpen(true); }} className="rounded-md bg-amber-700 px-2.5 py-1.5 font-bold text-white hover:bg-amber-600">− Remove Money</button>
+                  {isAdmin && !['acc-001', 'acc-002', 'acc-003'].includes(account.id) && <button type="button" onClick={() => handleRemoveAccount(account.id, account.name)} className="rounded-md border border-rose-700 px-2.5 py-1.5 font-bold text-rose-300 hover:bg-rose-950" aria-label={`Delete ${account.name}`}>Delete</button>}
+                </div>
               </div>)}
             </div>
           </form>}
@@ -315,7 +328,7 @@ export const CashbookView: React.FC = () => {
       {/* Main Ledger Table */}
       <div className="bg-slate-800/80 border border-slate-700 rounded-2xl overflow-hidden shadow-2xl p-4 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3 pb-2 border-b border-slate-700">
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3 min-w-0">
             <span className="font-bold text-white text-sm">Ledger Entries ({filtered.length})</span>
             <div className="relative">
               <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2" />
@@ -324,7 +337,7 @@ export const CashbookView: React.FC = () => {
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 placeholder="Search tx ID, driver, note..."
-                className="bg-slate-900 border border-slate-700 rounded-lg pl-8 pr-3 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 w-48"
+                className="bg-slate-900 border border-slate-700 rounded-lg pl-8 pr-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 w-full sm:w-48 min-w-0"
               />
             </div>
           </div>
@@ -441,13 +454,13 @@ export const CashbookView: React.FC = () => {
       {/* Modal: New Cash Transaction */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-lg w-full p-6 shadow-2xl">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-lg w-full min-w-0 p-6 shadow-2xl">
             <div className="flex justify-between items-center pb-3 border-b border-slate-800">
               <h3 className="font-bold text-white text-base">New Cashbook Transaction</h3>
               <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-white">✕</button>
             </div>
             <form onSubmit={handleCreateTx} className="mt-4 space-y-4">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-slate-400 mb-1 font-mono uppercase">Date *</label>
                   <input
@@ -462,6 +475,8 @@ export const CashbookView: React.FC = () => {
                   <label className="block text-xs font-bold text-slate-400 mb-1 font-mono uppercase">Account *</label>
                   <select
                     name="account"
+                    value={transactionAccount || cashAccounts[0]?.name || ''}
+                    onChange={e => setTransactionAccount(e.target.value)}
                     required
                     className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:border-blue-500"
                   >
@@ -477,6 +492,8 @@ export const CashbookView: React.FC = () => {
                   <label className="block text-xs font-bold text-slate-400 mb-1 font-mono uppercase">Type *</label>
                   <select
                     name="type"
+                    value={transactionType}
+                    onChange={e => setTransactionType(e.target.value)}
                     required
                     className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:border-blue-500"
                   >
