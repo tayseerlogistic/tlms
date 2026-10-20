@@ -504,8 +504,8 @@ export const CashbookView: React.FC = () => {
                   className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:border-blue-500"
                 >
                   <option value="">— Non-employee / General —</option>
-                  {drivers.map(d => (
-                    <option key={d.id} value={d.name}>{d.name} ({d.empNo})</option>
+                  {Array.from(new Set([...employeeNames, ...drivers.map(d => d.name)])).sort().map(name => (
+                    <option key={name} value={name}>{name}</option>
                   ))}
                 </select>
               </div>
