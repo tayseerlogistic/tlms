@@ -41,6 +41,11 @@ function shiftDateStr(dateStr: string, deltaDays: number): string {
   return dateStr;
 }
 
+function localTodayISO(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+}
+
 export const DailyManifestView: React.FC = () => {
   const {
     drivers, manifests, schedules, saveDailyManifest, saveMultiDayManifests,
@@ -49,7 +54,7 @@ export const DailyManifestView: React.FC = () => {
 
   const { isDispatcher, isAdmin } = useAuth();
 
-  const [selectedDate, setSelectedDate] = useState(() => '2026-10-05');
+  const [selectedDate, setSelectedDate] = useState(() => localTodayISO());
   const [subTab, setSubTab] = useState<'manifest' | 'history' | 'learning' | 'bulk' | 'paste-multi'>('manifest');
   const [selectedDriverIdx, setSelectedDriverIdx] = useState(0);
 
@@ -247,7 +252,7 @@ export const DailyManifestView: React.FC = () => {
     );
 
     // Switch to Oct 5 (today) and manifest view
-    setSelectedDate('2026-10-05');
+    setSelectedDate(localTodayISO());
     setSubTab('manifest');
   };
 
