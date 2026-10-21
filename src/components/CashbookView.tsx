@@ -505,17 +505,7 @@ export const CashbookView: React.FC = () => {
                           >
                             <RotateCcw className="w-3.5 h-3.5" />
                           </button>
-                          {isAdmin && (
-                            <button
-                              onClick={() => {
-                                if (confirm(`Permanently delete transaction ${t.id}?`)) deleteCashTransaction(t.id);
-                              }}
-                              className="p-1 text-slate-400 hover:text-rose-400"
-                              title="Delete"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          )}
+
                         </div>
                       )}
                     </td>
