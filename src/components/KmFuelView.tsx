@@ -2964,7 +2964,7 @@ TLS Logistics Fleet Management`;
                 const cost = parseFloat((liters * KSA_DIESEL_PRICE).toFixed(2));
                 const assignedDriver = drivers.find(d => d.name === fuelTruck.assignedDriverName);
                 const normalizePhone = (value: string) => {
-                  const digits = value.replace(/\\D/g, '');
+                  const digits = value.replace(/\D/g, '');
                   if (!digits) return '';
                   if (digits.startsWith('00966')) return digits.slice(2);
                   if (digits.startsWith('966')) return digits;
@@ -3009,15 +3009,15 @@ TLS Logistics Fleet Management`;
                   const imageUrl = canvas.toDataURL('image/png');
                   const link = document.createElement('a');
                   link.href = imageUrl;
-                  link.download = `Diesel-Receipt-${fuelTruck.plate.replace(/\\s+/g, '-')}-${fuelDate}.png`;
+                  link.download = `Diesel-Receipt-${fuelTruck.plate.replace(/\s+/g, '-')}-${fuelDate}.png`;
                   link.click();
                 }
-                const message = `*TAYSEER LOGISTICS - DIESEL RECEIPT*\\nVehicle: ${fuelTruck.plate}\\nDriver: ${fuelTruck.assignedDriverName || 'Unassigned'}\\nDate: ${fuelDate}\\nRoute: ${fuelRouteVal.trim() || '—'}\\nLiters: ${liters}\\nAmount: ${cost.toFixed(2)} SAR\\nReceipt image downloaded as PNG.`;
+                const message = `*TAYSEER LOGISTICS - DIESEL RECEIPT*\nVehicle: ${fuelTruck.plate}\nDriver: ${fuelTruck.assignedDriverName || 'Unassigned'}\nDate: ${fuelDate}\nRoute: ${fuelRouteVal.trim() || '—'}\nLiters: ${liters}\nAmount: ${cost.toFixed(2)} SAR\nReceipt image downloaded as PNG.`;
                 if (phone && whatsappWindow) {
                   whatsappWindow.location.href = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
                 } else {
                   whatsappWindow?.close();
-                  alert(phone ? 'Receipt saved, but WhatsApp could not be opened. Please open WhatsApp manually.' : 'Receipt saved and downloaded. No mobile number is assigned to this driver, so WhatsApp was not opened.');
+                  alert('Receipt saved and downloaded. No mobile number is assigned to this driver, so WhatsApp was not opened.');
                 }
                 setIsQuickFuelModalOpen(false);
               }}
