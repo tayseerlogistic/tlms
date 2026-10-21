@@ -98,33 +98,31 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const [drivers, setDrivers] = useState<Driver[]>(() => {
     let base = INITIAL_DRIVERS;
+    let loadedUserManagedList = false;
     const saved = localStorage.getItem(LOCAL_STORAGE_KEY + '_drivers_v3');
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        // Accept the user-managed offline list, including intentional deletions.
-        // A fixed-length check restored deleted drivers after refresh.
         if (Array.isArray(parsed)) {
           base = parsed;
+          loadedUserManagedList = true;
         }
-      } catch (e) {
-        // fallback to INITIAL_DRIVERS
+      } catch {
+        // Fall back to the initial demo registry when local storage is unreadable.
       }
     }
-    // Always ensure October 1–5 manifest seed tags are populated into driver history
-    return base.map((d, idx) => {
-      const hist = { ...(d.history || {}) };
-      Object.entries(SEED_OCTOBER_1_4_MANIFESTS).forEach(([dt, tags]) => {
-        if (tags[idx] && !hist[dt]) {
-          hist[dt] = tags[idx];
-        }
+    // Once a list has been saved, respect its history and archived/deleted records exactly.
+    // Seed historical tags only for a brand-new browser/demo setup.
+    if (loadedUserManagedList) return base;
+    return base.map((driver, idx) => {
+      const history = { ...(driver.history || {}) };
+      Object.entries(SEED_OCTOBER_1_4_MANIFESTS).forEach(([date, tags]) => {
+        if (tags[idx] && !history[date]) history[date] = tags[idx];
       });
-      Object.entries(OCTOBER_CONFIRMED_MANIFESTS).forEach(([dt, tags]) => {
-        if (tags[idx] && !hist[dt]) {
-          hist[dt] = tags[idx];
-        }
+      Object.entries(OCTOBER_CONFIRMED_MANIFESTS).forEach(([date, tags]) => {
+        if (tags[idx] && !history[date]) history[date] = tags[idx];
       });
-      return { ...d, history: hist };
+      return { ...driver, history };
     });
   });
 
@@ -142,24 +140,18 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   });
 
   const [schedules, setSchedules] = useState<Record<string, DailySchedule>>(() => {
-    const seedSched: Record<string, DailySchedule> = { ...generateSeedSchedules(), ...OCTOBER_DAILY_SCHEDULES };
+    const seedSchedules: Record<string, DailySchedule> = { ...generateSeedSchedules(), ...OCTOBER_DAILY_SCHEDULES };
     const saved = localStorage.getItem(LOCAL_STORAGE_KEY + '_schedules_v3');
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        const merged = { ...seedSched, ...parsed };
-        // Ensure October schedules (Oct 1–5) are always present with their real rows
-        Object.entries(OCTOBER_DAILY_SCHEDULES).forEach(([dt, sched]) => {
-          if (!merged[dt] || !merged[dt].rows || merged[dt].rows.length === 0) {
-            merged[dt] = sched;
-          }
-        });
-        return merged;
-      } catch (e) {
-        return seedSched;
+        // A saved empty list is a valid user choice: do not resurrect deleted seed dates.
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as Record<string, DailySchedule>;
+      } catch {
+        // Fall through to the initial demo schedules if the cache cannot be read.
       }
     }
-    return seedSched;
+    return seedSchedules;
   });
 
   const [manifests, setManifests] = useState<Record<string, Record<string, string>>>(() => {
@@ -185,21 +177,15 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       const parsed = JSON.parse(saved) as Record<string, Record<string, string>>;
       const normalizedParsed: Record<string, Record<string, string>> = {};
-      Object.entries(parsed).forEach(([date, tags]) => { normalizedParsed[date] = normalizeManifestTags(tags, drivers); });
-      const merged = { ...seedManifests, ...normalizedParsed };
-      [SEED_OCTOBER_1_4_MANIFESTS, OCTOBER_CONFIRMED_MANIFESTS].forEach(source => {
-        Object.entries(source).forEach(([date, tags]) => {
-          const normalizedSeed: Record<string, string> = {};
-          Object.entries(tags).forEach(([key, tag]) => {
-            const index = Number(key);
-            const driver = key.trim() !== '' && Number.isInteger(index) && index >= 0 ? drivers[index] : undefined;
-            normalizedSeed[driver?.id || key] = tag;
-          });
-          merged[date] = { ...(merged[date] || {}), ...normalizedSeed };
-        });
+      Object.entries(parsed).forEach(([date, tags]) => {
+        normalizedParsed[date] = normalizeManifestTags(tags, drivers);
       });
-      return merged;
-    } catch { return seedManifests; }
+      // The saved manifest collection is authoritative, including intentionally empty dates.
+      // Demo seed manifests are injected only on first initialization.
+      return normalizedParsed;
+    } catch {
+      return seedManifests;
+    }
   });
 
   const driversRef = useRef(drivers);
