@@ -125,22 +125,20 @@ export const DailyManifestView: React.FC = () => {
   // -------------------------------------------------------------
   const handleRetrainAiModel = async () => {
     setIsRetraining(true);
-    setRetrainStepMsg('Ingesting historical schedules & driver logs (August 1–31 & September 1–7)...');
-    await new Promise(r => setTimeout(r, 600));
-
-    setRetrainStepMsg('Analyzing multi-day cycle progressions (Loading → En-Route → Offloading → Return)...');
-    await new Promise(r => setTimeout(r, 600));
-
-    setRetrainStepMsg('Extracting route transition patterns; independent accuracy validation is not configured...');
-    await new Promise(r => setTimeout(r, 500));
-
-    const result = trainManifestAiModel(drivers, schedules, manifests, learnedRules);
-    await learnHistoricalRules(result.rules);
-    setModelStats(result.stats);
-
-    setIsRetraining(false);
-    setRetrainStepMsg('');
-    showToast('AI Manifest model retrained from ' + result.stats.totalTripsIngested + ' recorded dispatches across ' + result.stats.distinctDates + ' dates. Accuracy is not reported because no independent validation set is configured.', 'success');
+    setRetrainStepMsg('Analyzing available driver histories, manifests, and timetable records…');
+    // Yield once so the working state renders; progress is not simulated.
+    await new Promise(resolve => setTimeout(resolve, 0));
+    try {
+      const result = trainManifestAiModel(drivers, schedules, manifests, learnedRules);
+      await learnHistoricalRules(result.rules);
+      setModelStats(result.stats);
+      showToast('Model refreshed from ' + result.stats.totalTripsIngested + ' distinct recorded driver/date/status observations. Accuracy remains unmeasured without a separate validation set.', 'success');
+    } catch (error) {
+      showToast(error instanceof Error ? 'Model training failed: ' + error.message : 'Model training failed.', 'error');
+    } finally {
+      setIsRetraining(false);
+      setRetrainStepMsg('');
+    }
   };
 
   const handleAutoPredictAll = () => {
