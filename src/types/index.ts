@@ -154,6 +154,7 @@ export interface CashTransaction {
   createdBy?: string;
   createdAt?: string;
   reversalOf?: string;
+  reversedType?: CashTransaction['type'];
 }
 
 export interface CashAccount {
