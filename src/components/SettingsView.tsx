@@ -1,4 +1,6 @@
 import React, { useEffect, useState } from 'react';
+import { doc, onSnapshot, setDoc } from 'firebase/firestore';
+import { db } from '../firebase/config';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { useLms } from '../context/LmsContext';
@@ -20,7 +22,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onBackToCommandCenter
 }) => {
   const { theme, toggleTheme } = useTheme();
-  const { role, isAdmin } = useAuth();
+  const { user, profile, role, isAdmin } = useAuth();
   const {
     trucks, drivers, equipment, schedules, manifests, kmRecords,
     cashTransactions, conflicts, exportFullBackup, restoreFullBackup
@@ -33,13 +35,46 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [brandSubtitle, setBrandSubtitle] = useState(() => localStorage.getItem('tlms.brandSubtitle') || 'Tayseer Group Central Fleet Operating System');
   const [brandLogoUrl, setBrandLogoUrl] = useState(() => localStorage.getItem('tlms.brandLogoUrl') || '');
   const [brandSaved, setBrandSaved] = useState(false);
+  const [brandError, setBrandError] = useState('');
 
-  const saveBranding = () => {
-    localStorage.setItem('tlms.brandName', brandName.trim() || 'TLS Logistics LMS');
-    localStorage.setItem('tlms.brandSubtitle', brandSubtitle.trim() || 'Tayseer Group Central Fleet Operating System');
-    localStorage.setItem('tlms.brandLogoUrl', brandLogoUrl.trim());
-    window.dispatchEvent(new CustomEvent('tlms-branding-updated'));
-    setBrandSaved(true);
+  useEffect(() => {
+    if (!user && !profile) return;
+    return onSnapshot(doc(db, 'app_state', 'branding'), snapshot => {
+      if (!snapshot.exists()) return;
+      const data = snapshot.data();
+      if (typeof data.brandName === 'string') setBrandName(data.brandName);
+      if (typeof data.brandSubtitle === 'string') setBrandSubtitle(data.brandSubtitle);
+      if (typeof data.brandLogoUrl === 'string') setBrandLogoUrl(data.brandLogoUrl);
+      localStorage.setItem('tlms.brandName', typeof data.brandName === 'string' ? data.brandName : 'TLS Logistics LMS');
+      localStorage.setItem('tlms.brandSubtitle', typeof data.brandSubtitle === 'string' ? data.brandSubtitle : 'Tayseer Group Central Fleet Operating System');
+      localStorage.setItem('tlms.brandLogoUrl', typeof data.brandLogoUrl === 'string' ? data.brandLogoUrl : '');
+      window.dispatchEvent(new CustomEvent('tlms-branding-updated'));
+    }, error => {
+      console.warn('Shared branding listener notice:', error.message);
+      setBrandError('Shared branding could not be loaded from Firebase. Local branding is still available in this browser.');
+    });
+  }, [user, profile]);
+
+  const saveBranding = async () => {
+    const next = {
+      brandName: brandName.trim() || 'TLS Logistics LMS',
+      brandSubtitle: brandSubtitle.trim() || 'Tayseer Group Central Fleet Operating System',
+      brandLogoUrl: brandLogoUrl.trim(),
+      updatedAt: new Date().toISOString(),
+      updatedBy: profile?.email || user?.email || 'Admin'
+    };
+    setBrandError('');
+    try {
+      if (user || profile) await setDoc(doc(db, 'app_state', 'branding'), next);
+      localStorage.setItem('tlms.brandName', next.brandName);
+      localStorage.setItem('tlms.brandSubtitle', next.brandSubtitle);
+      localStorage.setItem('tlms.brandLogoUrl', next.brandLogoUrl);
+      window.dispatchEvent(new CustomEvent('tlms-branding-updated'));
+      setBrandSaved(true);
+    } catch (error) {
+      setBrandError(error instanceof Error ? 'Branding save failed: ' + error.message : 'Branding could not be saved.');
+      setBrandSaved(false);
+    }
   };
 
   const openConflictsCount = conflicts.filter(c => c.status === 'open').length;
