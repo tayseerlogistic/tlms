@@ -58,7 +58,7 @@ Chart.register(
 
 export const KmFuelView: React.FC = () => {
   const {
-    trucks, drivers, kmRecords, dieselLogs,
+    trucks, drivers, kmRecords, dieselLogs, cashTransactions,
     addKmRecord, batchSaveKmRecords, deleteKmRecord, addDieselLog,
     saveTruck, deleteTruck, saveDriver, deleteDriver,
     restoreFullBackup, exportFullBackup
@@ -141,7 +141,7 @@ export const KmFuelView: React.FC = () => {
   const [fuelDate, setFuelDate] = useState(() => new Date().toISOString().substring(0, 10));
 
   const [isWhatsRemindersModalOpen, setIsWhatsRemindersModalOpen] = useState(false);
-  const [whatsReminderLang, setWhatsReminderLang] = useState<'english' | 'urdu' | 'hindi'>('english');
+  const [whatsReminderLang, setWhatsReminderLang] = useState<'arabic' | 'urdu' | 'hindi'>('arabic');
 
   const [isTruckHistoryModalOpen, setIsTruckHistoryModalOpen] = useState(false);
   const [historyTruck, setHistoryTruck] = useState<Truck | null>(null);
@@ -391,40 +391,54 @@ export const KmFuelView: React.FC = () => {
     if (plateEl) plateEl.focus();
   };
 
-  // WhatsApp meter request in 3 languages
+  // Send meter-reading and cashbook reminder in Arabic, Urdu and Hindi.
   const sendWhatsAppReminder = (truckPlate: string) => {
     const truck = trucks.find(t => t.plate === truckPlate);
     const driver = drivers.find(d => d.name === truck?.assignedDriverName);
-    const phone = driver?.mobile
-      ? (driver.mobile.startsWith('0') ? '966' + driver.mobile.substring(1) : (driver.mobile.startsWith('966') ? driver.mobile : '966' + driver.mobile))
-      : '';
+    const digits = (driver?.mobile || '').replace(/\D/g, '');
+    const phone = digits.startsWith('00966') ? digits.slice(2)
+      : digits.startsWith('966') ? digits
+      : digits.startsWith('05') ? `966${digits.slice(1)}`
+      : digits.startsWith('5') && digits.length === 9 ? `966${digits}` : digits;
+    const cashbookBalance = cashTransactions
+      .filter(t => t.status !== 'Reversed' && (t.employee || '').trim().toLowerCase() === (driver?.name || '').trim().toLowerCase())
+      .reduce((balance, t) => {
+        if (t.type === 'Advance Given') return balance + t.amount;
+        if (t.type === 'Expense Settlement' || t.type === 'Advance Returned') return balance - t.amount;
+        return balance;
+      }, 0);
+    const text = `🚚 *TLS LOGISTICS - DRIVER UPDATE*
+🚛 Vehicle: ${truckPlate}
+👤 Driver: ${driver?.name || 'Driver'}
+📅 Date: ${readingDate}
+💰 Cashbook / outstanding advance: ${cashbookBalance.toFixed(2)} SAR
 
-    const text = `🚚 *TLS FLEET - METER READING REQUEST*
-================================
-🚛 *Truck Plate:* ${truckPlate}
-👤 *Driver:* ${driver?.name || 'Driver'}
-📅 *Date:* ${readingDate}
+🇸🇦 *العربية*
+يرجى إرسال قراءة عداد الشاحنة وصورة لوحة العدادات اليوم.
+رصيد العهدة النقدية المسجل: ${cashbookBalance.toFixed(2)} ريال سعودي.
 
-🇬🇧 *English:*
-Send your Meter Reading 🚚📟
+🇵🇰 *اردو*
+براہ کرم آج ٹرک کے میٹر کی ریڈنگ اور ڈیش بورڈ کی تصویر بھیجیں۔
+درج شدہ نقد ایڈوانس بیلنس: ${cashbookBalance.toFixed(2)} سعودی ریال۔
 
-🇵🇰 *Urdu:*
-اپنی میٹر ریڈنگ بھیجیں ۔ 🚚📟
+🇮🇳 *हिंदी*
+कृपया आज ट्रक की मीटर रीडिंग और डैशबोर्ड की फोटो भेजें।
+दर्ज नकद अग्रिम शेष: ${cashbookBalance.toFixed(2)} सऊदी रियाल۔
 
-🇮🇳 *Hindi:*
-अपनी मीटर रीडिंग भेजें । 🚚📟
-
-================================
-TLS Logistics Fleet Management`;
+TLS Fleet Management`;
 
     if (!phone) {
       const manual = prompt(`Enter WhatsApp number for driver of ${truckPlate} (e.g. 05XXXXXXXX):`, '05');
       if (manual) {
-        const clean = manual.startsWith('0') ? '966' + manual.substring(1) : manual;
-        window.open(`https://api.whatsapp.com/send?phone=${clean}&text=${encodeURIComponent(text)}`, '_blank');
+        const manualDigits = manual.replace(/\D/g, '');
+        const clean = manualDigits.startsWith('00966') ? manualDigits.slice(2)
+          : manualDigits.startsWith('966') ? manualDigits
+          : manualDigits.startsWith('05') ? `966${manualDigits.slice(1)}`
+          : manualDigits.startsWith('5') && manualDigits.length === 9 ? `966${manualDigits}` : manualDigits;
+        if (clean) window.open(`https://wa.me/${clean}?text=${encodeURIComponent(text)}`, '_blank');
       }
     } else {
-      window.open(`https://api.whatsapp.com/send?phone=${phone}&text=${encodeURIComponent(text)}`, '_blank');
+      window.open(`https://wa.me/${phone}?text=${encodeURIComponent(text)}`, '_blank');
     }
   };
 
@@ -3125,10 +3139,10 @@ TLS Logistics Fleet Management`;
                 <label className="text-xs font-bold text-slate-400 uppercase font-mono">Template Language:</label>
                 <div className="flex bg-slate-800 border border-slate-700 rounded-xl p-0.5 text-xs">
                   <button
-                    onClick={() => setWhatsReminderLang('english')}
-                    className={`px-3 py-1.5 rounded-lg font-bold transition ${whatsReminderLang === 'english' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'}`}
+                    onClick={() => setWhatsReminderLang('arabic')}
+                    className={`px-3 py-1.5 rounded-lg font-bold transition ${whatsReminderLang === 'arabic' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'}`}
                   >
-                    🇬🇧 English
+                    🇸🇦 Arabic (العربية)
                   </button>
                   <button
                     onClick={() => setWhatsReminderLang('urdu')}
@@ -3147,9 +3161,15 @@ TLS Logistics Fleet Management`;
 
               {/* Message Preview */}
               <div className="p-3.5 bg-slate-950 border border-slate-800 rounded-xl text-xs font-mono text-emerald-300 whitespace-pre-line">
-                {whatsReminderLang === 'english' && `🚚 *TLS FLEET - METER READING REQUEST*\n================================\nDear Driver, please send your current meter reading with a photo of the truck dashboard today.\n\nThank you,\nTLS Fleet Management`}
-                {whatsReminderLang === 'urdu' && `🚚 *ٹی ایل ایس لاجسٹکس - میٹر ریڈنگ درخواست*\n================================\nمحترم ڈرائیور، براہ کرم آج اپنی گاڑی کی میٹر ریڈنگ اور ڈیش بورڈ کی تصویر واٹس ایپ کریں۔\n\nشکریہ،\nٹی ایل ایس فلیٹ مینجمنٹ`}
-                {whatsReminderLang === 'hindi' && `🚚 *TLS बेड़ा - मीटर रीडिंग अनुरोध*\n================================\nप्रिय ड्राइवर, कृपया आज अपने ट्रक का मीटर रीडिंग और डैशबोर्ड की फोटो भेजें।\n\nधन्यवाद,\nTLS बेड़ा प्रबंधन`}
+                {whatsReminderLang === 'arabic' && `🚚 *طلب قراءة العداد - أسطول TLS*
+يرجى إرسال قراءة عداد الشاحنة وصورة لوحة العدادات اليوم.
+رصيد العهدة النقدية المسجل: [يُحسب من دفتر النقدية عند الإرسال]`}
+                {whatsReminderLang === 'urdu' && `🚚 *ٹی ایل ایس لاجسٹکس - میٹر ریڈنگ درخواست*
+محترم ڈرائیور، براہ کرم آج ٹرک کی میٹر ریڈنگ اور ڈیش بورڈ کی تصویر بھیجیں۔
+کیش بک ایڈوانس بیلنس پیغام بھیجتے وقت شامل ہوگا۔`}
+                {whatsReminderLang === 'hindi' && `🚚 *TLS बेड़ा - मीटर रीडिंग अनुरोध*
+कृपया आज ट्रक की मीटर रीडिंग और डैशबोर्ड की फोटो भेजें।
+कैशबुक अग्रिम शेष संदेश भेजते समय शामिल होगा।`}
               </div>
 
               {/* Driver list */}
