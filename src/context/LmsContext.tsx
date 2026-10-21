@@ -606,8 +606,8 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const reversalId = 'REV-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).substring(2, 6).toUpperCase();
     const reversal: CashTransaction = {
       id: reversalId, date: ksaDateISO(), dateISO: ksaDateISO(), account: original.account, employee: original.employee,
-      type: 'Reversal', category: original.category, amount: -original.amount,
-      description: 'Reversal of ' + id + (reason ? ': ' + reason : ''), status: 'Posted', reversalOf: id,
+      type: 'Reversal', category: original.category, amount: Math.abs(original.amount),
+      description: 'Reversal of ' + id + (reason ? ': ' + reason : ''), status: 'Posted', reversalOf: id, reversedType: original.type,
       createdAt: new Date().toISOString(), createdBy: profile?.email || user?.email || 'Cashier'
     };
     if (user || profile) {
@@ -706,7 +706,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const learnHistoricalRules = async (rules: LearnedRule[]) => {
     const unique = new Map<string, LearnedRule>();
-    [...learnedRules, ...rules].forEach(rule => unique.set(String(rule.driverIndex) + '__' + rule.result, rule));
+    [...learnedRules, ...rules].forEach(rule => unique.set(String(rule.driverId || drivers[rule.driverIndex]?.id || rule.driverIndex) + '__' + rule.result, { ...rule, driverId: rule.driverId || drivers[rule.driverIndex]?.id }));
     const nextRules = Array.from(unique.values()).sort((a, b) => b.hits - a.hits);
     if (user || profile) await setDoc(doc(db, 'app_state', 'learnedRules'), { rules: nextRules, updatedAt: new Date().toISOString() });
     setLearnedRules(nextRules);
