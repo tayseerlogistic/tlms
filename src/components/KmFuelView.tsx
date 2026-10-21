@@ -58,7 +58,7 @@ Chart.register(
 
 export const KmFuelView: React.FC = () => {
   const {
-    trucks, drivers, kmRecords, dieselLogs,
+    trucks, drivers, kmRecords, dieselLogs, cashTransactions,
     addKmRecord, batchSaveKmRecords, deleteKmRecord, addDieselLog,
     saveTruck, deleteTruck, saveDriver, deleteDriver,
     restoreFullBackup, exportFullBackup
@@ -137,12 +137,11 @@ export const KmFuelView: React.FC = () => {
   const [fuelTruck, setFuelTruck] = useState<Truck | null>(null);
   const [fuelLitersVal, setFuelLitersVal] = useState('');
   const [fuelCostVal, setFuelCostVal] = useState('');
-  const [fuelStationVal, setFuelStationVal] = useState('Yanbu Aramco Depot');
-  const [fuelReceiptVal, setFuelReceiptVal] = useState('');
+  const [fuelRouteVal, setFuelRouteVal] = useState('');
   const [fuelDate, setFuelDate] = useState(() => new Date().toISOString().substring(0, 10));
 
   const [isWhatsRemindersModalOpen, setIsWhatsRemindersModalOpen] = useState(false);
-  const [whatsReminderLang, setWhatsReminderLang] = useState<'english' | 'urdu' | 'hindi'>('english');
+  const [whatsReminderLang, setWhatsReminderLang] = useState<'arabic' | 'urdu' | 'hindi'>('arabic');
 
   const [isTruckHistoryModalOpen, setIsTruckHistoryModalOpen] = useState(false);
   const [historyTruck, setHistoryTruck] = useState<Truck | null>(null);
@@ -392,40 +391,54 @@ export const KmFuelView: React.FC = () => {
     if (plateEl) plateEl.focus();
   };
 
-  // WhatsApp meter request in 3 languages
+  // Send meter-reading and cashbook reminder in Arabic, Urdu and Hindi.
   const sendWhatsAppReminder = (truckPlate: string) => {
     const truck = trucks.find(t => t.plate === truckPlate);
     const driver = drivers.find(d => d.name === truck?.assignedDriverName);
-    const phone = driver?.mobile
-      ? (driver.mobile.startsWith('0') ? '966' + driver.mobile.substring(1) : (driver.mobile.startsWith('966') ? driver.mobile : '966' + driver.mobile))
-      : '';
+    const digits = (driver?.mobile || '').replace(/\D/g, '');
+    const phone = digits.startsWith('00966') ? digits.slice(2)
+      : digits.startsWith('966') ? digits
+      : digits.startsWith('05') ? `966${digits.slice(1)}`
+      : digits.startsWith('5') && digits.length === 9 ? `966${digits}` : digits;
+    const cashbookBalance = cashTransactions
+      .filter(t => t.status !== 'Reversed' && (t.employee || '').trim().toLowerCase() === (driver?.name || '').trim().toLowerCase())
+      .reduce((balance, t) => {
+        if (t.type === 'Advance Given') return balance + t.amount;
+        if (t.type === 'Expense Settlement' || t.type === 'Advance Returned') return balance - t.amount;
+        return balance;
+      }, 0);
+    const text = `🚚 *TLS LOGISTICS - DRIVER UPDATE*
+🚛 Vehicle: ${truckPlate}
+👤 Driver: ${driver?.name || 'Driver'}
+📅 Date: ${readingDate}
+💰 Cashbook / outstanding advance: ${cashbookBalance.toFixed(2)} SAR
 
-    const text = `🚚 *TLS FLEET - METER READING REQUEST*
-================================
-🚛 *Truck Plate:* ${truckPlate}
-👤 *Driver:* ${driver?.name || 'Driver'}
-📅 *Date:* ${readingDate}
+🇸🇦 *العربية*
+يرجى إرسال قراءة عداد الشاحنة وصورة لوحة العدادات اليوم.
+رصيد العهدة النقدية المسجل: ${cashbookBalance.toFixed(2)} ريال سعودي.
 
-🇬🇧 *English:*
-Send your Meter Reading 🚚📟
+🇵🇰 *اردو*
+براہ کرم آج ٹرک کے میٹر کی ریڈنگ اور ڈیش بورڈ کی تصویر بھیجیں۔
+درج شدہ نقد ایڈوانس بیلنس: ${cashbookBalance.toFixed(2)} سعودی ریال۔
 
-🇵🇰 *Urdu:*
-اپنی میٹر ریڈنگ بھیجیں ۔ 🚚📟
+🇮🇳 *हिंदी*
+कृपया आज ट्रक की मीटर रीडिंग और डैशबोर्ड की फोटो भेजें।
+दर्ज नकद अग्रिम शेष: ${cashbookBalance.toFixed(2)} सऊदी रियाल۔
 
-🇮🇳 *Hindi:*
-अपनी मीटर रीडिंग भेजें । 🚚📟
-
-================================
-TLS Logistics Fleet Management`;
+TLS Fleet Management`;
 
     if (!phone) {
       const manual = prompt(`Enter WhatsApp number for driver of ${truckPlate} (e.g. 05XXXXXXXX):`, '05');
       if (manual) {
-        const clean = manual.startsWith('0') ? '966' + manual.substring(1) : manual;
-        window.open(`https://api.whatsapp.com/send?phone=${clean}&text=${encodeURIComponent(text)}`, '_blank');
+        const manualDigits = manual.replace(/\D/g, '');
+        const clean = manualDigits.startsWith('00966') ? manualDigits.slice(2)
+          : manualDigits.startsWith('966') ? manualDigits
+          : manualDigits.startsWith('05') ? `966${manualDigits.slice(1)}`
+          : manualDigits.startsWith('5') && manualDigits.length === 9 ? `966${manualDigits}` : manualDigits;
+        if (clean) window.open(`https://wa.me/${clean}?text=${encodeURIComponent(text)}`, '_blank');
       }
     } else {
-      window.open(`https://api.whatsapp.com/send?phone=${phone}&text=${encodeURIComponent(text)}`, '_blank');
+      window.open(`https://wa.me/${phone}?text=${encodeURIComponent(text)}`, '_blank');
     }
   };
 
@@ -2962,18 +2975,64 @@ TLS Logistics Fleet Management`;
                   alert("Please enter a valid fuel liter amount.");
                   return;
                 }
-                const cost = fuelCostVal ? parseFloat(fuelCostVal) : parseFloat((liters * KSA_DIESEL_PRICE).toFixed(2));
-
+                const cost = parseFloat((liters * KSA_DIESEL_PRICE).toFixed(2));
+                const assignedDriver = drivers.find(d => d.name === fuelTruck.assignedDriverName);
+                const normalizePhone = (value: string) => {
+                  const digits = value.replace(/\D/g, '');
+                  if (!digits) return '';
+                  if (digits.startsWith('00966')) return digits.slice(2);
+                  if (digits.startsWith('966')) return digits;
+                  if (digits.startsWith('05')) return `966${digits.slice(1)}`;
+                  if (digits.startsWith('5') && digits.length === 9) return `966${digits}`;
+                  return digits;
+                };
+                const phone = normalizePhone(assignedDriver?.mobile || '');
+                const whatsappWindow = window.open('about:blank', '_blank');
                 await addDieselLog({
                   date: fuelDate,
                   veh: fuelTruck.plate,
                   drv: fuelTruck.assignedDriverName || 'Driver',
                   liters,
                   cost,
-                  route: fuelStationVal ? `${fuelStationVal} (Receipt #${fuelReceiptVal || 'N/A'})` : 'Station Fill-up'
+                  route: fuelRouteVal.trim() || '—'
                 });
 
-                alert(`Successfully logged ${liters} Liters (${cost} SAR) for ${fuelTruck.plate}!`);
+                // Render a portable 80 mm receipt as a PNG for download/share.
+                const canvas = document.createElement('canvas');
+                canvas.width = 944;
+                const lines = [
+                  'TAYSEER LOGISTICS', 'DIESEL FILL-UP RECEIPT',
+                  '--------------------------------',
+                  `Date: ${fuelDate}`, `Vehicle: ${fuelTruck.plate}`,
+                  `Driver: ${fuelTruck.assignedDriverName || 'Unassigned'}`,
+                  `Route: ${fuelRouteVal.trim() || '—'}`,
+                  `Liters: ${liters.toLocaleString()}`,
+                  `Rate: ${KSA_DIESEL_PRICE.toFixed(2)} SAR/L`,
+                  `Amount: ${cost.toFixed(2)} SAR`,
+                  '--------------------------------', 'Thank you'
+                ];
+                canvas.height = 100 + lines.length * 48;
+                const ctx = canvas.getContext('2d');
+                if (ctx) {
+                  ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+                  ctx.fillStyle = '#111827'; ctx.textAlign = 'center';
+                  ctx.font = 'bold 36px Arial'; ctx.fillText(lines[0], canvas.width / 2, 55);
+                  ctx.font = 'bold 30px Arial'; ctx.fillText(lines[1], canvas.width / 2, 100);
+                  ctx.textAlign = 'left'; ctx.font = '28px Arial';
+                  lines.slice(2).forEach((line, index) => ctx.fillText(line, 42, 150 + index * 48));
+                  const imageUrl = canvas.toDataURL('image/png');
+                  const link = document.createElement('a');
+                  link.href = imageUrl;
+                  link.download = `Diesel-Receipt-${fuelTruck.plate.replace(/\s+/g, '-')}-${fuelDate}.png`;
+                  link.click();
+                }
+                const message = `*TAYSEER LOGISTICS - DIESEL RECEIPT*\nVehicle: ${fuelTruck.plate}\nDriver: ${fuelTruck.assignedDriverName || 'Unassigned'}\nDate: ${fuelDate}\nRoute: ${fuelRouteVal.trim() || '—'}\nLiters: ${liters}\nAmount: ${cost.toFixed(2)} SAR\nReceipt image downloaded as PNG.`;
+                if (phone && whatsappWindow) {
+                  whatsappWindow.location.href = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+                } else {
+                  whatsappWindow?.close();
+                  alert('Receipt saved and downloaded. No mobile number is assigned to this driver, so WhatsApp was not opened.');
+                }
                 setIsQuickFuelModalOpen(false);
               }}
               className="space-y-3"
@@ -3025,44 +3084,15 @@ TLS Logistics Fleet Management`;
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-slate-400 uppercase font-mono mb-1">Cost (SAR @ 1.79)</label>
-                  <input
-                    type="number"
-                    step="any"
-                    value={fuelCostVal}
-                    onChange={(e) => setFuelCostVal(e.target.value)}
-                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-amber-300 font-mono font-bold focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-400 uppercase font-mono mb-1">Receipt / Card #</label>
-                  <input
-                    type="text"
-                    placeholder="e.g. REC-9481"
-                    value={fuelReceiptVal}
-                    onChange={(e) => setFuelReceiptVal(e.target.value)}
-                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none"
-                  />
-                </div>
-              </div>
-
               <div>
-                <label className="block text-xs font-bold text-slate-400 uppercase font-mono mb-1">Fuel Station</label>
-                <select
-                  value={fuelStationVal}
-                  onChange={(e) => setFuelStationVal(e.target.value)}
-                  className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none"
-                >
-                  <option value="Yanbu Aramco Depot">Yanbu Aramco Depot</option>
-                  <option value="Naft Station Yanbu">Naft Station Yanbu</option>
-                  <option value="Petromin Expressway">Petromin Expressway</option>
-                  <option value="SASCO Highway Station">SASCO Highway Station</option>
-                  <option value="Aldrees Diesel Center">Aldrees Diesel Center</option>
-                  <option value="Jeddah Central Hub">Jeddah Central Hub</option>
-                  <option value="Riyadh Main Terminal">Riyadh Main Terminal</option>
-                </select>
+                <label className="block text-xs font-bold text-slate-400 uppercase font-mono mb-1">Route</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Yanbu → Riyadh"
+                  value={fuelRouteVal}
+                  onChange={(e) => setFuelRouteVal(e.target.value)}
+                  className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
+                />
               </div>
 
               <div className="flex justify-end gap-2 pt-2 border-t border-slate-800">
@@ -3077,7 +3107,7 @@ TLS Logistics Fleet Management`;
                   type="submit"
                   className="bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs px-5 py-2 rounded-xl shadow flex items-center gap-1.5"
                 >
-                  <Save className="w-3.5 h-3.5" /> Save Fuel Log
+                  <Send className="w-3.5 h-3.5" /> Save &amp; Send
                 </button>
               </div>
             </form>
@@ -3109,10 +3139,10 @@ TLS Logistics Fleet Management`;
                 <label className="text-xs font-bold text-slate-400 uppercase font-mono">Template Language:</label>
                 <div className="flex bg-slate-800 border border-slate-700 rounded-xl p-0.5 text-xs">
                   <button
-                    onClick={() => setWhatsReminderLang('english')}
-                    className={`px-3 py-1.5 rounded-lg font-bold transition ${whatsReminderLang === 'english' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'}`}
+                    onClick={() => setWhatsReminderLang('arabic')}
+                    className={`px-3 py-1.5 rounded-lg font-bold transition ${whatsReminderLang === 'arabic' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'}`}
                   >
-                    🇬🇧 English
+                    🇸🇦 Arabic (العربية)
                   </button>
                   <button
                     onClick={() => setWhatsReminderLang('urdu')}
@@ -3131,9 +3161,15 @@ TLS Logistics Fleet Management`;
 
               {/* Message Preview */}
               <div className="p-3.5 bg-slate-950 border border-slate-800 rounded-xl text-xs font-mono text-emerald-300 whitespace-pre-line">
-                {whatsReminderLang === 'english' && `🚚 *TLS FLEET - METER READING REQUEST*\n================================\nDear Driver, please send your current meter reading with a photo of the truck dashboard today.\n\nThank you,\nTLS Fleet Management`}
-                {whatsReminderLang === 'urdu' && `🚚 *ٹی ایل ایس لاجسٹکس - میٹر ریڈنگ درخواست*\n================================\nمحترم ڈرائیور، براہ کرم آج اپنی گاڑی کی میٹر ریڈنگ اور ڈیش بورڈ کی تصویر واٹس ایپ کریں۔\n\nشکریہ،\nٹی ایل ایس فلیٹ مینجمنٹ`}
-                {whatsReminderLang === 'hindi' && `🚚 *TLS बेड़ा - मीटर रीडिंग अनुरोध*\n================================\nप्रिय ड्राइवर, कृपया आज अपने ट्रक का मीटर रीडिंग और डैशबोर्ड की फोटो भेजें।\n\nधन्यवाद,\nTLS बेड़ा प्रबंधन`}
+                {whatsReminderLang === 'arabic' && `🚚 *طلب قراءة العداد - أسطول TLS*
+يرجى إرسال قراءة عداد الشاحنة وصورة لوحة العدادات اليوم.
+رصيد العهدة النقدية المسجل: [يُحسب من دفتر النقدية عند الإرسال]`}
+                {whatsReminderLang === 'urdu' && `🚚 *ٹی ایل ایس لاجسٹکس - میٹر ریڈنگ درخواست*
+محترم ڈرائیور، براہ کرم آج ٹرک کی میٹر ریڈنگ اور ڈیش بورڈ کی تصویر بھیجیں۔
+کیش بک ایڈوانس بیلنس پیغام بھیجتے وقت شامل ہوگا۔`}
+                {whatsReminderLang === 'hindi' && `🚚 *TLS बेड़ा - मीटर रीडिंग अनुरोध*
+कृपया आज ट्रक की मीटर रीडिंग और डैशबोर्ड की फोटो भेजें।
+कैशबुक अग्रिम शेष संदेश भेजते समय शामिल होगा।`}
               </div>
 
               {/* Driver list */}
