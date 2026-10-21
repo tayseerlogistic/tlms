@@ -575,78 +575,38 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const reverseCashTransaction = async (id: string, reason?: string) => {
-    const original = cashTransactions.find(t => t.id === id);
+    const original = cashTransactions.find(tx => tx.id === id);
     if (!original) return;
-
-    const revId = 'REV-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).substring(2, 6).toUpperCase();
-    const reversalTx: CashTransaction = {
-      id: revId,
-      date: ksaDateISO(),
-      dateISO: ksaDateISO(),
-      account: original.account,
-      employee: original.employee,
-      type: 'Reversal',
-      category: original.category,
-      amount: -original.amount,
-      description: `Reversal of ${id}${reason ? ': ' + reason : ''}`,
-      status: 'Posted',
-      reversalOf: id,
-      createdAt: new Date().toISOString(),
-      createdBy: profile?.email || user?.email || 'Cashier'
+    const reversalId = 'REV-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).substring(2, 6).toUpperCase();
+    const reversal: CashTransaction = {
+      id: reversalId, date: ksaDateISO(), dateISO: ksaDateISO(), account: original.account, employee: original.employee,
+      type: 'Reversal', category: original.category, amount: -original.amount,
+      description: 'Reversal of ' + id + (reason ? ': ' + reason : ''), status: 'Posted', reversalOf: id,
+      createdAt: new Date().toISOString(), createdBy: profile?.email || user?.email || 'Cashier'
     };
-
-    setCashTransactions(prev => [
-      reversalTx,
-      ...prev.map(t => t.id === id ? { ...t, status: 'Reversed' as const } : t)
-    ]);
-
     if (user || profile) {
-      try {
-        await setDoc(doc(db, 'cashbook', revId), reversalTx);
-        await updateDoc(doc(db, 'cashbook', id), { status: 'Reversed' });
-      } catch (e) {
-        console.warn("Error reversing cash transaction in Firestore:", e);
-      }
+      await setDoc(doc(db, 'cashbook', reversalId), reversal);
+      await updateDoc(doc(db, 'cashbook', id), { status: 'Reversed' });
     }
+    setCashTransactions(prev => [reversal, ...prev.map(tx => tx.id === id ? { ...tx, status: 'Reversed' as const } : tx)]);
   };
 
   const deleteCashTransaction = async (id: string) => {
-    setCashTransactions(prev => prev.filter(t => t.id !== id));
-    if (user || profile) {
-      try {
-        await deleteDoc(doc(db, 'cashbook', id));
-      } catch (e) {
-        console.warn("Error deleting cash transaction in Firestore:", e);
-      }
-    }
+    if (user || profile) await deleteDoc(doc(db, 'cashbook', id));
+    setCashTransactions(prev => prev.filter(tx => tx.id !== id));
   };
 
   const addKmRecord = async (rec: Omit<KmRecord, 'id'>) => {
-    const id = 'KM-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).substring(2, 6).toUpperCase();
-    const newRec: KmRecord = {
-      ...rec,
-      id,
-      loggedBy: profile?.email || user?.email || 'Dispatcher'
-    };
-
+    const normalizedVehicle = rec.veh.toUpperCase().replace(/\s+/g, '');
+    const existing = kmRecords.find(item => item.date === rec.date && item.veh.toUpperCase().replace(/\s+/g, '') === normalizedVehicle);
+    const id = existing?.id || ('KM-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).substring(2, 6).toUpperCase());
+    const newRecord: KmRecord = { ...rec, id, loggedBy: profile?.email || user?.email || 'Dispatcher' };
+    if (user || profile) await setDoc(doc(db, 'km_records', id), newRecord);
     setKmRecords(prev => {
-      // Check if existing record for date and vehicle
-      const existingIdx = prev.findIndex(r => r.date === rec.date && r.veh.toUpperCase().replace(/\s+/g,'') === rec.veh.toUpperCase().replace(/\s+/g,''));
-      if (existingIdx >= 0) {
-        const copy = [...prev];
-        copy[existingIdx] = { ...copy[existingIdx], ...newRec, id: copy[existingIdx].id };
-        return copy;
-      }
-      return [newRec, ...prev];
+      const index = prev.findIndex(item => item.id === id || (item.date === rec.date && item.veh.toUpperCase().replace(/\s+/g, '') === normalizedVehicle));
+      if (index >= 0) { const next = [...prev]; next[index] = { ...next[index], ...newRecord, id: next[index].id }; return next; }
+      return [newRecord, ...prev];
     });
-
-    if (user || profile) {
-      try {
-        await setDoc(doc(db, 'km_records', id), newRec);
-      } catch (e) {
-        console.warn("Error saving KM record in Firestore:", e);
-      }
-    }
   };
 
   const batchSaveKmRecords = async (records: (Omit<KmRecord, 'id'> | KmRecord)[]) => {
@@ -699,32 +659,15 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteKmRecord = async (id: string) => {
-    setKmRecords(prev => prev.filter(r => r.id !== id));
-    if (user || profile) {
-      try {
-        await deleteDoc(doc(db, 'km_records', id));
-      } catch (e) {
-        console.warn("Error deleting KM record in Firestore:", e);
-      }
-    }
+    if (user || profile) await deleteDoc(doc(db, 'km_records', id));
+    setKmRecords(prev => prev.filter(record => record.id !== id));
   };
 
   const addDieselLog = async (logData: Omit<DieselLog, 'id'>) => {
     const id = 'DSL-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).substring(2, 6).toUpperCase();
-    const newLog: DieselLog = {
-      ...logData,
-      id,
-      loggedBy: profile?.email || user?.email || 'Cashier'
-    };
+    const newLog: DieselLog = { ...logData, id, loggedBy: profile?.email || user?.email || 'Cashier' };
+    if (user || profile) await setDoc(doc(db, 'diesel_logs', id), newLog);
     setDieselLogs(prev => [newLog, ...prev]);
-
-    if (user || profile) {
-      try {
-        await setDoc(doc(db, 'diesel_logs', id), newLog);
-      } catch (e) {
-        console.warn("Error saving diesel log to Firestore:", e);
-      }
-    }
   };
 
   const resolveConflict = async (conflictId: string, note?: string) => {
