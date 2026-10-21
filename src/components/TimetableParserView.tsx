@@ -78,7 +78,7 @@ SHAHZAD AHMAD SIRAJ AHMAD KHAN\t2634188631\t573685786\t205SLF18\tأ س س S S A 
 MUHAMMAD ASHRAF SAED AHMED\t2349470464\t593304841\t116HCL18\tأ ر ك K R A 8479\tYanbu\tRas Al Khair\tSaudi Arabian Mining Company\t\t\tTanker\tSBS / 21.5 MT\t\t\t\t\t`;
 
 export const TimetableParserView: React.FC = () => {
-  const { schedules: contextSchedules, saveDailySchedule, deleteDailySchedule, saveDailyManifest } = useLms();
+  const { drivers: masterDrivers, schedules: contextSchedules, saveDailySchedule, deleteDailySchedule, saveDailyManifest } = useLms();
   const { user, profile, isDispatcher, isAdmin } = useAuth();
 
   // Load database from localStorage (seed if first time)
@@ -176,6 +176,34 @@ export const TimetableParserView: React.FC = () => {
       return next;
     });
   }, [contextSchedules, user, profile]);
+
+  // A driver archived in the master repository must no longer be available for new timetable assignments.
+  // Match the legacy timetable registry by Iqama when available, otherwise by exact normalized name.
+  useEffect(() => {
+    if (!masterDrivers.length) return;
+    setDb(prev => {
+      const isArchivedMasterDriver = (item: TimetableDriver) => masterDrivers.some(master => {
+        if (master.active !== false) return false;
+        const timetableIqama = String(item.iqama || '').replace(/\\D/g, '');
+        const masterIqama = String(master.iqama || '').replace(/\\D/g, '');
+        if (timetableIqama && masterIqama) return timetableIqama === masterIqama;
+        const timetableName = String(item.name || '').toUpperCase().replace(/\\s+/g, ' ').trim();
+        const masterName = String(master.name || '').toUpperCase().replace(/\\s+/g, ' ').trim();
+        return Boolean(timetableName && masterName && timetableName === masterName);
+      });
+      const archivedIds = new Set(prev.drivers.filter(isArchivedMasterDriver).map(item => item.id));
+      if (!archivedIds.size) return prev;
+      const next: TimetableDatabase = {
+        ...prev,
+        drivers: prev.drivers.filter(item => !archivedIds.has(item.id)),
+        vehicles: prev.vehicles.map(vehicle => archivedIds.has(vehicle.defaultDriverId)
+          ? { ...vehicle, defaultDriverId: '' }
+          : vehicle)
+      };
+      saveTimetableDatabase(next);
+      return next;
+    });
+  }, [masterDrivers]);
 
   // App navigation state
   const [page, setPage] = useState<'new' | 'schedule' | 'drivers' | 'vehicles' | 'settings'>('new');
