@@ -145,7 +145,7 @@ export const DailyManifestView: React.FC = () => {
     const updated: Record<string, string> = {};
     drivers.forEach((d, idx) => { updated[d.id] = predictManifestTag(idx, selectedDate).text; });
     setLocalTags(updated);
-    showToast(`🔮 Auto-applied high-confidence AI predictions for all ${drivers.length} drivers on ${selectedDate}!`, 'success');
+    showToast('Generated heuristic suggestions for ' + drivers.length + ' drivers on ' + selectedDate + '. Review suggestions before confirming the manifest.', 'info');
   };
 
   // -------------------------------------------------------------
@@ -274,7 +274,7 @@ export const DailyManifestView: React.FC = () => {
   // -------------------------------------------------------------
   // HISTORICAL SCHEDULE LEARNER ENGINE
   // -------------------------------------------------------------
-  const handleLearnHistoricalSchedules = () => {
+  const handleLearnHistoricalSchedules = async () => {
     if (!learningPasteText.trim()) {
       showToast("Please paste historical schedule text first.", 'error');
       return;
@@ -327,7 +327,7 @@ export const DailyManifestView: React.FC = () => {
           const actualTag = manifestForDate[drivers[driverIdx].id] || manifestForDate[String(driverIdx)];
           if (actualTag) {
             const ruleKey = `${norm(r.source)}>${norm(r.destination)}|${norm(r.customer)}|${norm(r.commodity)}`;
-            const existing = learnedRules.find(lr => lr.driverIndex === driverIdx && lr.result === actualTag);
+            const existing = learnedRules.find(lr => (lr.driverId ? lr.driverId === drivers[driverIdx].id : lr.driverIndex === driverIdx) && lr.result === actualTag);
             if (existing) {
               existing.hits += 1;
               existing.lastSeen = dt;
@@ -348,7 +348,7 @@ export const DailyManifestView: React.FC = () => {
     });
 
     if (newRules.length > 0) {
-      learnHistoricalRules(newRules);
+      await learnHistoricalRules(newRules);
     }
 
     setLearningResult(`Processed ${detectedDates} date blocks (${totalRows} schedule rows). Learned & updated ${rulesAdded} high-confidence progression patterns!`);
