@@ -305,7 +305,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
               <p className="text-xs font-bold text-slate-400 uppercase tracking-wider font-mono">Logged Distance</p>
               <h3 className="text-2xl font-black text-white mt-1 font-mono">{totalKm.toLocaleString()} KM</h3>
               <p className="text-xs text-emerald-400 mt-1 flex items-center gap-1 font-medium">
-                <Fuel className="w-3.5 h-3.5" /> {avgEfficiency} KM/L fleet average
+                <Fuel className="w-3.5 h-3.5" /> {fuelTrendData.some(d => d.hasData) ? avgEfficiency + ' KM/L average of populated periods' : 'No fuel readings recorded'}
               </p>
             </div>
             <div className="p-3 bg-emerald-500/10 rounded-xl text-emerald-400 border border-emerald-500/20">
@@ -313,7 +313,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
             </div>
           </div>
           <div className="mt-4 pt-3 border-t border-slate-700/60 flex justify-between text-xs text-slate-400">
-            <span>KSA Diesel: {observedDieselPrice !== null ? observedDieselPrice.toFixed(2) + ' SAR/L observed' : 'No diesel readings'}</span>
+            <span>Recorded fuel cost: {observedDieselPrice !== null ? observedDieselPrice.toFixed(2) + ' SAR/L average paid' : 'No diesel readings'}</span>
             <button onClick={() => onNavigate('km-fuel')} className="text-emerald-400 hover:underline">Fuel Balancer →</button>
           </div>
         </div>
@@ -452,7 +452,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
 
           <div className="bg-slate-950/70 border border-slate-800/80 p-3 rounded-xl flex items-center justify-between">
             <div>
-              <span className="text-[11px] font-mono text-slate-400 uppercase">Diesel Tariff</span>
+              <span className="text-[11px] font-mono text-slate-400 uppercase">Average Recorded Diesel Cost</span>
               <div className="flex items-baseline gap-1.5 mt-0.5">
                 <span className="text-lg font-black text-emerald-400 font-mono">{observedDieselPrice !== null ? observedDieselPrice.toFixed(2) : "—"}</span>
                 <span className="text-xs text-slate-400">SAR / L</span>
