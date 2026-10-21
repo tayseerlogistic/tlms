@@ -322,7 +322,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
             </div>
           </div>
           <div className="mt-4 pt-3 border-t border-slate-700/60 flex justify-between text-xs text-slate-400">
-            <span>KSA Diesel: 1.79 SAR/L</span>
+            <span>KSA Diesel: {observedDieselPrice !== null ? observedDieselPrice.toFixed(2) + ' SAR/L observed' : 'No diesel readings'}</span>
             <button onClick={() => onNavigate('km-fuel')} className="text-emerald-400 hover:underline">Fuel Balancer →</button>
           </div>
         </div>
