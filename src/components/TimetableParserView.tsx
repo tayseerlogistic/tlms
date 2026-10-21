@@ -100,40 +100,66 @@ export const TimetableParserView: React.FC = () => {
     return loaded;
   });
 
+  const timetableDbRef = useRef(db);
+  timetableDbRef.current = db;
+
   const [registryHydrated, setRegistryHydrated] = useState(false);
   const cloudRegistryExistsRef = useRef(false);
   const registrySnapshotErrorRef = useRef(false);
+  const expectedCloudRegistrySignatureRef = useRef<string | null>(null);
+  const lastPersistedRegistrySignatureRef = useRef<string | null>(null);
+  const registrySignature = (value: Pick<TimetableDatabase, 'drivers' | 'vehicles' | 'commodities' | 'storeMap'>) =>
+    JSON.stringify({ drivers: value.drivers, vehicles: value.vehicles, commodities: value.commodities, storeMap: value.storeMap });
 
   useEffect(() => {
     if (!user && !profile) {
       setRegistryHydrated(false);
       cloudRegistryExistsRef.current = false;
+      expectedCloudRegistrySignatureRef.current = null;
+      lastPersistedRegistrySignatureRef.current = null;
       return;
     }
     return onSnapshot(doc(firestoreDb, 'app_state', 'timetableRegistry'), snapshot => {
-      cloudRegistryExistsRef.current = snapshot.exists();
       registrySnapshotErrorRef.current = false;
-      if (snapshot.exists()) {
-        const data = snapshot.data();
-        setDb(prev => {
-          const next = {
-            ...prev,
-            drivers: Array.isArray(data.drivers) ? data.drivers as TimetableDriver[] : prev.drivers,
-            vehicles: Array.isArray(data.vehicles) ? data.vehicles as TimetableVehicle[] : prev.vehicles,
-            commodities: Array.isArray(data.commodities) ? data.commodities as TimetableCommodity[] : prev.commodities,
-            storeMap: data.storeMap && typeof data.storeMap === 'object' && !Array.isArray(data.storeMap)
-              ? data.storeMap as TimetableStoreMap : prev.storeMap
-          };
-          const unchanged =
-            JSON.stringify(prev.drivers) === JSON.stringify(next.drivers) &&
-            JSON.stringify(prev.vehicles) === JSON.stringify(next.vehicles) &&
-            JSON.stringify(prev.commodities) === JSON.stringify(next.commodities) &&
-            JSON.stringify(prev.storeMap) === JSON.stringify(next.storeMap);
-          if (unchanged) return prev;
-          saveTimetableDatabase(next);
-          return next;
-        });
+      cloudRegistryExistsRef.current = snapshot.exists();
+      if (!snapshot.exists()) {
+        // No shared registry exists yet; after hydration the local demo registry may seed it.
+        expectedCloudRegistrySignatureRef.current = null;
+        setRegistryHydrated(true);
+        return;
       }
+      const data = snapshot.data();
+      const current = timetableDbRef.current;
+      const next = {
+        ...current,
+        drivers: Array.isArray(data.drivers) ? data.drivers as TimetableDriver[] : current.drivers,
+        vehicles: Array.isArray(data.vehicles) ? data.vehicles as TimetableVehicle[] : current.vehicles,
+        commodities: Array.isArray(data.commodities) ? data.commodities as TimetableCommodity[] : current.commodities,
+        storeMap: data.storeMap && typeof data.storeMap === 'object' && !Array.isArray(data.storeMap)
+          ? data.storeMap as TimetableStoreMap : current.storeMap
+      };
+      const incomingSignature = registrySignature(next);
+      const currentSignature = registrySignature(current);
+      if (incomingSignature === currentSignature) {
+        expectedCloudRegistrySignatureRef.current = null;
+        lastPersistedRegistrySignatureRef.current = incomingSignature;
+        setRegistryHydrated(true);
+        return;
+      }
+      // The persistence effect ignores the pre-hydration render until this cloud snapshot is applied.
+      expectedCloudRegistrySignatureRef.current = incomingSignature;
+      setDb(prev => {
+        const updated = {
+          ...prev,
+          drivers: Array.isArray(data.drivers) ? data.drivers as TimetableDriver[] : prev.drivers,
+          vehicles: Array.isArray(data.vehicles) ? data.vehicles as TimetableVehicle[] : prev.vehicles,
+          commodities: Array.isArray(data.commodities) ? data.commodities as TimetableCommodity[] : prev.commodities,
+          storeMap: data.storeMap && typeof data.storeMap === 'object' && !Array.isArray(data.storeMap)
+            ? data.storeMap as TimetableStoreMap : prev.storeMap
+        };
+        saveTimetableDatabase(updated);
+        return updated;
+      });
       setRegistryHydrated(true);
     }, error => {
       registrySnapshotErrorRef.current = true;
@@ -144,6 +170,15 @@ export const TimetableParserView: React.FC = () => {
 
   useEffect(() => {
     if ((!user && !profile) || !registryHydrated || registrySnapshotErrorRef.current) return;
+    const signature = registrySignature(db);
+    const expectedCloudSignature = expectedCloudRegistrySignatureRef.current;
+    if (expectedCloudSignature !== null) {
+      if (signature !== expectedCloudSignature) return;
+      expectedCloudRegistrySignatureRef.current = null;
+      lastPersistedRegistrySignatureRef.current = signature;
+      return;
+    }
+    if (lastPersistedRegistrySignatureRef.current === signature) return;
     const registry = {
       drivers: db.drivers,
       vehicles: db.vehicles,
@@ -152,10 +187,11 @@ export const TimetableParserView: React.FC = () => {
       updatedAt: new Date().toISOString(),
       updatedBy: profile?.email || user?.email || 'Dispatcher'
     };
-    // The first signed-in session publishes the local registry only when no shared copy exists.
-    // Once a shared copy exists, edits to any registry section are pushed for other sessions.
+    // Record the intended signature before writing to avoid duplicate writes on snapshot echoes.
+    lastPersistedRegistrySignatureRef.current = signature;
     cloudRegistryExistsRef.current = true;
     setDoc(doc(firestoreDb, 'app_state', 'timetableRegistry'), registry).catch(error => {
+      if (lastPersistedRegistrySignatureRef.current === signature) lastPersistedRegistrySignatureRef.current = null;
       showToast('Shared timetable registry save failed: ' + (error instanceof Error ? error.message : String(error)));
     });
   }, [db.drivers, db.vehicles, db.commodities, db.storeMap, registryHydrated, user, profile]);
