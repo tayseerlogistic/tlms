@@ -11,6 +11,23 @@ import {
   CheckCircle2, AlertCircle, FileText, Users, Building2
 } from 'lucide-react';
 
+const CASH_IN_TYPES: CashTransaction['type'][] = ['Cash In', 'Income', 'Transfer In', 'Advance Returned'];
+const CASH_OUT_TYPES: CashTransaction['type'][] = ['Advance Given', 'Transfer Out', 'Cash Out', 'Expense Settlement'];
+
+function transactionCashImpact(tx: CashTransaction, allTransactions: CashTransaction[]): number {
+  if (tx.status === 'Reversed') return 0;
+  const amount = Math.abs(Number(tx.amount) || 0);
+  if (tx.type === 'Reversal') {
+    const originalType = tx.reversedType || allTransactions.find(item => item.id === tx.reversalOf)?.type;
+    if (originalType && CASH_IN_TYPES.includes(originalType)) return -amount;
+    if (originalType && CASH_OUT_TYPES.includes(originalType)) return amount;
+    return Number(tx.amount) || 0;
+  }
+  if (CASH_IN_TYPES.includes(tx.type)) return amount;
+  if (CASH_OUT_TYPES.includes(tx.type)) return -amount;
+  return 0;
+}
+
 export const CashbookView: React.FC = () => {
   const { cashTransactions, cashAccounts, cashEmployees, drivers, addCashTransaction, addCashAccount, deleteCashAccount, addCashEmployee, deleteCashEmployee, reverseCashTransaction, deleteCashTransaction } = useLms();
   const { isCashier, isAdmin } = useAuth();
@@ -45,18 +62,10 @@ export const CashbookView: React.FC = () => {
   let totalOutflow = 0;
 
   cashTransactions.forEach(t => {
-    if (t.status === 'Reversed') return;
-    const isInf = ['Cash In', 'Income', 'Transfer In', 'Advance Returned'].includes(t.type);
-    const isOut = ['Advance Given', 'Transfer Out', 'Cash Out', 'Expense Settlement'].includes(t.type);
-
-    if (isInf) {
-      totalInflow += t.amount;
-      accountBalances[t.account] = (accountBalances[t.account] || 0) + t.amount;
-    }
-    if (isOut) {
-      totalOutflow += t.amount;
-      accountBalances[t.account] = (accountBalances[t.account] || 0) - t.amount;
-    }
+    const impact = transactionCashImpact(t, cashTransactions);
+    if (impact > 0) totalInflow += impact;
+    if (impact < 0) totalOutflow += Math.abs(impact);
+    if (impact !== 0) accountBalances[t.account] = (accountBalances[t.account] || 0) + impact;
   });
 
   const totalCash = Object.values(accountBalances).reduce((a, b) => a + b, 0);
@@ -65,12 +74,14 @@ export const CashbookView: React.FC = () => {
   const employeeBalances: Record<string, number> = {};
   cashTransactions.forEach(t => {
     if (t.status === 'Reversed' || !t.employee) return;
-    if (t.type === 'Advance Given') {
-      employeeBalances[t.employee] = (employeeBalances[t.employee] || 0) + t.amount;
+    if (t.type === 'Reversal') {
+      const originalType = t.reversedType || cashTransactions.find(item => item.id === t.reversalOf)?.type;
+      if (originalType === 'Advance Given') employeeBalances[t.employee] = (employeeBalances[t.employee] || 0) - Math.abs(t.amount);
+      if (originalType === 'Expense Settlement' || originalType === 'Advance Returned') employeeBalances[t.employee] = (employeeBalances[t.employee] || 0) + Math.abs(t.amount);
+      return;
     }
-    if (t.type === 'Expense Settlement' || t.type === 'Advance Returned') {
-      employeeBalances[t.employee] = (employeeBalances[t.employee] || 0) - t.amount;
-    }
+    if (t.type === 'Advance Given') employeeBalances[t.employee] = (employeeBalances[t.employee] || 0) + t.amount;
+    if (t.type === 'Expense Settlement' || t.type === 'Advance Returned') employeeBalances[t.employee] = (employeeBalances[t.employee] || 0) - t.amount;
   });
 
   const totalOutstandingAdvances = Object.values(employeeBalances).reduce((a, b) => a + Math.max(0, b), 0);
@@ -105,7 +116,7 @@ export const CashbookView: React.FC = () => {
     try {
       await addCashTransaction({
         date: (fd.get('date') as string) || ksaDateISO(),
-        dateISO: (fd.get('date') as string) || new Date().toISOString().substring(0, 10),
+        dateISO: (fd.get('date') as string) || ksaDateISO(),
         account: fd.get('account') as string,
         type,
         employee,
@@ -247,7 +258,7 @@ export const CashbookView: React.FC = () => {
       wrapped.forEach((lines, index) => { pdf.text(lines, x, y); x += widths[index]; });
       y += rowHeight + 2;
     });
-    const netTotal = reportRows.reduce((sum, tx) => sum + (tx.status === 'Reversed' ? 0 : Number(tx.amount) || 0), 0);
+    const netTotal = reportRows.reduce((sum, tx) => sum + transactionCashImpact(tx, cashTransactions), 0);
     if (y > 185) { pdf.addPage(); y = 20; }
     pdf.setFont('helvetica', 'bold');
     pdf.text('Signed net of listed transactions (excluding reversed): SAR ' + netTotal.toFixed(2), 14, y + 4);
@@ -531,7 +542,7 @@ export const CashbookView: React.FC = () => {
                   <input
                     name="date"
                     type="date"
-                    defaultValue={new Date().toISOString().substring(0, 10)}
+                    defaultValue={ksaDateISO()}
                     required
                     className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:border-blue-500"
                   />
