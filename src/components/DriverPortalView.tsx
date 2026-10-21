@@ -15,11 +15,12 @@ export const DriverPortalView: React.FC = () => {
   // Find current driver profile
   // If user has a linked driverId, use it; otherwise allow selection
   const activeDrivers = drivers.filter(driver => driver.active);
-  const currentDriver = activeDrivers.find(driver =>
-    (selectedDriverId && driver.id === selectedDriverId) ||
-    (profile?.driverId && driver.id === profile.driverId) ||
-    (user?.email && driver.name.toLowerCase().includes(user.email.split('@')[0].toLowerCase()))
-  ) || activeDrivers[0];
+  const currentDriver = profile?.driverId
+    ? activeDrivers.find(driver => driver.id === profile.driverId)
+    : activeDrivers.find(driver =>
+        (selectedDriverId && driver.id === selectedDriverId) ||
+        (user?.email && driver.name.toLowerCase().includes(user.email.split('@')[0].toLowerCase()))
+      ) || activeDrivers[0];
 
   if (!currentDriver) {
     return (
@@ -64,12 +65,13 @@ export const DriverPortalView: React.FC = () => {
     e.preventDefault();
     const val = parseFloat(odoInput);
     if (isNaN(val) || val <= 0) return alert("Enter valid odometer reading");
+    if (!assignedTruck) return alert("No active truck is assigned to this driver. Ask dispatch to assign a truck before submitting a meter reading.");
 
     setIsSubmittingOdo(true);
     try {
       await addKmRecord({
         date: today,
-        veh: assignedTruck?.plate || currentDriver.assignedVehiclePlate || 'Truck',
+        veh: assignedTruck.plate,
         odometer: val,
         km: 0,
         driver: currentDriver.name,
@@ -77,6 +79,8 @@ export const DriverPortalView: React.FC = () => {
       });
       alert(`Odometer reading ${val.toLocaleString()} KM submitted successfully!`);
       setOdoInput('');
+    } catch (error) {
+      alert(error instanceof Error ? 'Odometer reading was not saved: ' + error.message : 'Odometer reading was not saved. Check your connection and permissions.');
     } finally {
       setIsSubmittingOdo(false);
     }
