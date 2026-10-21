@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useLms } from '../context/LmsContext';
 import { useAuth } from '../context/AuthContext';
 import { CashTransaction } from '../types';
+import { ksaDateISO, isValidISODate } from '../utils/dateUtils';
 import * as XLSX from 'xlsx';
 import { jsPDF } from 'jspdf';
 import {
@@ -27,6 +28,11 @@ export const CashbookView: React.FC = () => {
   const [accountName, setAccountName] = useState('');
   const [accountOpening, setAccountOpening] = useState('0');
   const [accountError, setAccountError] = useState('');
+  const [showPdfOptions, setShowPdfOptions] = useState(false);
+  const [pdfEmployeeFilter, setPdfEmployeeFilter] = useState('');
+  const [pdfFromDate, setPdfFromDate] = useState('');
+  const [pdfToDate, setPdfToDate] = useState('');
+  const [pdfError, setPdfError] = useState('');
 
   // Statement view state
   const [statementEmployee, setStatementEmployee] = useState<string | null>(null);
@@ -98,7 +104,7 @@ export const CashbookView: React.FC = () => {
     }
     try {
       await addCashTransaction({
-        date: (fd.get('date') as string) || new Date().toISOString().substring(0, 10),
+        date: (fd.get('date') as string) || ksaDateISO(),
         dateISO: (fd.get('date') as string) || new Date().toISOString().substring(0, 10),
         account: fd.get('account') as string,
         type,
@@ -194,46 +200,59 @@ export const CashbookView: React.FC = () => {
     })));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Cashbook_Ledger');
-    XLSX.writeFile(wb, `TLS_Cashbook_${new Date().toISOString().substring(0, 10)}.xlsx`);
+    XLSX.writeFile(wb, `TLS_Cashbook_${ksaDateISO()}.xlsx`);
   };
 
   const exportPDF = () => {
-    const employeeFilter = (window.prompt('Filter by employee name (leave blank for all employees):', '') || '').trim().toLowerCase();
-    const fromDate = (window.prompt('From date YYYY-MM-DD (leave blank for no start limit):', '') || '').trim();
-    const toDate = (window.prompt('To date YYYY-MM-DD (leave blank for no end limit):', '') || '').trim();
-    const reportRows = filtered.filter(t =>
-      (!employeeFilter || (t.employee || '').toLowerCase().includes(employeeFilter)) &&
-      (!fromDate || t.dateISO >= fromDate) &&
-      (!toDate || t.dateISO <= toDate)
-    );
-    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
-    doc.setFontSize(16);
-    doc.text('Tayseer Logistics - Cashbook Report', 14, 15);
-    doc.setFontSize(9);
-    doc.text(`Account: ${filterAccount || 'All accounts'} | Employee: ${employeeFilter || 'All employees'}`, 14, 22);
-    doc.text(`Period: ${fromDate || 'Beginning'} to ${toDate || 'Today'} | Rows: ${reportRows.length}`, 14, 28);
+    const employeeFilter = pdfEmployeeFilter.trim().toLowerCase();
+    const fromDate = pdfFromDate.trim();
+    const toDate = pdfToDate.trim();
+    if (fromDate && !isValidISODate(fromDate)) { setPdfError('Enter a valid start date in YYYY-MM-DD format.'); return; }
+    if (toDate && !isValidISODate(toDate)) { setPdfError('Enter a valid end date in YYYY-MM-DD format.'); return; }
+    if (fromDate && toDate && fromDate > toDate) { setPdfError('The start date must be on or before the end date.'); return; }
+
+    const reportRows = filtered
+      .filter(t => (!employeeFilter || (t.employee || '').toLowerCase().includes(employeeFilter)) &&
+        (!fromDate || (t.dateISO || t.date) >= fromDate) &&
+        (!toDate || (t.dateISO || t.date) <= toDate))
+      .slice()
+      .sort((a, b) => (a.dateISO || a.date).localeCompare(b.dateISO || b.date));
+
+    if (!reportRows.length) { setPdfError('No cashbook transactions match these report filters. Adjust the filters and try again.'); return; }
+    setPdfError('');
+    const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    pdf.setFontSize(16);
+    pdf.text('Tayseer Logistics - Cashbook Report', 14, 15);
+    pdf.setFontSize(9);
+    pdf.text('Current ledger filters are applied. Account: ' + (filterAccount || 'All accounts') + ' | Employee: ' + (employeeFilter || 'All employees'), 14, 22);
+    pdf.text('Period: ' + (fromDate || 'Beginning') + ' to ' + (toDate || 'Today') + ' | Rows: ' + reportRows.length, 14, 28);
     const headers = ['Date', 'Employee', 'Account', 'Type', 'Category', 'Amount (SAR)', 'Description', 'Status'];
     const widths = [24, 34, 32, 30, 28, 27, 75, 24];
     let y = 36;
     const drawHeader = () => {
       let x = 14;
-      doc.setFont('helvetica', 'bold');
-      headers.forEach((h, i) => { doc.text(h, x, y); x += widths[i]; });
+      pdf.setFont('helvetica', 'bold');
+      headers.forEach((header, index) => { pdf.text(header, x, y); x += widths[index]; });
       y += 6;
-      doc.setFont('helvetica', 'normal');
-      doc.line(14, y - 3, 281, y - 3);
+      pdf.setFont('helvetica', 'normal');
+      pdf.line(14, y - 3, 288, y - 3);
     };
     drawHeader();
-    reportRows.forEach(t => {
-      const cells = [t.dateISO, t.employee || '—', t.account, t.type, t.category, Number(t.amount).toFixed(2), t.description || '', t.status];
-      const wrapped = cells.map((value, i) => doc.splitTextToSize(String(value), widths[i] - 2));
+    reportRows.forEach(tx => {
+      const cells = [tx.dateISO || tx.date, tx.employee || '—', tx.account, tx.type, tx.category, Number(tx.amount).toFixed(2), tx.description || '', tx.status];
+      const wrapped = cells.map((value, index) => pdf.splitTextToSize(String(value), widths[index] - 2));
       const rowHeight = Math.max(6, ...wrapped.map(lines => lines.length * 4));
-      if (y + rowHeight > 190) { doc.addPage(); y = 15; drawHeader(); }
+      if (y + rowHeight > 190) { pdf.addPage(); y = 15; drawHeader(); }
       let x = 14;
-      wrapped.forEach((lines, i) => { doc.text(lines, x, y); x += widths[i]; });
+      wrapped.forEach((lines, index) => { pdf.text(lines, x, y); x += widths[index]; });
       y += rowHeight + 2;
     });
-    doc.save(`TLS_Cashbook_Report_${new Date().toISOString().slice(0, 10)}.pdf`);
+    const netTotal = reportRows.reduce((sum, tx) => sum + (tx.status === 'Reversed' ? 0 : Number(tx.amount) || 0), 0);
+    if (y > 185) { pdf.addPage(); y = 20; }
+    pdf.setFont('helvetica', 'bold');
+    pdf.text('Signed net of listed transactions (excluding reversed): SAR ' + netTotal.toFixed(2), 14, y + 4);
+    pdf.save('TLS_Cashbook_Report_' + ksaDateISO() + '.pdf');
+    setShowPdfOptions(false);
   };
 
   return (
@@ -257,7 +276,7 @@ export const CashbookView: React.FC = () => {
             <Download className="w-3.5 h-3.5" /> Export Excel
           </button>
           <button
-            onClick={exportPDF}
+            onClick={() => { setPdfError(''); setShowPdfOptions(true); }}
             className="bg-rose-700 hover:bg-rose-600 text-white text-xs font-semibold px-3 py-2 rounded-xl border border-rose-600 flex items-center gap-1.5 transition"
           >
             <FileText className="w-3.5 h-3.5" /> Export PDF
@@ -621,6 +640,37 @@ export const CashbookView: React.FC = () => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Cashbook PDF report filters */}
+      {showPdfOptions && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4">
+            <div>
+              <h3 className="font-bold text-white text-lg">Export Cashbook PDF</h3>
+              <p className="text-xs text-slate-400 mt-1">The current ledger search, type, and account filters will be applied, together with the filters below.</p>
+            </div>
+            <label className="block text-xs text-slate-300 font-semibold">
+              Employee contains
+              <input value={pdfEmployeeFilter} onChange={e => setPdfEmployeeFilter(e.target.value)} placeholder="All employees" className="mt-1 w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" />
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <label className="block text-xs text-slate-300 font-semibold">
+                From date
+                <input type="date" value={pdfFromDate} max={pdfToDate || undefined} onChange={e => { setPdfFromDate(e.target.value); setPdfError(''); }} className="mt-1 w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" />
+              </label>
+              <label className="block text-xs text-slate-300 font-semibold">
+                To date
+                <input type="date" value={pdfToDate} min={pdfFromDate || undefined} onChange={e => { setPdfToDate(e.target.value); setPdfError(''); }} className="mt-1 w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" />
+              </label>
+            </div>
+            {pdfError && <p role="alert" className="text-xs text-rose-300 bg-rose-950/40 border border-rose-700/60 rounded-lg p-3">{pdfError}</p>}
+            <div className="flex justify-end gap-2 pt-2">
+              <button onClick={() => { setShowPdfOptions(false); setPdfError(''); }} className="px-4 py-2 rounded-lg text-xs font-bold text-slate-300 bg-slate-800 border border-slate-700">Cancel</button>
+              <button onClick={exportPDF} className="px-4 py-2 rounded-lg text-xs font-bold text-white bg-rose-700 hover:bg-rose-600">Export PDF</button>
+            </div>
           </div>
         </div>
       )}
