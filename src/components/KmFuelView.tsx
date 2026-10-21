@@ -1771,7 +1771,7 @@ TLS Fleet Management`;
                     readingDate === localISODate() ? 'bg-blue-600 text-white border-blue-500' : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
                   }`}
                 >
-                  Oct 2 (Sample Day 2)
+                  Today
                 </button>
                 <button
                   onClick={() => setReadingDate('2026-10-01')}
@@ -1779,7 +1779,7 @@ TLS Fleet Management`;
                     readingDate === '2026-10-01' ? 'bg-blue-600 text-white border-blue-500' : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
                   }`}
                 >
-                  Oct 1 (Month Start)
+                  Oct 1 (Sample Month Start)
                 </button>
                 <button
                   onClick={() => setReadingDate(ksaDateISO())}
@@ -2632,14 +2632,18 @@ TLS Fleet Management`;
                                 className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-white"
                               >
                                 <option value="">— No Driver —</option>
-                                {drivers.map(d => (
+                                {drivers.filter(driver => driver.active !== false).map(d => (
                                   <option key={d.id} value={d.id}>{d.name} ({d.empNo})</option>
                                 ))}
                               </select>
                             </td>
                             <td className="p-3 text-center">
                               <button
-                                onClick={() => { if (confirm(`Remove vehicle ${v.plate}?`)) deleteTruck(v.id); }}
+                                onClick={async () => {
+                                  if (!confirm(`Remove vehicle ${v.plate}?`)) return;
+                                  try { await deleteTruck(v.id); }
+                                  catch (error) { alert(error instanceof Error ? 'Vehicle was not removed: ' + error.message : 'Vehicle was not removed. Check your connection and permissions.'); }
+                                }}
                                 className="text-rose-400 hover:text-rose-300"
                               >
                                 <Trash2 className="w-3.5 h-3.5 inline" />
@@ -2719,7 +2723,7 @@ TLS Fleet Management`;
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-800">
-                        {drivers.map((d, i) => (
+                        {drivers.filter(driver => driver.active !== false).map((d, i) => (
                           <tr key={d.id} className="hover:bg-slate-800/50">
                             <td className="p-3 text-slate-400 font-mono">#{i + 1}</td>
                             <td className="p-3 font-bold text-white">{d.name}</td>
@@ -2727,7 +2731,11 @@ TLS Fleet Management`;
                             <td className="p-3 font-mono text-slate-300">{d.mobile || '—'}</td>
                             <td className="p-3 text-center">
                               <button
-                                onClick={() => { if (confirm(`Remove driver ${d.name}?`)) deleteDriver(d.id); }}
+                                onClick={async () => {
+                                  if (!confirm(`Archive driver ${d.name}? Historical records will be preserved.`)) return;
+                                  try { await deleteDriver(d.id); }
+                                  catch (error) { alert(error instanceof Error ? 'Driver was not archived: ' + error.message : 'Driver was not archived. Check your connection and permissions.'); }
+                                }}
                                 className="text-rose-400 hover:text-rose-300"
                               >
                                 <Trash2 className="w-3.5 h-3.5 inline" />
