@@ -3,6 +3,7 @@ import { useLms } from '../context/LmsContext';
 import { useAuth } from '../context/AuthContext';
 import { CashTransaction } from '../types';
 import * as XLSX from 'xlsx';
+import { jsPDF } from 'jspdf';
 import {
   Wallet, DollarSign, Plus, Download, Printer, Search,
   RotateCcw, Trash2, ArrowUpRight, ArrowDownRight, User,
@@ -196,6 +197,45 @@ export const CashbookView: React.FC = () => {
     XLSX.writeFile(wb, `TLS_Cashbook_${new Date().toISOString().substring(0, 10)}.xlsx`);
   };
 
+  const exportPDF = () => {
+    const employeeFilter = (window.prompt('Filter by employee name (leave blank for all employees):', '') || '').trim().toLowerCase();
+    const fromDate = (window.prompt('From date YYYY-MM-DD (leave blank for no start limit):', '') || '').trim();
+    const toDate = (window.prompt('To date YYYY-MM-DD (leave blank for no end limit):', '') || '').trim();
+    const reportRows = filtered.filter(t =>
+      (!employeeFilter || (t.employee || '').toLowerCase().includes(employeeFilter)) &&
+      (!fromDate || t.dateISO >= fromDate) &&
+      (!toDate || t.dateISO <= toDate)
+    );
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    doc.setFontSize(16);
+    doc.text('Tayseer Logistics - Cashbook Report', 14, 15);
+    doc.setFontSize(9);
+    doc.text(`Account: ${filterAccount || 'All accounts'} | Employee: ${employeeFilter || 'All employees'}`, 14, 22);
+    doc.text(`Period: ${fromDate || 'Beginning'} to ${toDate || 'Today'} | Rows: ${reportRows.length}`, 14, 28);
+    const headers = ['Date', 'Employee', 'Account', 'Type', 'Category', 'Amount (SAR)', 'Description', 'Status'];
+    const widths = [24, 34, 32, 30, 28, 27, 75, 24];
+    let y = 36;
+    const drawHeader = () => {
+      let x = 14;
+      doc.setFont('helvetica', 'bold');
+      headers.forEach((h, i) => { doc.text(h, x, y); x += widths[i]; });
+      y += 6;
+      doc.setFont('helvetica', 'normal');
+      doc.line(14, y - 3, 281, y - 3);
+    };
+    drawHeader();
+    reportRows.forEach(t => {
+      const cells = [t.dateISO, t.employee || '—', t.account, t.type, t.category, Number(t.amount).toFixed(2), t.description || '', t.status];
+      const wrapped = cells.map((value, i) => doc.splitTextToSize(String(value), widths[i] - 2));
+      const rowHeight = Math.max(6, ...wrapped.map(lines => lines.length * 4));
+      if (y + rowHeight > 190) { doc.addPage(); y = 15; drawHeader(); }
+      let x = 14;
+      wrapped.forEach((lines, i) => { doc.text(lines, x, y); x += widths[i]; });
+      y += rowHeight + 2;
+    });
+    doc.save(`TLS_Cashbook_Report_${new Date().toISOString().slice(0, 10)}.pdf`);
+  };
+
   return (
     <div className="space-y-6">
       {/* Top Banner */}
@@ -215,6 +255,12 @@ export const CashbookView: React.FC = () => {
             className="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold px-3 py-2 rounded-xl border border-slate-700 flex items-center gap-1.5 transition"
           >
             <Download className="w-3.5 h-3.5" /> Export Excel
+          </button>
+          <button
+            onClick={exportPDF}
+            className="bg-rose-700 hover:bg-rose-600 text-white text-xs font-semibold px-3 py-2 rounded-xl border border-rose-600 flex items-center gap-1.5 transition"
+          >
+            <FileText className="w-3.5 h-3.5" /> Export PDF
           </button>
           {(isCashier || isAdmin) && (
             <button
