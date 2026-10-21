@@ -63,9 +63,9 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, setCurrentTab, onOpe
   const currentEmail = profile?.email || user?.email || '';
 
   return (
-    <header className="bg-slate-900 border-b border-slate-800 sticky top-0 z-50 shadow-xl">
-      {/* Top Banner with Brand, Auth & Actions */}
-      <div className="max-w-7xl mx-auto px-3 sm:px-6 py-2.5 flex flex-wrap sm:flex-nowrap items-center justify-between gap-2 sm:gap-4">
+    <header className="w-full min-w-0 bg-slate-900 border-b border-slate-800 sticky top-0 z-50 shadow-xl">
+      <div className="w-full px-3 sm:px-5 lg:px-8 py-2.5 grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_auto] items-center gap-x-6 gap-y-2">
+        <div className="min-w-0 flex flex-col gap-1.5">
         {/* Logo & Brand */}
         <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           <div className="w-10 h-10 shrink-0 rounded-xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-sky-500 flex items-center justify-center text-white shadow-lg shadow-blue-500/20 font-bold text-lg overflow-hidden">
@@ -79,8 +79,37 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, setCurrentTab, onOpe
             <p className="text-[11px] text-slate-400 hidden sm:block truncate max-w-[360px]">{brandSubtitle}</p>
           </div>
         </div>
+      {/* Main Navigation Tabs: left aligned and allowed to wrap when space is limited */}
+      <nav aria-label="Main navigation" className="w-full min-w-0 border-t border-slate-800/80 pt-1">
+        <div className="flex flex-wrap items-center justify-start gap-1">
+          {navItems.map((item) => {
+            const Icon = item.icon;
+            const isActive = currentTab === item.id;
+            return (
+              <button
+                key={item.id}
+                onClick={() => setCurrentTab(item.id)}
+                className={`flex flex-1 sm:flex-none justify-center sm:justify-start items-center gap-2 px-2 sm:px-3.5 py-2.5 text-[11px] sm:text-xs font-semibold whitespace-nowrap transition-all border-b-2 min-w-0 ${
+                  isActive
+                    ? 'border-blue-500 text-white bg-slate-800/60 font-bold'
+                    : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800/30'
+                }`}
+              >
+                <Icon className={`w-4 h-4 ${isActive ? 'text-blue-400' : 'text-slate-400'}`} />
+                <span>{item.label}</span>
+                {item.badge !== undefined && (
+                  <span className="bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[10px] font-bold px-1.5 py-0.2 rounded-full font-mono">
+                    {item.badge}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </nav>
+      </div>
+        </div>
 
-        {/* Auth & Role Status Bar */}
+        <div className="flex flex-wrap items-center justify-start xl:justify-end gap-2 sm:gap-3 min-w-0 xl:col-start-2 xl:row-start-1 xl:row-span-2">
         <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3">
           {/* Quick Settings Shortcut button */}
           <button
@@ -161,34 +190,6 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, setCurrentTab, onOpe
             </button>
           )}
         </div>
-      </div>
-
-      {/* Main Navigation Tabs */}
-      <div className="bg-slate-950/60 border-t border-slate-800/80 overflow-visible">
-        <div className="max-w-7xl mx-auto px-3 sm:px-6 flex flex-wrap items-center gap-1">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            const isActive = currentTab === item.id;
-            return (
-              <button
-                key={item.id}
-                onClick={() => setCurrentTab(item.id)}
-                className={`flex flex-1 sm:flex-none justify-center sm:justify-start items-center gap-2 px-2 sm:px-3.5 py-2.5 text-[11px] sm:text-xs font-semibold whitespace-nowrap transition-all border-b-2 min-w-0 ${
-                  isActive
-                    ? 'border-blue-500 text-white bg-slate-800/60 font-bold'
-                    : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800/30'
-                }`}
-              >
-                <Icon className={`w-4 h-4 ${isActive ? 'text-blue-400' : 'text-slate-400'}`} />
-                <span>{item.label}</span>
-                {item.badge !== undefined && (
-                  <span className="bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[10px] font-bold px-1.5 py-0.2 rounded-full font-mono">
-                    {item.badge}
-                  </span>
-                )}
-              </button>
-            );
-          })}
         </div>
       </div>
     </header>
