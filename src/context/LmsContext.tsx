@@ -684,17 +684,20 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const batchSaveKmRecords = async (records: (Omit<KmRecord, 'id'> | KmRecord)[]) => {
     if (!records.length) return;
 
-    // Generate each record ID once and reuse it for both local state and Firestore.
-    // Previously the two loops generated different IDs, which could duplicate records on refresh.
+    const keyFor = (record: Pick<KmRecord, 'date' | 'veh'>) =>
+      `${record.date}__${record.veh.toUpperCase().replace(/\\s+/g, '')}`;
+    const existingByKey = new Map<string, KmRecord>();
+    kmRecords.forEach(record => existingByKey.set(keyFor(record), record));
+
+    // Generate stable, collision-resistant IDs and reuse the same IDs for remote/local data.
+    // This is important for multi-month imports with thousands of dated readings.
     const preparedByKey = new Map<string, KmRecord>();
     records.forEach(rec => {
-      const normalizedPlate = rec.veh.toUpperCase().replace(/\s+/g, '');
-      const key = `${rec.date}__${normalizedPlate}`;
-      const existing = kmRecords.find(
-        item => item.date === rec.date && item.veh.toUpperCase().replace(/\s+/g, '') === normalizedPlate
-      );
-      const id = ('id' in rec && rec.id) ? rec.id : existing?.id ||
-        ('KM-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).substring(2, 6).toUpperCase());
+      const normalizedVehicle = rec.veh.toUpperCase().replace(/\\s+/g, '');
+      const key = `${rec.date}__${normalizedVehicle}`;
+      const existing = existingByKey.get(key);
+      const stableVehicleKey = encodeURIComponent(normalizedVehicle).replace(/%/g, '_');
+      const id = ('id' in rec && rec.id) ? rec.id : existing?.id || `KM-${rec.date}-${stableVehicleKey}`;
       preparedByKey.set(key, {
         ...rec,
         id,
@@ -703,11 +706,12 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
     const prepared = Array.from(preparedByKey.values());
 
-    if (user || profile) {
+    if (auth.currentUser || user || profile) {
       try {
-        for (const record of prepared) {
-          await setDoc(doc(db, 'km_records', record.id), record);
-        }
+        const operations: Array<(batch: ReturnType<typeof writeBatch>) => void> = prepared.map(record => batch => {
+          batch.set(doc(db, 'km_records', record.id), record);
+        });
+        await commitFirestoreOperations(operations);
       } catch (e) {
         console.error("Error saving batch KM records in Firestore:", e);
         throw new Error('KM records could not be fully saved to Firestore. The local view was left unchanged, though some remote records may have been written before the error; reload and verify before retrying.');
@@ -716,13 +720,15 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     setKmRecords(prev => {
       const copy = [...prev];
+      const indexByKey = new Map<string, number>();
+      copy.forEach((record, index) => indexByKey.set(keyFor(record), index));
       prepared.forEach(fullRec => {
-        const existingIdx = copy.findIndex(
-          item => item.date === fullRec.date && item.veh.toUpperCase().replace(/\s+/g, '') === fullRec.veh.toUpperCase().replace(/\s+/g, '')
-        );
-        if (existingIdx >= 0) {
+        const key = keyFor(fullRec);
+        const existingIdx = indexByKey.get(key);
+        if (existingIdx !== undefined) {
           copy[existingIdx] = { ...copy[existingIdx], ...fullRec, id: copy[existingIdx].id };
         } else {
+          indexByKey.set(key, copy.length);
           copy.push(fullRec);
         }
       });
