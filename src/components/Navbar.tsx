@@ -79,37 +79,34 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, setCurrentTab, onOpe
             <p className="text-[11px] text-slate-400 hidden sm:block truncate max-w-[360px]">{brandSubtitle}</p>
           </div>
         </div>
-      {/* Main Navigation Tabs: left aligned and allowed to wrap when space is limited */}
-      <nav aria-label="Main navigation" className="w-full min-w-0 border-t border-slate-800/80 pt-1">
-        <div className="flex flex-wrap items-center justify-start gap-1">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            const isActive = currentTab === item.id;
-            return (
-              <button
-                key={item.id}
-                onClick={() => setCurrentTab(item.id)}
-                className={`flex flex-1 sm:flex-none justify-center sm:justify-start items-center gap-2 px-2 sm:px-3.5 py-2.5 text-[11px] sm:text-xs font-semibold whitespace-nowrap transition-all border-b-2 min-w-0 ${
-                  isActive
-                    ? 'border-blue-500 text-white bg-slate-800/60 font-bold'
-                    : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800/30'
-                }`}
-              >
-                <Icon className={`w-4 h-4 ${isActive ? 'text-blue-400' : 'text-slate-400'}`} />
-                <span>{item.label}</span>
-                {item.badge !== undefined && (
-                  <span className="bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[10px] font-bold px-1.5 py-0.2 rounded-full font-mono">
-                    {item.badge}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </nav>
-      </div>
+          <nav aria-label="Main navigation" className="w-full min-w-0 border-t border-slate-800/80 pt-1">
+            <div className="flex flex-wrap items-center justify-start gap-1">
+              {navItems.map((item) => {
+                const Icon = item.icon;
+                const isActive = currentTab === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => setCurrentTab(item.id)}
+                    className={`flex flex-none justify-start items-center gap-2 px-2 sm:px-3.5 py-2.5 text-[11px] sm:text-xs font-semibold whitespace-nowrap transition-all border-b-2 ${isActive
+                      ? 'border-blue-500 text-white bg-slate-800/60 font-bold'
+                      : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800/30'}`}
+                  >
+                    <Icon className={`w-4 h-4 ${isActive ? 'text-blue-400' : 'text-slate-400'}`} />
+                    <span>{item.label}</span>
+                    {item.badge !== undefined && (
+                      <span className="bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[10px] font-bold px-1.5 py-0.2 rounded-full font-mono">
+                        {item.badge}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </nav>
         </div>
 
-        <div className="flex flex-wrap items-center justify-start xl:justify-end gap-2 sm:gap-3 min-w-0 xl:col-start-2 xl:row-start-1 xl:row-span-2">
+        <div className="min-w-0 flex flex-wrap items-center justify-start xl:justify-end gap-2 sm:gap-3 xl:col-start-2 xl:row-start-1 xl:row-span-2">
         <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3">
           {/* Quick Settings Shortcut button */}
           <button
