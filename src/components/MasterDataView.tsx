@@ -283,7 +283,11 @@ export const MasterDataView: React.FC = () => {
                             </button>
                             {isAdmin && (
                               <button
-                                onClick={() => { if (confirm(`Delete truck ${t.plate}?`)) deleteTruck(t.id); }}
+                                onClick={async () => {
+                                  if (!confirm(`Delete truck ${t.plate}?`)) return;
+                                  try { await deleteTruck(t.id); }
+                                  catch (error) { alert(error instanceof Error ? 'Truck was not deleted: ' + error.message : 'Truck was not deleted. Check your connection and permissions.'); }
+                                }}
                                 className="text-rose-400 hover:text-rose-300 p-1"
                                 title="Delete"
                               >
@@ -348,7 +352,11 @@ export const MasterDataView: React.FC = () => {
                           </button>
                           {isAdmin && (
                             <button
-                              onClick={() => { if (confirm(`Delete equipment ${e.equipNo}?`)) deleteEquipment(e.id); }}
+                              onClick={async () => {
+                                if (!confirm(`Delete equipment ${e.equipNo}?`)) return;
+                                try { await deleteEquipment(e.id); }
+                                catch (error) { alert(error instanceof Error ? 'Equipment was not deleted: ' + error.message : 'Equipment was not deleted. Check your connection and permissions.'); }
+                              }}
                               className="text-rose-400 hover:text-rose-300 p-1"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
