@@ -1,8 +1,9 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc, query, orderBy, limit } from 'firebase/firestore';
+import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc, query, orderBy, getDocs } from 'firebase/firestore';
 import { auth, db } from '../firebase/config';
 import { handleFirestoreError, OperationType } from '../firebase/errors';
 import { useAuth } from './AuthContext';
+import { ksaDateISO } from '../utils/dateUtils';
 import {
   Truck, Equipment, Driver, Commodity, StoreMapItem,
   DailySchedule, DailyManifest, CashTransaction, CashAccount,
@@ -45,8 +46,9 @@ interface LmsContextType {
   deleteDriver: (id: string) => Promise<void>;
   
   saveDailySchedule: (date: string, rows: any[], syncToManifest?: boolean) => Promise<void>;
-  saveDailyManifest: (date: string, tags: Record<number, string>) => Promise<void>;
-  saveMultiDayManifests: (batchData: Record<string, Record<number, string>>) => Promise<void>;
+  deleteDailySchedule: (date: string) => Promise<void>;
+  saveDailyManifest: (date: string, tags: Record<string, string>) => Promise<void>;
+  saveMultiDayManifests: (batchData: Record<string, Record<string, string>>) => Promise<void>;
   
   addCashTransaction: (tx: Omit<CashTransaction, 'id' | 'createdAt'>) => Promise<void>;
   addCashAccount: (account: Omit<CashAccount, 'id'>) => Promise<void>;
@@ -64,7 +66,7 @@ interface LmsContextType {
   resolveConflict: (conflictId: string, note?: string) => Promise<void>;
   restoreFullBackup: (jsonContent: any) => Promise<{ success: boolean; message: string }>;
   exportFullBackup: () => void;
-  learnHistoricalRules: (rules: LearnedRule[]) => void;
+  learnHistoricalRules: (rules: LearnedRule[]) => Promise<void>;
 }
 
 const LmsContext = createContext<LmsContextType | undefined>(undefined);
@@ -116,10 +118,10 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
   });
 
-  const [commodities] = useState<Commodity[]>(INITIAL_COMMODITIES);
-  const [stores] = useState<StoreMapItem[]>(INITIAL_STORES);
-  const [conflicts, setConflicts] = useState<DataConflict[]>(INITIAL_DATA_CONFLICTS);
-  const [cashEmployees, setCashEmployees] = useState<{ id: string; name: string }[]>([]);
+  const [commodities, setCommodities] = useState<Commodity[]>(() => { try { const saved = localStorage.getItem(LOCAL_STORAGE_KEY + '_commodities'); return saved ? JSON.parse(saved) : INITIAL_COMMODITIES; } catch { return INITIAL_COMMODITIES; } });
+  const [stores, setStores] = useState<StoreMapItem[]>(() => { try { const saved = localStorage.getItem(LOCAL_STORAGE_KEY + '_stores'); return saved ? JSON.parse(saved) : INITIAL_STORES; } catch { return INITIAL_STORES; } });
+  const [conflicts, setConflicts] = useState<DataConflict[]>(() => { try { const saved = localStorage.getItem(LOCAL_STORAGE_KEY + '_conflicts'); return saved ? JSON.parse(saved) : INITIAL_DATA_CONFLICTS; } catch { return INITIAL_DATA_CONFLICTS; } });
+  const [cashEmployees, setCashEmployees] = useState<{ id: string; name: string }[]>(() => { try { const saved = localStorage.getItem(LOCAL_STORAGE_KEY + '_cashEmployees'); return saved ? JSON.parse(saved) : []; } catch { return []; } });
   const [cashAccounts, setCashAccounts] = useState<CashAccount[]>(() => {
     try {
       const saved = localStorage.getItem(LOCAL_STORAGE_KEY + '_accounts');
@@ -229,7 +231,12 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.setItem(LOCAL_STORAGE_KEY + '_accounts', JSON.stringify(cashAccounts));
     localStorage.setItem(LOCAL_STORAGE_KEY + '_km', JSON.stringify(kmRecords));
     localStorage.setItem(LOCAL_STORAGE_KEY + '_diesel', JSON.stringify(dieselLogs));
-  }, [trucks, equipment, drivers, schedules, manifests, cashTransactions, cashAccounts, kmRecords, dieselLogs]);
+    localStorage.setItem(LOCAL_STORAGE_KEY + '_rules', JSON.stringify(learnedRules));
+    localStorage.setItem(LOCAL_STORAGE_KEY + '_commodities', JSON.stringify(commodities));
+    localStorage.setItem(LOCAL_STORAGE_KEY + '_stores', JSON.stringify(stores));
+    localStorage.setItem(LOCAL_STORAGE_KEY + '_conflicts', JSON.stringify(conflicts));
+    localStorage.setItem(LOCAL_STORAGE_KEY + '_cashEmployees', JSON.stringify(cashEmployees));
+  }, [trucks, equipment, drivers, schedules, manifests, cashTransactions, cashAccounts, kmRecords, dieselLogs, learnedRules, commodities, stores, conflicts, cashEmployees]);
 
   // Firestore real-time subscriptions if user or profile is authenticated
   useEffect(() => {
@@ -237,56 +244,46 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     // Listen to trucks
     const unsubTrucks = onSnapshot(collection(db, 'trucks'), (snapshot) => {
-      if (!snapshot.empty) {
-        const remote = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Truck));
-        setTrucks(remote);
-      }
+      const remote = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Truck)).sort((a, b) => (a.seq || 0) - (b.seq || 0));
+      setTrucks(remote);
     }, (err) => {
       console.warn("Trucks Firestore listener notice:", err.message);
     });
 
+    const unsubEquipment = onSnapshot(collection(db, 'equipment'), (snapshot) => {
+      setEquipment(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Equipment)).sort((a, b) => (a.seq || 0) - (b.seq || 0)));
+    }, (err) => {
+      console.warn("Equipment Firestore listener notice:", err.message);
+    });
+
     // Firestore is authoritative: merging a smaller remote list resurrected deleted drivers.
     const unsubDrivers = onSnapshot(collection(db, 'drivers'), (snapshot) => {
-      if (!snapshot.empty) {
-        const remote = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Driver));
-        setDrivers(remote);
-      }
+      const remote = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Driver)).sort((a, b) => (a.seq || 0) - (b.seq || 0));
+      setDrivers(remote);
     }, (err) => {
       console.warn("Drivers Firestore listener notice:", err.message);
     });
 
     // Listen to manifests
     const unsubManifests = onSnapshot(collection(db, 'manifests'), (snapshot) => {
-      if (!snapshot.empty) {
-        setManifests(prev => {
-          const updated = { ...prev };
-          snapshot.docs.forEach(docSnap => {
-            const data = docSnap.data();
-            if (data?.date && data?.tags) {
-              updated[data.date] = { ...(updated[data.date] || {}), ...data.tags };
-            }
-          });
-          return updated;
-        });
-      }
+      const remote: Record<string, Record<string, string>> = {};
+      snapshot.docs.forEach(docSnap => {
+        const data = docSnap.data();
+        if (data?.date && data?.tags && typeof data.tags === 'object') remote[data.date] = data.tags;
+      });
+      setManifests(remote);
     }, (err) => {
       console.warn("Manifests Firestore listener notice:", err.message);
     });
 
     // Listen to schedules
     const unsubSchedules = onSnapshot(collection(db, 'schedules'), (snapshot) => {
-      if (!snapshot.empty) {
-        setSchedules(prev => {
-          const updated = { ...prev };
-          snapshot.docs.forEach(docSnap => {
-            const data = docSnap.data() as DailySchedule;
-            if (data?.date && data?.rows) {
-              updated[data.date] = data;
-            }
-          });
-          return updated;
-        });
-      }
+      const remote: Record<string, DailySchedule> = {};
+      snapshot.docs.forEach(docSnap => {
+        const data = docSnap.data() as DailySchedule;
+        if (data?.date && Array.isArray(data.rows)) remote[data.date] = data;
+      });
+      setSchedules(remote);
     }, (err) => {
       console.warn("Schedules Firestore listener notice:", err.message);
     });
@@ -310,27 +307,35 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
 
     // Listen to cash transactions
-    const unsubCash = onSnapshot(query(collection(db, 'cashbook'), orderBy('dateISO', 'desc'), limit(300)), (snapshot) => {
-      if (!snapshot.empty) {
-        const remote = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as CashTransaction));
-        setCashTransactions(remote);
-      }
+    const unsubCash = onSnapshot(query(collection(db, 'cashbook'), orderBy('dateISO', 'desc')), (snapshot) => {
+      setCashTransactions(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as CashTransaction)));
     }, (err) => {
       console.warn("Cashbook Firestore listener notice:", err.message);
     });
 
     // Listen to km records
-    const unsubKm = onSnapshot(query(collection(db, 'km_records'), orderBy('date', 'desc'), limit(300)), (snapshot) => {
-      if (!snapshot.empty) {
-        const remote = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as KmRecord));
-        setKmRecords(remote);
-      }
+    const unsubKm = onSnapshot(query(collection(db, 'km_records'), orderBy('date', 'desc')), (snapshot) => {
+      setKmRecords(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as KmRecord)));
     }, (err) => {
       console.warn("KM Firestore listener notice:", err.message);
     });
 
+    const unsubDiesel = onSnapshot(query(collection(db, 'diesel_logs'), orderBy('date', 'desc')), (snapshot) => {
+      setDieselLogs(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as DieselLog)));
+    }, (err) => {
+      console.warn("Diesel logs Firestore listener notice:", err.message);
+    });
+
+    const unsubRules = onSnapshot(doc(db, 'app_state', 'learnedRules'), (snapshot) => {
+      const rules = snapshot.exists() ? snapshot.data()?.rules : undefined;
+      if (Array.isArray(rules)) setLearnedRules(rules as LearnedRule[]);
+    }, (err) => {
+      console.warn("Learned rules Firestore listener notice:", err.message);
+    });
+
     return () => {
       unsubTrucks();
+      unsubEquipment();
       unsubDrivers();
       unsubManifests();
       unsubSchedules();
@@ -338,6 +343,8 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       unsubCashAccounts();
       unsubCashEmployees();
       unsubKm();
+      unsubDiesel();
+      unsubRules();
     };
   }, [user, profile]);
 
