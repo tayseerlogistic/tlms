@@ -93,7 +93,7 @@ export const MasterDataView: React.FC = () => {
     const duplicateDriver = drivers.find(driver => driver.id !== editingDriver?.id && (
       Boolean(empNo && String(driver.empNo || '').trim().toLowerCase() === empNo.toLowerCase()) ||
       Boolean(iqama && String(driver.iqama || '').replace(/\D/g, '') === iqama.replace(/\D/g, '')) ||
-      Boolean(name && driver.name.trim().toLowerCase() === name.toLowerCase() && driver.active)
+      Boolean(name && String(driver.name || '').trim().toLowerCase() === name.toLowerCase() && driver.active)
     ));
     if (duplicateDriver) {
       const reason = empNo && String(duplicateDriver.empNo || '').trim().toLowerCase() === empNo.toLowerCase()
@@ -109,7 +109,7 @@ export const MasterDataView: React.FC = () => {
       seq: editingDriver ? editingDriver.seq : drivers.length + 1,
       name,
       nameNorm: name,
-      empNo: empNo || `L-EMP${String(drivers.length + 1).padStart(4, '0')}`,
+      empNo: empNo || '',
       iqama: iqama || '',
       nationality: (formData.get('nationality') as string) || 'PAKISTAN',
       mobile: mobile || '',
