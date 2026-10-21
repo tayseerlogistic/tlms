@@ -3,6 +3,7 @@
 // =====================================================================
 
 import { TimetableRow } from '../types';
+import { ksaDateISO } from './dateUtils';
 
 export interface TimetableDriver {
   id: string;
@@ -100,7 +101,7 @@ export const OUR_LOCS = ['tls', 'tpf', 'nagadhi', 'dammam'];
 export const uid = () => Math.random().toString(36).slice(2, 10);
 
 export function todayISO() {
-  return new Date().toISOString().slice(0, 10);
+  return ksaDateISO();
 }
 
 export function fmtDate(iso: string) {
