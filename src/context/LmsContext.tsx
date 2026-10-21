@@ -55,7 +55,7 @@ interface LmsContextType {
   deleteCashAccount: (id: string) => Promise<void>;
   addCashEmployee: (name: string) => Promise<void>;
   deleteCashEmployee: (id: string) => Promise<void>;
-  reverseCashTransaction: (id: string, reason?: string) => Promise<void>;
+  reverseCashTransaction: (id: string, reason: string) => Promise<void>;
   deleteCashTransaction: (id: string) => Promise<void>;
   
   addKmRecord: (rec: Omit<KmRecord, 'id'>) => Promise<void>;
@@ -643,7 +643,9 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setCashAccounts(prev => prev.filter(account => account.id !== id));
   };
 
-  const reverseCashTransaction = async (id: string, reason?: string) => {
+  const reverseCashTransaction = async (id: string, rawReason: string) => {
+    const reason = String(rawReason || '').trim();
+    if (!reason) throw new Error('A correction reason is required for the audit trail.');
     const original = cashTransactions.find(tx => tx.id === id);
     if (!original) throw new Error('Cashbook transaction not found.');
     if (original.status === 'Reversed' || original.type === 'Reversal') throw new Error('This transaction is already reversed or is itself a reversal.');
@@ -651,7 +653,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const reversal: CashTransaction = {
       id: reversalId, date: ksaDateISO(), dateISO: ksaDateISO(), account: original.account, employee: original.employee,
       type: 'Reversal', category: original.category, amount: Math.abs(original.amount),
-      description: 'Reversal of ' + id + (reason ? ': ' + reason : ''), status: 'Posted', reversalOf: id, reversedType: original.type,
+      description: 'Reversal of ' + id + ': ' + reason, status: 'Posted', reversalOf: id, reversedType: original.type,
       createdAt: new Date().toISOString(), createdBy: profile?.email || user?.email || 'Cashier'
     };
     if (!(auth.currentUser || user)) throw new Error('You must be signed in to Firebase to reverse a Cashbook transaction.');
