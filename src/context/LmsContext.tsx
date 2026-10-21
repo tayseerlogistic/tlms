@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
 import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc, query, orderBy, getDocs } from 'firebase/firestore';
 import { auth, db } from '../firebase/config';
 import { handleFirestoreError, OperationType } from '../firebase/errors';
@@ -72,6 +72,16 @@ interface LmsContextType {
 const LmsContext = createContext<LmsContextType | undefined>(undefined);
 
 const LOCAL_STORAGE_KEY = 'tls_lms_offline_cache_v2';
+
+function normalizeManifestTags(tags: Record<string, string>, drivers: Driver[]): Record<string, string> {
+  const normalized: Record<string, string> = {};
+  Object.entries(tags || {}).forEach(([key, value]) => {
+    const index = Number(key);
+    const driver = key.trim() !== '' && Number.isInteger(index) && index >= 0 ? drivers[index] : undefined;
+    normalized[driver?.id || key] = value;
+  });
+  return normalized;
+}
 
 export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, profile } = useAuth();
@@ -153,53 +163,47 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   });
 
   const [manifests, setManifests] = useState<Record<string, Record<string, string>>>(() => {
-    // Preload complete August 1–31 and September 1–7 seed from drivers history
     const seedManifests: Record<string, Record<string, string>> = {};
-    INITIAL_DRIVERS.forEach((d, idx) => {
-      if (d.history) {
-        Object.entries(d.history).forEach(([dt, tag]) => {
-          if (!seedManifests[dt]) seedManifests[dt] = {};
-          seedManifests[dt][idx] = tag;
+    drivers.forEach((driver, idx) => {
+      Object.entries(driver.history || {}).forEach(([date, tag]) => {
+        if (!seedManifests[date]) seedManifests[date] = {};
+        seedManifests[date][driver.id] = tag;
+      });
+    });
+    [SEED_OCTOBER_1_4_MANIFESTS, OCTOBER_CONFIRMED_MANIFESTS].forEach(source => {
+      Object.entries(source).forEach(([date, tags]) => {
+        if (!seedManifests[date]) seedManifests[date] = {};
+        Object.entries(tags).forEach(([key, tag]) => {
+          const index = Number(key);
+          const driver = key.trim() !== '' && Number.isInteger(index) && index >= 0 ? drivers[index] : undefined;
+          seedManifests[date][driver?.id || key] = tag;
         });
-      }
-    });
-
-    // Merge October 1–4 pre-seeded manifests from spreadsheet
-    Object.entries(SEED_OCTOBER_1_4_MANIFESTS).forEach(([dt, tags]) => {
-      if (!seedManifests[dt]) seedManifests[dt] = {};
-      Object.entries(tags).forEach(([idx, tag]) => {
-        seedManifests[dt][idx] = tag;
       });
     });
-
-    // Merge October 1–5 confirmed manifests (includes verified Oct 5 dispatches)
-    Object.entries(OCTOBER_CONFIRMED_MANIFESTS).forEach(([dt, tags]) => {
-      if (!seedManifests[dt]) seedManifests[dt] = {};
-      Object.entries(tags).forEach(([idx, tag]) => {
-        seedManifests[dt][idx] = tag;
-      });
-    });
-
     const saved = localStorage.getItem(LOCAL_STORAGE_KEY + '_manifests_v3');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        const merged = { ...seedManifests, ...parsed };
-        // Ensure October 1-5 is always populated with locked sequence
-        Object.entries(SEED_OCTOBER_1_4_MANIFESTS).forEach(([dt, tags]) => {
-          merged[dt] = { ...(merged[dt] || {}), ...tags };
+    if (!saved) return seedManifests;
+    try {
+      const parsed = JSON.parse(saved) as Record<string, Record<string, string>>;
+      const normalizedParsed: Record<string, Record<string, string>> = {};
+      Object.entries(parsed).forEach(([date, tags]) => { normalizedParsed[date] = normalizeManifestTags(tags, drivers); });
+      const merged = { ...seedManifests, ...normalizedParsed };
+      [SEED_OCTOBER_1_4_MANIFESTS, OCTOBER_CONFIRMED_MANIFESTS].forEach(source => {
+        Object.entries(source).forEach(([date, tags]) => {
+          const normalizedSeed: Record<string, string> = {};
+          Object.entries(tags).forEach(([key, tag]) => {
+            const index = Number(key);
+            const driver = key.trim() !== '' && Number.isInteger(index) && index >= 0 ? drivers[index] : undefined;
+            normalizedSeed[driver?.id || key] = tag;
+          });
+          merged[date] = { ...(merged[date] || {}), ...normalizedSeed };
         });
-        Object.entries(OCTOBER_CONFIRMED_MANIFESTS).forEach(([dt, tags]) => {
-          merged[dt] = { ...(merged[dt] || {}), ...tags };
-        });
-        return merged;
-      } catch (e) {
-        return seedManifests;
-      }
-    }
-    return seedManifests;
+      });
+      return merged;
+    } catch { return seedManifests; }
   });
 
+  const driversRef = useRef(drivers);
+  useEffect(() => { driversRef.current = drivers; }, [drivers]);
   const [cashTransactions, setCashTransactions] = useState<CashTransaction[]>(() => {
     const saved = localStorage.getItem(LOCAL_STORAGE_KEY + '_cash');
     return saved ? JSON.parse(saved) : [];
@@ -269,7 +273,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const remote: Record<string, Record<string, string>> = {};
       snapshot.docs.forEach(docSnap => {
         const data = docSnap.data();
-        if (data?.date && data?.tags && typeof data.tags === 'object') remote[data.date] = data.tags;
+        if (data?.date && data?.tags && typeof data.tags === 'object') remote[data.date] = normalizeManifestTags(data.tags, driversRef.current);
       });
       setManifests(remote);
     }, (err) => {
@@ -849,7 +853,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `TLS_LMS_Master_Backup_${new Date().toISOString().substring(0, 10)}.json`;
+    a.download = `TLS_LMS_Master_Backup_${ksaDateISO()}.json`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
