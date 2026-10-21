@@ -13,6 +13,7 @@ export const MasterDataView: React.FC = () => {
 
   const [activeTab, setActiveTab] = useState<'trucks' | 'equipment' | 'drivers' | 'conflicts'>('trucks');
   const [searchTerm, setSearchTerm] = useState('');
+  const [showArchivedDrivers, setShowArchivedDrivers] = useState(false);
 
   // Modals state
   const [isTruckModalOpen, setIsTruckModalOpen] = useState(false);
@@ -31,10 +32,11 @@ export const MasterDataView: React.FC = () => {
   );
 
   const filteredDrivers = drivers.filter(d =>
-    (d.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (showArchivedDrivers || d.active !== false) &&
+    ((d.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
     (d.empNo || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
     (d.iqama || '').includes(searchTerm) ||
-    (d.mobile || '').includes(searchTerm)
+    (d.mobile || '').includes(searchTerm))
   );
 
   const filteredEquipment = equipment.filter(e =>
@@ -117,6 +119,8 @@ export const MasterDataView: React.FC = () => {
       workingFor: (formData.get('workingFor') as string) || 'KSA - Local Supplies',
       status: (formData.get('status') as any) || 'AVAILABLE',
       active: true,
+      assignedTruckId: editingDriver?.assignedTruckId ?? null,
+      assignedVehiclePlate: editingDriver?.assignedVehiclePlate ?? null,
       notes: (formData.get('notes') as string) || ''
     };
 
@@ -221,7 +225,7 @@ export const MasterDataView: React.FC = () => {
             activeTab === 'drivers' ? 'border-blue-500 text-white' : 'border-transparent text-slate-400 hover:text-slate-200'
           }`}
         >
-          <Users className="w-4 h-4" /> Drivers ({drivers.length})
+          <Users className="w-4 h-4" /> Drivers ({drivers.filter(driver => driver.active).length})
         </button>
         <button
           onClick={() => setActiveTab('conflicts')}
@@ -376,6 +380,13 @@ export const MasterDataView: React.FC = () => {
       {/* Tab 3: Drivers */}
       {activeTab === 'drivers' && (
         <div className="bg-slate-800/80 border border-slate-700 rounded-2xl overflow-hidden shadow-xl">
+          <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 bg-slate-900/70 border-b border-slate-700">
+            <span className="text-xs text-slate-400">{drivers.filter(driver => driver.active).length} active / {drivers.filter(driver => !driver.active).length} archived</span>
+            <label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-300 cursor-pointer">
+              <input type="checkbox" checked={showArchivedDrivers} onChange={event => setShowArchivedDrivers(event.target.checked)} className="accent-blue-500" />
+              Show archived drivers
+            </label>
+          </div>
           <div className="overflow-x-auto max-h-[600px]">
             <table className="w-full text-left text-xs border-collapse">
               <thead className="bg-slate-900 text-slate-400 font-mono uppercase tracking-wider sticky top-0 z-10 border-b border-slate-700">
