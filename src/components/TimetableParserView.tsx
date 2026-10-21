@@ -76,8 +76,8 @@ SHAHZAD AHMAD SIRAJ AHMAD KHAN\t2634188631\t573685786\t205SLF18\tأ س س S S A 
 MUHAMMAD ASHRAF SAED AHMED\t2349470464\t593304841\t116HCL18\tأ ر ك K R A 8479\tYanbu\tRas Al Khair\tSaudi Arabian Mining Company\t\t\tTanker\tSBS / 21.5 MT\t\t\t\t\t`;
 
 export const TimetableParserView: React.FC = () => {
-  const { schedules: contextSchedules, saveDailySchedule, saveDailyManifest } = useLms();
-  const { user, isDispatcher, isAdmin } = useAuth();
+  const { schedules: contextSchedules, saveDailySchedule, deleteDailySchedule, saveDailyManifest } = useLms();
+  const { user, profile, isDispatcher, isAdmin } = useAuth();
 
   // Load database from localStorage (seed if first time)
   const [db, setDb] = useState<TimetableDatabase>(() => {
@@ -97,6 +97,23 @@ export const TimetableParserView: React.FC = () => {
     }
     return loaded;
   });
+
+  // Keep the editor aligned with the shared schedule repository after realtime updates.
+  useEffect(() => {
+    if (!user && !profile) return;
+    const sharedSchedules = Object.fromEntries(Object.entries(contextSchedules).map(([date, schedule]) => [date, {
+      date,
+      rows: schedule.rows || [],
+      createdAt: schedule.updatedAt || new Date().toISOString(),
+      updatedAt: schedule.updatedAt || new Date().toISOString()
+    }]));
+    setDb(prev => {
+      if (JSON.stringify(prev.schedules) === JSON.stringify(sharedSchedules)) return prev;
+      const next = { ...prev, schedules: sharedSchedules };
+      saveTimetableDatabase(next);
+      return next;
+    });
+  }, [contextSchedules, user, profile]);
 
   // App navigation state
   const [page, setPage] = useState<'new' | 'schedule' | 'drivers' | 'vehicles' | 'settings'>('new');
@@ -703,31 +720,30 @@ export const TimetableParserView: React.FC = () => {
     showToast('Added new blank row');
   };
 
-  const handleDeleteSchedule = () => {
+  const handleDeleteSchedule = async () => {
     if (!currentSchedule) return;
     if (!confirm(`Are you sure you want to delete the schedule for ${fmtDate(currentDate)}?`)) return;
 
-    updateDb(prev => {
-      const copy = { ...prev.schedules };
-      delete copy[currentDate];
-      const remainingDates = Object.keys(copy).sort();
-      return {
-        ...prev,
-        schedules: copy,
-        uiPrefs: {
-          ...prev.uiPrefs,
-          lastDate: remainingDates.length ? remainingDates[remainingDates.length - 1] : null
-        }
-      };
-    });
+    try {
+      await deleteDailySchedule(currentDate);
+      updateDb(prev => {
+        const copy = { ...prev.schedules };
+        delete copy[currentDate];
+        const remainingDates = Object.keys(copy).sort();
+        return {
+          ...prev,
+          schedules: copy,
+          uiPrefs: { ...prev.uiPrefs, lastDate: remainingDates.length ? remainingDates[remainingDates.length - 1] : null }
+        };
+      });
 
-    const remDates = Object.keys(db.schedules).filter(d => d !== currentDate).sort();
-    if (remDates.length) {
-      setCurrentDate(remDates[remDates.length - 1]);
-    } else {
-      setPage('new');
+      const remDates = Object.keys(db.schedules).filter(date => date !== currentDate).sort();
+      if (remDates.length) setCurrentDate(remDates[remDates.length - 1]);
+      else setPage('new');
+      showToast('Schedule deleted from the shared repository');
+    } catch (error) {
+      showToast(error instanceof Error ? 'Schedule deletion failed: ' + error.message : 'Schedule deletion failed. Your schedule was not removed.');
     }
-    showToast('Schedule deleted');
   };
 
   // -------------------------------------------------------------------
