@@ -203,7 +203,19 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   });
 
   const driversRef = useRef(drivers);
-  useEffect(() => { driversRef.current = drivers; }, [drivers]);
+  const rawRemoteManifestsRef = useRef<Record<string, Record<string, string>> | null>(null);
+  useEffect(() => {
+    driversRef.current = drivers;
+    // Re-map from the untouched Firestore payload when authoritative drivers load or reorder.
+    // This avoids locking a legacy numeric tag to the wrong driver if snapshots arrive out of order.
+    if (rawRemoteManifestsRef.current) {
+      const remapped: Record<string, Record<string, string>> = {};
+      Object.entries(rawRemoteManifestsRef.current).forEach(([date, tags]) => {
+        remapped[date] = normalizeManifestTags(tags, drivers);
+      });
+      setManifests(remapped);
+    }
+  }, [drivers]);
   const [cashTransactions, setCashTransactions] = useState<CashTransaction[]>(() => {
     const saved = localStorage.getItem(LOCAL_STORAGE_KEY + '_cash');
     return saved ? JSON.parse(saved) : [];
@@ -263,6 +275,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // Firestore is authoritative: merging a smaller remote list resurrected deleted drivers.
     const unsubDrivers = onSnapshot(collection(db, 'drivers'), (snapshot) => {
       const remote = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Driver)).sort((a, b) => (a.seq || 0) - (b.seq || 0));
+      driversRef.current = remote;
       setDrivers(remote);
     }, (err) => {
       console.warn("Drivers Firestore listener notice:", err.message);
@@ -282,11 +295,16 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     // Listen to manifests
     const unsubManifests = onSnapshot(collection(db, 'manifests'), (snapshot) => {
-      const remote: Record<string, Record<string, string>> = {};
+      const rawRemote: Record<string, Record<string, string>> = {};
       snapshot.docs.forEach(docSnap => {
         const data = docSnap.data();
-        if (data?.date && data?.tags && typeof data.tags === 'object') remote[data.date] = normalizeManifestTags(data.tags, driversRef.current);
+        if (data?.date && data?.tags && typeof data.tags === 'object' && !Array.isArray(data.tags)) {
+          rawRemote[data.date] = data.tags as Record<string, string>;
+        }
       });
+      rawRemoteManifestsRef.current = rawRemote;
+      const remote: Record<string, Record<string, string>> = {};
+      Object.entries(rawRemote).forEach(([date, tags]) => { remote[date] = normalizeManifestTags(tags, driversRef.current); });
       setManifests(remote);
     }, (err) => {
       console.warn("Manifests Firestore listener notice:", err.message);
