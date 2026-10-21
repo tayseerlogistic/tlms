@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useLms } from '../context/LmsContext';
 import { useAuth } from '../context/AuthContext';
 import { ksaDateISO } from '../utils/dateUtils';
+import { transactionEmployeeAdvanceImpact } from '../utils/cashbookUtils';
 import {
   Truck, Navigation, CheckCircle2, DollarSign, Gauge,
   Clock, MapPin, Send, AlertCircle, Phone
@@ -43,18 +44,19 @@ export const DriverPortalView: React.FC = () => {
 
   // Cash advance total for this driver
   let advanceBalance = 0;
-  cashTransactions.forEach(t => {
-    if (t.status === 'Reversed' || !t.employee) return;
-    if (t.employee.toLowerCase() === currentDriver.name.toLowerCase()) {
-      if (t.type === 'Advance Given') advanceBalance += t.amount;
-      if (['Expense Settlement', 'Advance Returned'].includes(t.type)) advanceBalance -= t.amount;
-    }
+  cashTransactions.forEach(transaction => {
+    if (!transaction.employee || transaction.employee.toLowerCase() !== currentDriver.name.toLowerCase()) return;
+    advanceBalance += transactionEmployeeAdvanceImpact(transaction, cashTransactions);
   });
 
   const handleUpdateTripStage = async (newStage: string) => {
     const updatedTag = `${newStage} - ${assignedTruck?.plate || 'Fleet'}`;
-    await saveDailyManifest(today, { [currentDriver.id]: updatedTag });
-    alert(`Status updated to: ${newStage}`);
+    try {
+      await saveDailyManifest(today, { [currentDriver.id]: updatedTag });
+      alert(`Status updated to: ${newStage}`);
+    } catch (error) {
+      alert(error instanceof Error ? 'Status was not saved: ' + error.message : 'Status was not saved. Check your connection and permissions.');
+    }
   };
 
   const handleOdometerSubmit = async (e: React.FormEvent) => {
