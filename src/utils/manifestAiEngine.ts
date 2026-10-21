@@ -11,12 +11,12 @@ export interface ModelTrainingStats {
 
 // Global in-memory cache of trained AI model
 let globalModelStats: ModelTrainingStats = {
-  totalTripsIngested: 742,
-  distinctDates: 38,
-  driversTrained: 64,
-  patternsExtracted: 64,
-  accuracyRate: 97.4,
-  lastTrainedAt: new Date().toISOString()
+  totalTripsIngested: 0,
+  distinctDates: 0,
+  driversTrained: 0,
+  patternsExtracted: 0,
+  accuracyRate: 0,
+  lastTrainedAt: ''
 };
 
 /**
@@ -36,16 +36,19 @@ export function trainManifestAiModel(
   existingRules: LearnedRule[] = []
 ): { stats: ModelTrainingStats; rules: LearnedRule[] } {
   let tripsCount = 0;
+  const tripKeys = new Set<string>();
   const datesSet = new Set<string>();
   const rulesMap = new Map<string, LearnedRule>();
+  const previousRules = new Map<string, LearnedRule>();
 
-  // Ingest existing rules
-  existingRules.forEach(r => {
-    const key = `${r.driverIndex}__${r.result}`;
-    rulesMap.set(key, { ...r });
+  // Keep existing learned knowledge without starting fresh hit counts from previous runs.
+  existingRules.forEach(rule => {
+    const driverId = rule.driverId || drivers[rule.driverIndex]?.id;
+    const key = `${driverId || rule.driverIndex}__${rule.result}`;
+    previousRules.set(key, { ...rule, ...(driverId ? { driverId } : {}) });
   });
 
-  // 1. Ingest all driver individual historical logs (August 1 to 31 & September 1 to 7)
+  // 1. Ingest driver historical logs across the dates actually available.
   drivers.forEach((drv, drvIdx) => {
     if (!drv.history) return;
 
@@ -54,7 +57,8 @@ export function trainManifestAiModel(
       datesSet.add(dt);
       const tag = drv.history![dt];
       if (!tag) return;
-      tripsCount++;
+      const tripKey = `${drv.id}__${dt}__${tag}`;
+      if (!tripKeys.has(tripKey)) { tripKeys.add(tripKey); tripsCount++; }
 
       // Extract core routing tokens from tag
       const normTag = normText(tag);
@@ -75,7 +79,7 @@ export function trainManifestAiModel(
       else if (normTag.includes('MARAFIQ')) patternKey = 'YANBU>YANBU|MARAFIQ|SMBS';
       else if (normTag.includes('LEHAA')) patternKey = 'YANBU>WADI AL DAWASSIR|LEHAA|SOP';
 
-      const ruleKey = `${drvIdx}__${tag}`;
+      const ruleKey = `${drv.id}__${tag}`;
       const existing = rulesMap.get(ruleKey);
       if (existing) {
         existing.hits += 1;
@@ -83,6 +87,7 @@ export function trainManifestAiModel(
         existing.lastSeen = dt;
       } else {
         rulesMap.set(ruleKey, {
+          driverId: drv.id,
           driverIndex: drvIdx,
           driverName: drv.name,
           keys: [patternKey],
@@ -101,17 +106,21 @@ export function trainManifestAiModel(
     const schedRows = daySchedule?.rows || [];
 
     Object.entries(tagsMap).forEach(([idxStr, tag]) => {
-      const drvIdx = parseInt(idxStr, 10);
-      if (isNaN(drvIdx) || !drivers[drvIdx]) return;
-      tripsCount++;
-
+      const numericIndex = Number(idxStr);
+      const hasLegacyIndex = idxStr.trim() !== '' && Number.isInteger(numericIndex) && String(numericIndex) === idxStr;
+      const drvIdx = hasLegacyIndex ? numericIndex : drivers.findIndex(driver => driver.id === idxStr);
+      if (drvIdx < 0 || !drivers[drvIdx]) return;
       const drv = drivers[drvIdx];
+      const tripKey = `${drv.id}__${dt}__${tag}`;
+      const isNewObservation = !tripKeys.has(tripKey);
+      if (isNewObservation) { tripKeys.add(tripKey); tripsCount++; }
       // Check if driver was dispatched in timetable for this date
       const matchedRow = schedRows.find(r => {
         const dNorm = normText(drv.name);
         const rNorm = normText(r.driverName);
-        return dNorm.includes(rNorm) || rNorm.includes(dNorm) ||
-          (r.plateNo && drv.assignedVehiclePlate && normText(r.plateNo).replace(/\s+/g, '') === normText(drv.assignedVehiclePlate).replace(/\s+/g, ''));
+        const nameMatch = Boolean(dNorm && rNorm && (dNorm.includes(rNorm) || rNorm.includes(dNorm)));
+        const plateMatch = Boolean(r.plateNo && drv.assignedVehiclePlate && normText(r.plateNo).replace(/\s+/g, '') === normText(drv.assignedVehiclePlate).replace(/\s+/g, ''));
+        return nameMatch || plateMatch;
       });
 
       if (matchedRow) {
@@ -121,19 +130,21 @@ export function trainManifestAiModel(
         const comm = normText(matchedRow.commodity?.split('/')[0] || '');
         const key = `${src}>${dst}|${cust}|${comm}`;
 
-        const ruleKey = `${drvIdx}__${tag}`;
+        const ruleKey = `${drv.id}__${tag}`;
         const existing = rulesMap.get(ruleKey);
         if (existing) {
-          existing.hits += 2;
+          // A driver's status may exist in both history and the manifest collection.
+          if (isNewObservation) existing.hits += 1;
           if (!existing.keys.includes(key)) existing.keys.push(key);
-          existing.lastSeen = dt;
+          if (dt > existing.lastSeen) existing.lastSeen = dt;
         } else {
           rulesMap.set(ruleKey, {
+            driverId: drv.id,
             driverIndex: drvIdx,
             driverName: drv.name,
             keys: [key],
             result: tag,
-            hits: 2,
+            hits: isNewObservation ? 1 : 0,
             lastSeen: dt
           });
         }
@@ -141,14 +152,26 @@ export function trainManifestAiModel(
     });
   });
 
+  // Merge prior route features into freshly computed counts, preserving rules no longer
+  // represented by current source data. Repeating training cannot inflate the hit count.
+  previousRules.forEach((previous, key) => {
+    const observed = rulesMap.get(key);
+    if (!observed) {
+      rulesMap.set(key, previous);
+      return;
+    }
+    observed.keys = Array.from(new Set([...(previous.keys || []), ...(observed.keys || [])]));
+  });
+
   const updatedRules = Array.from(rulesMap.values()).sort((a, b) => b.hits - a.hits);
 
   globalModelStats = {
     totalTripsIngested: tripsCount,
     distinctDates: datesSet.size,
-    driversTrained: drivers.length,
+    driversTrained: new Set(updatedRules.map(rule => rule.driverId || drivers[rule.driverIndex]?.id || String(rule.driverIndex))).size,
     patternsExtracted: updatedRules.length,
-    accuracyRate: parseFloat((95.5 + Math.min(3.5, updatedRules.length * 0.04)).toFixed(1)),
+    // No independent holdout evaluation is run here; do not fabricate an accuracy percentage.
+    accuracyRate: 0,
     lastTrainedAt: new Date().toISOString()
   };
 
@@ -415,7 +438,7 @@ export function predictManifestForDriver(
   }
 
   // 3. CHECK LEARNED HISTORICAL RULES & PREFERENCES
-  const driverRules = learnedRules.filter(r => r.driverIndex === driverIndex);
+  const driverRules = learnedRules.filter(r => r.driverId ? r.driverId === driver.id : r.driverIndex === driverIndex);
   if (driverRules.length > 0) {
     const topRule = driverRules[0];
     if (topRule.hits >= 3 && !topRule.result.includes('Offloading')) {

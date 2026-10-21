@@ -13,6 +13,7 @@ export const MasterDataView: React.FC = () => {
 
   const [activeTab, setActiveTab] = useState<'trucks' | 'equipment' | 'drivers' | 'conflicts'>('trucks');
   const [searchTerm, setSearchTerm] = useState('');
+  const [showArchivedDrivers, setShowArchivedDrivers] = useState(false);
 
   // Modals state
   const [isTruckModalOpen, setIsTruckModalOpen] = useState(false);
@@ -31,10 +32,11 @@ export const MasterDataView: React.FC = () => {
   );
 
   const filteredDrivers = drivers.filter(d =>
-    (d.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (showArchivedDrivers || d.active !== false) &&
+    ((d.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
     (d.empNo || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
     (d.iqama || '').includes(searchTerm) ||
-    (d.mobile || '').includes(searchTerm)
+    (d.mobile || '').includes(searchTerm))
   );
 
   const filteredEquipment = equipment.filter(e =>
@@ -49,6 +51,9 @@ export const MasterDataView: React.FC = () => {
     const formData = new FormData(form);
 
     const plate = (formData.get('plate') as string).trim().toUpperCase();
+    if (!plate) { alert('Truck plate is required.'); return; }
+    const plateNorm = plate.replace(/\s+/g, '');
+    if (trucks.some(truck => truck.id !== editingTruck?.id && String(truck.plateNorm || truck.plate || '').replace(/\s+/g, '').toUpperCase() === plateNorm)) { alert('A truck with this normalized plate already exists.'); return; }
     const assignedDriverId = formData.get('driverId') as string;
     const selectedDriver = drivers.find(d => d.id === assignedDriverId);
 
@@ -56,21 +61,25 @@ export const MasterDataView: React.FC = () => {
       id: editingTruck ? editingTruck.id : `trk-${Date.now().toString(36)}`,
       seq: editingTruck ? editingTruck.seq : trucks.length + 1,
       plate,
-      plateNorm: plate.replace(/\s+/g, ''),
+      plateNorm,
       type: 'Truck',
       description: (formData.get('description') as string) || 'Fleet Truck',
       status: (formData.get('status') as any) || 'ACTIVE',
-      istemaraExp: (formData.get('istemaraExp') as string) || '2026-12-31',
-      insuranceExp: (formData.get('insuranceExp') as string) || '2026-12-31',
-      fahasExp: (formData.get('fahasExp') as string) || '2026-12-31',
+      istemaraExp: (formData.get('istemaraExp') as string) || '',
+      insuranceExp: (formData.get('insuranceExp') as string) || '',
+      fahasExp: (formData.get('fahasExp') as string) || '',
       assignedDriverId: assignedDriverId || null,
       assignedDriverName: selectedDriver ? selectedDriver.name : null,
       notes: (formData.get('notes') as string) || ''
     };
 
-    await saveTruck(truckToSave);
-    setIsTruckModalOpen(false);
-    setEditingTruck(null);
+    try {
+      await saveTruck(truckToSave);
+      setIsTruckModalOpen(false);
+      setEditingTruck(null);
+    } catch (error) {
+      alert(error instanceof Error ? 'Truck was not saved: ' + error.message : 'Truck was not saved. Check your connection and permissions.');
+    }
   };
 
   const handleSaveDriver = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -78,17 +87,31 @@ export const MasterDataView: React.FC = () => {
     const form = e.currentTarget;
     const formData = new FormData(form);
 
-    const name = (formData.get('name') as string).trim().toUpperCase();
-    const empNo = (formData.get('empNo') as string).trim();
-    const iqama = (formData.get('iqama') as string).trim();
-    const mobile = (formData.get('mobile') as string).trim();
+    const name = String(formData.get('name') || '').trim().toUpperCase();
+    const empNo = String(formData.get('empNo') || '').trim();
+    const iqama = String(formData.get('iqama') || '').trim();
+    const mobile = String(formData.get('mobile') || '').trim();
+    if (!name) { alert('Driver name is required.'); return; }
+    const duplicateDriver = drivers.find(driver => driver.id !== editingDriver?.id && (
+      Boolean(empNo && String(driver.empNo || '').trim().toLowerCase() === empNo.toLowerCase()) ||
+      Boolean(iqama && String(driver.iqama || '').replace(/\D/g, '') === iqama.replace(/\D/g, '')) ||
+      Boolean(name && String(driver.name || '').trim().toLowerCase() === name.toLowerCase() && driver.active)
+    ));
+    if (duplicateDriver) {
+      const reason = empNo && String(duplicateDriver.empNo || '').trim().toLowerCase() === empNo.toLowerCase()
+        ? 'employee number'
+        : iqama && String(duplicateDriver.iqama || '').replace(/\D/g, '') === iqama.replace(/\D/g, '')
+          ? 'Iqama number' : 'driver name';
+      alert('Duplicate ' + reason + ' found for ' + duplicateDriver.name + '. Review the existing master record before saving.');
+      return;
+    }
 
     const driverToSave: Driver = {
       id: editingDriver ? editingDriver.id : `drv-${Date.now().toString(36)}`,
       seq: editingDriver ? editingDriver.seq : drivers.length + 1,
       name,
       nameNorm: name,
-      empNo: empNo || `L-EMP${String(drivers.length + 1).padStart(4, '0')}`,
+      empNo: empNo || '',
       iqama: iqama || '',
       nationality: (formData.get('nationality') as string) || 'PAKISTAN',
       mobile: mobile || '',
@@ -96,12 +119,18 @@ export const MasterDataView: React.FC = () => {
       workingFor: (formData.get('workingFor') as string) || 'KSA - Local Supplies',
       status: (formData.get('status') as any) || 'AVAILABLE',
       active: true,
+      assignedTruckId: editingDriver?.assignedTruckId ?? null,
+      assignedVehiclePlate: editingDriver?.assignedVehiclePlate ?? null,
       notes: (formData.get('notes') as string) || ''
     };
 
-    await saveDriver(driverToSave);
-    setIsDriverModalOpen(false);
-    setEditingDriver(null);
+    try {
+      await saveDriver(driverToSave);
+      setIsDriverModalOpen(false);
+      setEditingDriver(null);
+    } catch (error) {
+      alert(error instanceof Error ? 'Driver was not saved: ' + error.message : 'Driver was not saved. Check your connection and permissions.');
+    }
   };
 
   const handleSaveEquip = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -110,6 +139,8 @@ export const MasterDataView: React.FC = () => {
     const formData = new FormData(form);
 
     const equipNo = (formData.get('equipNo') as string).trim().toUpperCase();
+    if (!equipNo) { alert('Equipment number is required.'); return; }
+    if (equipment.some(item => item.id !== editingEquip?.id && String(item.equipNorm || item.equipNo || '').replace(/\s+/g, '') === equipNo.replace(/\s+/g, ''))) { alert('This equipment number already exists.'); return; }
     const type = (formData.get('type') as any) || 'Tanker';
 
     const equipToSave: Equipment = {
@@ -123,9 +154,13 @@ export const MasterDataView: React.FC = () => {
       active: true
     };
 
-    await saveEquipment(equipToSave);
-    setIsEquipModalOpen(false);
-    setEditingEquip(null);
+    try {
+      await saveEquipment(equipToSave);
+      setIsEquipModalOpen(false);
+      setEditingEquip(null);
+    } catch (error) {
+      alert(error instanceof Error ? 'Equipment was not saved: ' + error.message : 'Equipment was not saved. Check your connection and permissions.');
+    }
   };
 
   return (
@@ -136,7 +171,7 @@ export const MasterDataView: React.FC = () => {
           <h2 className="text-xl sm:text-2xl font-black text-white flex items-center gap-2">
             <Layers className="w-6 h-6 text-blue-400" /> Central Master Data Repository
           </h2>
-          <p className="text-xs text-slate-400 mt-1">Single source of truth for all 46 trucks, 94 equipment items, and 69 drivers</p>
+          <p className="text-xs text-slate-400 mt-1">Fleet register: {trucks.length} trucks, {equipment.length} equipment items, and {drivers.filter(d => d.active).length} active drivers ({drivers.filter(d => !d.active).length} archived).</p>
         </div>
 
         <div className="flex items-center gap-3">
@@ -190,7 +225,7 @@ export const MasterDataView: React.FC = () => {
             activeTab === 'drivers' ? 'border-blue-500 text-white' : 'border-transparent text-slate-400 hover:text-slate-200'
           }`}
         >
-          <Users className="w-4 h-4" /> Drivers ({drivers.length})
+          <Users className="w-4 h-4" /> Drivers ({drivers.filter(driver => driver.active).length})
         </button>
         <button
           onClick={() => setActiveTab('conflicts')}
@@ -238,8 +273,8 @@ export const MasterDataView: React.FC = () => {
                           {t.status}
                         </span>
                       </td>
-                      <td className="p-3 font-mono text-slate-300">{t.istemaraExp || '2026-12-31'}</td>
-                      <td className="p-3 font-mono text-slate-300">{t.insuranceExp || '2026-12-31'}</td>
+                      <td className="p-3 font-mono text-slate-300">{t.istemaraExp || '—'}</td>
+                      <td className="p-3 font-mono text-slate-300">{t.insuranceExp || '—'}</td>
                       <td className="p-3 text-right">
                         {(isAdmin || isDispatcher) && (
                           <div className="flex items-center justify-end gap-2">
@@ -252,7 +287,11 @@ export const MasterDataView: React.FC = () => {
                             </button>
                             {isAdmin && (
                               <button
-                                onClick={() => { if (confirm(`Delete truck ${t.plate}?`)) deleteTruck(t.id); }}
+                                onClick={async () => {
+                                  if (!confirm(`Delete truck ${t.plate}?`)) return;
+                                  try { await deleteTruck(t.id); }
+                                  catch (error) { alert(error instanceof Error ? 'Truck was not deleted: ' + error.message : 'Truck was not deleted. Check your connection and permissions.'); }
+                                }}
                                 className="text-rose-400 hover:text-rose-300 p-1"
                                 title="Delete"
                               >
@@ -317,7 +356,11 @@ export const MasterDataView: React.FC = () => {
                           </button>
                           {isAdmin && (
                             <button
-                              onClick={() => { if (confirm(`Delete equipment ${e.equipNo}?`)) deleteEquipment(e.id); }}
+                              onClick={async () => {
+                                if (!confirm(`Delete equipment ${e.equipNo}?`)) return;
+                                try { await deleteEquipment(e.id); }
+                                catch (error) { alert(error instanceof Error ? 'Equipment was not deleted: ' + error.message : 'Equipment was not deleted. Check your connection and permissions.'); }
+                              }}
                               className="text-rose-400 hover:text-rose-300 p-1"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
@@ -337,6 +380,13 @@ export const MasterDataView: React.FC = () => {
       {/* Tab 3: Drivers */}
       {activeTab === 'drivers' && (
         <div className="bg-slate-800/80 border border-slate-700 rounded-2xl overflow-hidden shadow-xl">
+          <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 bg-slate-900/70 border-b border-slate-700">
+            <span className="text-xs text-slate-400">{drivers.filter(driver => driver.active).length} active / {drivers.filter(driver => !driver.active).length} archived</span>
+            <label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-300 cursor-pointer">
+              <input type="checkbox" checked={showArchivedDrivers} onChange={event => setShowArchivedDrivers(event.target.checked)} className="accent-blue-500" />
+              Show archived drivers
+            </label>
+          </div>
           <div className="overflow-x-auto max-h-[600px]">
             <table className="w-full text-left text-xs border-collapse">
               <thead className="bg-slate-900 text-slate-400 font-mono uppercase tracking-wider sticky top-0 z-10 border-b border-slate-700">
@@ -356,7 +406,10 @@ export const MasterDataView: React.FC = () => {
                 {filteredDrivers.map((d) => (
                   <tr key={d.id} className="hover:bg-slate-800/60 transition">
                     <td className="p-3 font-mono text-slate-400">#{d.seq}</td>
-                    <td className="p-3 font-bold text-white text-sm">{d.name}</td>
+                    <td className="p-3 font-bold text-white text-sm">
+                      {d.name}
+                      {!d.active && <span className="ml-2 inline-flex rounded bg-slate-700 px-1.5 py-0.5 text-[9px] font-bold text-slate-300">ARCHIVED</span>}
+                    </td>
                     <td className="p-3 font-mono text-blue-400 font-bold">{d.empNo || '—'}</td>
                     <td className="p-3 font-mono text-slate-300">
                       {d.iqama ? d.iqama : <span className="text-amber-400 font-semibold">Missing</span>}
@@ -379,11 +432,11 @@ export const MasterDataView: React.FC = () => {
                           {isAdmin && (
                             <button
                               onClick={async () => {
-                                if (!confirm(`Delete driver ${d.name}?`)) return;
+                                if (!confirm(`Archive driver ${d.name}? This preserves historical manifests and clears their current truck assignment.`)) return;
                                 try {
                                   await deleteDriver(d.id);
                                 } catch (error) {
-                                  alert(error instanceof Error ? error.message : 'Could not delete driver.');
+                                  alert(error instanceof Error ? error.message : 'Could not archive driver.');
                                 }
                               }}
                               className="text-rose-400 hover:text-rose-300 p-1"
@@ -410,7 +463,7 @@ export const MasterDataView: React.FC = () => {
               <ShieldAlert className="w-5 h-5 text-amber-400" /> Data Quality Anomaly &amp; Conflict Inspector
             </h3>
             <p className="text-xs text-slate-400 mt-1">
-              The automated sanitizer detected {conflicts.length} anomalies across legacy driver assignments and odometer histories.
+              The data-quality inspector currently tracks {conflicts.length} findings across legacy driver assignments and odometer histories.
             </p>
           </div>
 
@@ -488,7 +541,7 @@ export const MasterDataView: React.FC = () => {
                   className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:border-blue-500"
                 >
                   <option value="">— Unassigned —</option>
-                  {drivers.map(d => (
+                  {drivers.filter(d => d.active).map(d => (
                     <option key={d.id} value={d.id}>{d.name} ({d.empNo})</option>
                   ))}
                 </select>
@@ -512,7 +565,7 @@ export const MasterDataView: React.FC = () => {
                   <input
                     name="istemaraExp"
                     type="date"
-                    defaultValue={editingTruck?.istemaraExp || '2026-12-31'}
+                    defaultValue={editingTruck?.istemaraExp || ''}
                     className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white text-xs font-mono"
                   />
                 </div>

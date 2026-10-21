@@ -3,6 +3,7 @@
 // =====================================================================
 
 import { TimetableRow } from '../types';
+import { ksaDateISO } from './dateUtils';
 
 export interface TimetableDriver {
   id: string;
@@ -100,7 +101,7 @@ export const OUR_LOCS = ['tls', 'tpf', 'nagadhi', 'dammam'];
 export const uid = () => Math.random().toString(36).slice(2, 10);
 
 export function todayISO() {
-  return new Date().toISOString().slice(0, 10);
+  return ksaDateISO();
 }
 
 export function fmtDate(iso: string) {
@@ -366,10 +367,10 @@ export function loadTimetableDatabase(): TimetableDatabase {
     if (!str) return fallback;
     const parsed = JSON.parse(str);
     return {
-      drivers: Array.isArray(parsed.drivers) && parsed.drivers.length ? parsed.drivers : fallback.drivers,
-      vehicles: Array.isArray(parsed.vehicles) && parsed.vehicles.length ? parsed.vehicles : fallback.vehicles,
-      commodities: Array.isArray(parsed.commodities) && parsed.commodities.length ? parsed.commodities : fallback.commodities,
-      storeMap: parsed.storeMap && Object.keys(parsed.storeMap).length ? parsed.storeMap : fallback.storeMap,
+      drivers: Array.isArray(parsed.drivers) ? parsed.drivers : fallback.drivers,
+      vehicles: Array.isArray(parsed.vehicles) ? parsed.vehicles : fallback.vehicles,
+      commodities: Array.isArray(parsed.commodities) ? parsed.commodities : fallback.commodities,
+      storeMap: parsed.storeMap && typeof parsed.storeMap === 'object' ? parsed.storeMap : fallback.storeMap,
       schedules: parsed.schedules || {},
       uiPrefs: {
         visibleColumnsList: parsed.uiPrefs?.visibleColumnsList || null,

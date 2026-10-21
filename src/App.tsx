@@ -1,18 +1,15 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { ThemeProvider } from './context/ThemeContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { LmsProvider } from './context/LmsContext';
 import { Navbar } from './components/Navbar';
-import { OverviewView } from './components/OverviewView';
-import { MasterDataView } from './components/MasterDataView';
-import { TimetableParserView } from './components/TimetableParserView';
-import { DailyManifestView } from './components/DailyManifestView';
-import { CashbookView } from './components/CashbookView';
-import { KmFuelView } from './components/KmFuelView';
-import { DriverPortalView } from './components/DriverPortalView';
-import { UserManagementView } from './components/UserManagementView';
-import { SettingsView } from './components/SettingsView';
-import { LoginView } from './components/LoginView';
+const OverviewView = lazy(() => import('./components/OverviewView').then(module => ({ default: module.OverviewView })));
+const TimetableParserView = lazy(() => import('./components/TimetableParserView').then(module => ({ default: module.TimetableParserView })));
+const DailyManifestView = lazy(() => import('./components/DailyManifestView').then(module => ({ default: module.DailyManifestView })));
+const CashbookView = lazy(() => import('./components/CashbookView').then(module => ({ default: module.CashbookView })));
+const KmFuelView = lazy(() => import('./components/KmFuelView').then(module => ({ default: module.KmFuelView })));
+const SettingsView = lazy(() => import('./components/SettingsView').then(module => ({ default: module.SettingsView })));
+const LoginView = lazy(() => import('./components/LoginView').then(module => ({ default: module.LoginView })));
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Lock, LogIn } from 'lucide-react';
 
@@ -21,6 +18,25 @@ const MainAppContent: React.FC = () => {
   const [currentTab, setCurrentTab] = useState<string>('overview');
   const [isGuestMode, setIsGuestMode] = useState<boolean>(false);
   const [isLoginModalOpen, setIsLoginModalOpen] = useState<boolean>(false);
+  const [brandName, setBrandName] = useState(() => localStorage.getItem('tlms.brandName') || 'TLS Logistics LMS');
+  const [brandSubtitle, setBrandSubtitle] = useState(() => localStorage.getItem('tlms.brandSubtitle') || 'Tayseer Group Central Fleet Operating System');
+
+  useEffect(() => {
+    const syncBranding = () => {
+      const nextName = localStorage.getItem('tlms.brandName') || 'TLS Logistics LMS';
+      const nextSubtitle = localStorage.getItem('tlms.brandSubtitle') || 'Tayseer Group Central Fleet Operating System';
+      setBrandName(nextName);
+      setBrandSubtitle(nextSubtitle);
+      document.title = nextName;
+    };
+    syncBranding();
+    window.addEventListener('tlms-branding-updated', syncBranding);
+    window.addEventListener('storage', syncBranding);
+    return () => {
+      window.removeEventListener('tlms-branding-updated', syncBranding);
+      window.removeEventListener('storage', syncBranding);
+    };
+  }, []);
 
   const isAuthenticated = Boolean(user || profile);
 
@@ -37,12 +53,14 @@ const MainAppContent: React.FC = () => {
   if (!isAuthenticated && !isGuestMode) {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center px-4 py-8 relative">
-        <LoginView
-          onSuccess={() => setIsGuestMode(false)}
-          onExploreGuest={() => setIsGuestMode(true)}
-        />
+        <Suspense fallback={<div className="text-xs text-slate-400">Loading login…</div>}>
+          <LoginView
+            onSuccess={() => setIsGuestMode(false)}
+            onExploreGuest={() => setIsGuestMode(true)}
+          />
+        </Suspense>
         <footer className="mt-8 text-center text-xs text-slate-500 font-mono">
-          TLS Logistics LMS &bull; Tayseer Group Fleet Central Platform &bull; Zero Public Registration Policy
+{brandName} &bull; {brandSubtitle} &bull; Test Version
         </footer>
       </div>
     );
@@ -89,6 +107,7 @@ const MainAppContent: React.FC = () => {
 
         {/* View Router */}
         <ErrorBoundary key={currentTab} fallbackTitle={`Error displaying ${currentTab}`}>
+          <Suspense fallback={<div className="min-h-[40vh] flex items-center justify-center text-xs font-mono text-slate-400">Loading {currentTab.replace('-', ' ')}…</div>}>
           {currentTab === 'overview' && <OverviewView onNavigate={setCurrentTab} />}
           {currentTab === 'timetable' && <TimetableParserView />}
           {currentTab === 'manifest' && <DailyManifestView />}
@@ -98,6 +117,7 @@ const MainAppContent: React.FC = () => {
           {currentTab === 'master' && <SettingsView initialTab="master" onBackToCommandCenter={() => setCurrentTab('overview')} />}
           {currentTab === 'driver-portal' && <SettingsView initialTab="driver-portal" onBackToCommandCenter={() => setCurrentTab('overview')} />}
           {currentTab === 'users' && <SettingsView initialTab="users" onBackToCommandCenter={() => setCurrentTab('overview')} />}
+          </Suspense>
         </ErrorBoundary>
       </main>
 
@@ -111,19 +131,21 @@ const MainAppContent: React.FC = () => {
             >
               ✕
             </button>
-            <LoginView
-              onSuccess={() => {
-                setIsLoginModalOpen(false);
-                setIsGuestMode(false);
-              }}
-            />
+            <Suspense fallback={<div className="text-xs text-slate-400">Loading login…</div>}>
+              <LoginView
+                onSuccess={() => {
+                  setIsLoginModalOpen(false);
+                  setIsGuestMode(false);
+                }}
+              />
+            </Suspense>
           </div>
         </div>
       )}
 
       {/* Footer */}
       <footer className="border-t border-slate-900 bg-slate-950/80 py-4 text-center text-xs text-slate-400 font-mono">
-        <p>TLS Logistics Management System &bull; Tayseer Group Fleet Central Platform &bull; Zero Public Registration Policy</p>
+        <p>{brandName} &bull; {brandSubtitle} &bull; Test Version</p>
       </footer>
     </div>
   );

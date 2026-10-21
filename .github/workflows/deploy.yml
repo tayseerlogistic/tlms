@@ -13,7 +13,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: 'pages'
+  group: 'pages-${{ github.event_name }}-${{ github.ref }}'
   cancel-in-progress: true
 
 jobs:
@@ -34,6 +34,12 @@ jobs:
       - name: Install dependencies
         run: npm install --legacy-peer-deps --force
 
+      - name: Type check
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm test
+
       - name: Build production app
         run: |
           npx vite build
@@ -41,13 +47,16 @@ jobs:
           cp dist/index.html dist/404.html
 
       - name: Setup Pages
+        if: github.event_name != 'pull_request'
         uses: actions/configure-pages@v4
 
       - name: Upload Pages artifact
+        if: github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@v3
         with:
           path: './dist'
 
       - name: Deploy to GitHub Pages
+        if: github.event_name != 'pull_request'
         id: deployment
         uses: actions/deploy-pages@v4

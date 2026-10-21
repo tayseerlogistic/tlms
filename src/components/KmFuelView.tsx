@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useLms } from '../context/LmsContext';
 import { useAuth } from '../context/AuthContext';
+import { ksaDateISO, shiftISODate } from '../utils/dateUtils';
+import { parseMonthlyKmUpload } from '../utils/kmImportUtils';
 import { KSA_DIESEL_PRICE, COMPANY_KM_PER_LITER_QUOTA } from '../data/seedData';
 import { KmRecord, DieselLog, Truck, Driver } from '../types';
 import * as XLSX from 'xlsx';
@@ -23,26 +25,7 @@ import {
   Sparkles, Filter, Check, Phone, Eye, Save
 } from 'lucide-react';
 
-function localISODate(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-}
-
-function monthKeyToISO(value: unknown): string | null {
-  const raw = String(value ?? '').trim();
-  const numeric = raw.match(/^(\d{4})[-/](\d{1,2})(?:[-/]\d{1,2})?$/);
-  if (numeric) {
-    const month = Number(numeric[2]);
-    if (month >= 1 && month <= 12) return `${numeric[1]}-${String(month).padStart(2, '0')}`;
-  }
-  const monthNames = ['january','february','march','april','may','june','july','august','september','october','november','december'];
-  const normalized = raw.toLowerCase();
-  const monthIndex = monthNames.findIndex(name => normalized.includes(name) || normalized.slice(0, 3) === name.slice(0, 3));
-  if (monthIndex < 0) return null;
-  const yearMatch = normalized.match(/(?:19|20)\d{2}/);
-  const year = yearMatch ? Number(yearMatch[0]) : new Date().getFullYear();
-  return `${year}-${String(monthIndex + 1).padStart(2, '0')}`;
-}
+function localISODate(): string { return ksaDateISO(); }
 
 // Register Chart.js elements
 Chart.register(
@@ -67,7 +50,7 @@ export const KmFuelView: React.FC = () => {
   const { isAdmin, isDispatcher, isCashier } = useAuth();
 
   const monthOptions = (() => {
-    const currentYear = new Date().getFullYear();
+    const currentYear = Number(ksaDateISO().slice(0, 4));
     const years = new Set<number>(Array.from({ length: 7 }, (_, i) => currentYear - 3 + i));
     kmRecords.forEach(record => {
       const match = String(record.date || '').match(/^(\d{4})-/);
@@ -121,7 +104,7 @@ export const KmFuelView: React.FC = () => {
   const [uploadJsonText, setUploadJsonText] = useState('');
 
   const [isDieselBatchModalOpen, setIsDieselBatchModalOpen] = useState(false);
-  const [batchDieselMonth, setBatchDieselMonth] = useState(() => new Date().toISOString().substring(0, 7));
+  const [batchDieselMonth, setBatchDieselMonth] = useState(() => ksaDateISO().substring(0, 7));
   const [batchDieselText, setBatchDieselText] = useState('');
 
   const [isFleetSetupOpen, setIsFleetSetupOpen] = useState(false);
@@ -131,14 +114,14 @@ export const KmFuelView: React.FC = () => {
   const [isQuickMeterModalOpen, setIsQuickMeterModalOpen] = useState(false);
   const [meterTruck, setMeterTruck] = useState<Truck | null>(null);
   const [meterInputVal, setMeterInputVal] = useState('');
-  const [meterDate, setMeterDate] = useState(() => new Date().toISOString().substring(0, 10));
+  const [meterDate, setMeterDate] = useState(() => ksaDateISO());
 
   const [isQuickFuelModalOpen, setIsQuickFuelModalOpen] = useState(false);
   const [fuelTruck, setFuelTruck] = useState<Truck | null>(null);
   const [fuelLitersVal, setFuelLitersVal] = useState('');
   const [fuelCostVal, setFuelCostVal] = useState('');
   const [fuelRouteVal, setFuelRouteVal] = useState('');
-  const [fuelDate, setFuelDate] = useState(() => new Date().toISOString().substring(0, 10));
+  const [fuelDate, setFuelDate] = useState(() => ksaDateISO());
 
   const [isWhatsRemindersModalOpen, setIsWhatsRemindersModalOpen] = useState(false);
   const [whatsReminderLang, setWhatsReminderLang] = useState<'arabic' | 'urdu' | 'hindi'>('arabic');
@@ -694,7 +677,7 @@ TLS Fleet Management`;
       console.warn("Chart image snapshot issue:", e);
     }
 
-    doc.save(`TLS_Fleet_Utilization_${selectedMonth}_${new Date().toISOString().substring(0, 10)}.pdf`);
+    doc.save(`TLS_Fleet_Utilization_${selectedMonth}_${ksaDateISO()}.pdf`);
     alert("PDF report downloaded successfully!");
   };
 
@@ -703,73 +686,25 @@ TLS Fleet Management`;
   // -------------------------------------------------------------
   const handleMonthlyKmUpload = async () => {
     if (!uploadJsonText.trim()) {
-      alert("Please paste JSON data or choose a .json file.");
+      alert('Please paste JSON data or choose a .json file.');
       return;
     }
-
     try {
-      const data = JSON.parse(uploadJsonText);
       const fallbackMonth = uploadMonthSelect !== 'auto' ? uploadMonthSelect : localISODate().slice(0, 7);
-      const groups: Array<{ month: string; rows: any[] }> = [];
-
-      if (Array.isArray(data)) {
-        groups.push({ month: fallbackMonth, rows: data });
-      } else if (data && typeof data === 'object') {
-        const root = data.months && typeof data.months === 'object' && !Array.isArray(data.months)
-          ? data.months
-          : data;
-        for (const [key, value] of Object.entries(root)) {
-          if (!Array.isArray(value)) continue;
-          groups.push({ month: monthKeyToISO(key) || fallbackMonth, rows: value as any[] });
-        }
-        if (groups.length === 0 && Array.isArray((data as any).records)) {
-          groups.push({ month: fallbackMonth, rows: (data as any).records });
-        }
-      }
-
-      if (!groups.length) {
-        throw new Error('JSON must be an array of records or an object whose month keys contain arrays of records.');
-      }
-
-      const records: Array<Omit<KmRecord, 'id'> | KmRecord> = [];
-      for (const group of groups) {
-        for (const row of group.rows) {
-          if (!row || typeof row !== 'object') continue;
-          const plate = resolvePlate(row['Truck Plate#'] || row['Truck Plate'] || row.vehicle || row.Plate || row.veh || row.plate || '');
-          const rawKm = row['Total KM/M'] ?? row['Total KM'] ?? row.km ?? row.KM ?? row.distance;
-          const kmVal = Number.parseFloat(String(rawKm ?? ''));
-          if (!plate || !Number.isFinite(kmVal) || kmVal < 0) continue;
-
-          const rowMonth = monthKeyToISO(row.month || row.Month || row.period || row.Period);
-          const rawDate = String(row.date || row.Date || '').trim();
-          const date = /^\d{4}-\d{2}-\d{2}$/.test(rawDate)
-            ? rawDate
-            : `${rowMonth || group.month}-15`;
-          const rawOdometer = Number(row.odometer ?? row.Odometer);
-          records.push({
-            date,
-            veh: plate,
-            odometer: Number.isFinite(rawOdometer) && rawOdometer > 0 ? rawOdometer : 100000 + kmVal,
-            km: kmVal,
-            notes: `Uploaded Monthly Run (${group.month})`
-          });
-        }
-      }
-
-      if (!records.length) {
-        throw new Error('No valid records found. Each row needs a truck plate and a non-negative KM value.');
-      }
-
-      await batchSaveKmRecords(records);
-      const importedMonths = new Set(records.map(record => record.date.slice(0, 7))).size;
-      alert(`Successfully integrated ${records.length} KM records across ${importedMonths} month(s).`);
+      const parsed = parseMonthlyKmUpload(uploadJsonText, fallbackMonth, resolvePlate, Number(localISODate().slice(0, 4)));
+      await batchSaveKmRecords(parsed.records);
+      const monthLabel = parsed.months.map(month => {
+        const [year, monthNumber] = month.split('-').map(Number);
+        return new Intl.DateTimeFormat('en', { month: 'short', year: 'numeric', timeZone: 'UTC' }).format(new Date(Date.UTC(year, monthNumber - 1, 1)));
+      }).join(', ');
+      const skippedNote = parsed.skippedRows ? ` ${parsed.skippedRows} invalid row(s) were skipped.` : '';
+      alert(`Successfully imported ${parsed.records.length} KM records across ${parsed.months.length} month(s): ${monthLabel}.${skippedNote}`);
       setIsUploadModalOpen(false);
       setUploadJsonText('');
-    } catch (err: any) {
-      alert("Failed to import JSON: " + (err?.message || String(err)));
+    } catch (error) {
+      alert('Failed to import JSON: ' + (error instanceof Error ? error.message : String(error)));
     }
   };
-
   // -------------------------------------------------------------
   // BATCH DIESEL INGESTION
   // -------------------------------------------------------------
@@ -941,7 +876,7 @@ TLS Fleet Management`;
               const ws = XLSX.utils.json_to_sheet(kmRecords);
               const wb = XLSX.utils.book_new();
               XLSX.utils.book_append_sheet(wb, ws, 'KM_History');
-              XLSX.writeFile(wb, `KM_History_${new Date().toISOString().substring(0, 10)}.xlsx`);
+              XLSX.writeFile(wb, `KM_History_${ksaDateISO()}.xlsx`);
             }}
             className="bg-slate-700 hover:bg-slate-600 text-white px-3.5 py-2 rounded-xl text-xs font-semibold shadow-sm transition flex items-center gap-1.5"
           >
@@ -1257,7 +1192,7 @@ TLS Fleet Management`;
                     const ws = XLSX.utils.json_to_sheet(exportRows);
                     const wb = XLSX.utils.book_new();
                     XLSX.utils.book_append_sheet(wb, ws, 'Master_Fleet_Balancing');
-                    XLSX.writeFile(wb, `Master_Fleet_Balancing_${selectedMonth}_${new Date().toISOString().substring(0, 10)}.xlsx`);
+                    XLSX.writeFile(wb, `Master_Fleet_Balancing_${selectedMonth}_${ksaDateISO()}.xlsx`);
                   }}
                   className="bg-slate-700 hover:bg-slate-600 text-slate-200 px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1 transition"
                   title="Export this master table to Excel"
@@ -1561,7 +1496,7 @@ TLS Fleet Management`;
                 const ws = XLSX.utils.json_to_sheet(reconData);
                 const wb = XLSX.utils.book_new();
                 XLSX.utils.book_append_sheet(wb, ws, 'Fuel_Reconciliation');
-                XLSX.writeFile(wb, `Fuel_Reconciliation_${new Date().toISOString().substring(0, 10)}.xlsx`);
+                XLSX.writeFile(wb, `Fuel_Reconciliation_${ksaDateISO()}.xlsx`);
               }}
               className="bg-white text-slate-900 px-4 py-2 rounded-xl text-xs font-bold shadow-md hover:bg-slate-100 transition"
             >
@@ -1700,7 +1635,7 @@ TLS Fleet Management`;
                                 const l = parseFloat(lStr);
                                 if (isNaN(l) || l <= 0) return alert("Invalid liters");
                                 addDieselLog({
-                                  date: `${new Date().toISOString().substring(0, 7)}-15`,
+                                  date: `${ksaDateISO().substring(0, 7)}-15`,
                                   veh: r.plate,
                                   drv: r.driverName,
                                   liters: l,
@@ -1806,9 +1741,7 @@ TLS Fleet Management`;
                 <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-700 rounded-xl px-2 py-1">
                   <button
                     onClick={() => {
-                      const d = new Date(readingDate);
-                      d.setDate(d.getDate() - 1);
-                      setReadingDate(d.toISOString().substring(0, 10));
+                      setReadingDate(shiftISODate(readingDate, -1));
                     }}
                     title="Previous Date"
                     className="p-1 hover:bg-slate-800 text-slate-300 rounded font-bold transition text-xs"
@@ -1823,9 +1756,7 @@ TLS Fleet Management`;
                   />
                   <button
                     onClick={() => {
-                      const d = new Date(readingDate);
-                      d.setDate(d.getDate() + 1);
-                      setReadingDate(d.toISOString().substring(0, 10));
+                      setReadingDate(shiftISODate(readingDate, 1));
                     }}
                     title="Next Date"
                     className="p-1 hover:bg-slate-800 text-slate-300 rounded font-bold transition text-xs"
@@ -1840,7 +1771,7 @@ TLS Fleet Management`;
                     readingDate === localISODate() ? 'bg-blue-600 text-white border-blue-500' : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
                   }`}
                 >
-                  Oct 2 (Sample Day 2)
+                  Today
                 </button>
                 <button
                   onClick={() => setReadingDate('2026-10-01')}
@@ -1848,10 +1779,10 @@ TLS Fleet Management`;
                     readingDate === '2026-10-01' ? 'bg-blue-600 text-white border-blue-500' : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
                   }`}
                 >
-                  Oct 1 (Month Start)
+                  Oct 1 (Sample Month Start)
                 </button>
                 <button
-                  onClick={() => setReadingDate(new Date().toISOString().substring(0, 10))}
+                  onClick={() => setReadingDate(ksaDateISO())}
                   className="text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-2.5 py-1.5 rounded-lg font-bold border border-slate-700 transition"
                 >
                   Today
@@ -2701,14 +2632,18 @@ TLS Fleet Management`;
                                 className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-white"
                               >
                                 <option value="">— No Driver —</option>
-                                {drivers.map(d => (
+                                {drivers.filter(driver => driver.active !== false).map(d => (
                                   <option key={d.id} value={d.id}>{d.name} ({d.empNo})</option>
                                 ))}
                               </select>
                             </td>
                             <td className="p-3 text-center">
                               <button
-                                onClick={() => { if (confirm(`Remove vehicle ${v.plate}?`)) deleteTruck(v.id); }}
+                                onClick={async () => {
+                                  if (!confirm(`Remove vehicle ${v.plate}?`)) return;
+                                  try { await deleteTruck(v.id); }
+                                  catch (error) { alert(error instanceof Error ? 'Vehicle was not removed: ' + error.message : 'Vehicle was not removed. Check your connection and permissions.'); }
+                                }}
                                 className="text-rose-400 hover:text-rose-300"
                               >
                                 <Trash2 className="w-3.5 h-3.5 inline" />
@@ -2788,7 +2723,7 @@ TLS Fleet Management`;
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-800">
-                        {drivers.map((d, i) => (
+                        {drivers.filter(driver => driver.active !== false).map((d, i) => (
                           <tr key={d.id} className="hover:bg-slate-800/50">
                             <td className="p-3 text-slate-400 font-mono">#{i + 1}</td>
                             <td className="p-3 font-bold text-white">{d.name}</td>
@@ -2796,7 +2731,11 @@ TLS Fleet Management`;
                             <td className="p-3 font-mono text-slate-300">{d.mobile || '—'}</td>
                             <td className="p-3 text-center">
                               <button
-                                onClick={() => { if (confirm(`Remove driver ${d.name}?`)) deleteDriver(d.id); }}
+                                onClick={async () => {
+                                  if (!confirm(`Archive driver ${d.name}? Historical records will be preserved.`)) return;
+                                  try { await deleteDriver(d.id); }
+                                  catch (error) { alert(error instanceof Error ? 'Driver was not archived: ' + error.message : 'Driver was not archived. Check your connection and permissions.'); }
+                                }}
                                 className="text-rose-400 hover:text-rose-300"
                               >
                                 <Trash2 className="w-3.5 h-3.5 inline" />

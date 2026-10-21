@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useLms } from '../context/LmsContext';
 import { useAuth } from '../context/AuthContext';
 import { TimetableRow } from '../types';
+import { doc, onSnapshot, setDoc } from 'firebase/firestore';
+import { db as firestoreDb } from '../firebase/config';
 import * as XLSX from 'xlsx';
 import {
   Calendar, FileSpreadsheet, Plus, Download, Copy, Trash2, Search,
@@ -76,8 +78,8 @@ SHAHZAD AHMAD SIRAJ AHMAD KHAN\t2634188631\t573685786\t205SLF18\tأ س س S S A 
 MUHAMMAD ASHRAF SAED AHMED\t2349470464\t593304841\t116HCL18\tأ ر ك K R A 8479\tYanbu\tRas Al Khair\tSaudi Arabian Mining Company\t\t\tTanker\tSBS / 21.5 MT\t\t\t\t\t`;
 
 export const TimetableParserView: React.FC = () => {
-  const { schedules: contextSchedules, saveDailySchedule, saveDailyManifest } = useLms();
-  const { user, isDispatcher, isAdmin } = useAuth();
+  const { drivers: masterDrivers, schedules: contextSchedules, saveDailySchedule, deleteDailySchedule, saveDailyManifest } = useLms();
+  const { user, profile, isDispatcher, isAdmin } = useAuth();
 
   // Load database from localStorage (seed if first time)
   const [db, setDb] = useState<TimetableDatabase>(() => {
@@ -97,6 +99,147 @@ export const TimetableParserView: React.FC = () => {
     }
     return loaded;
   });
+
+  const timetableDbRef = useRef(db);
+  timetableDbRef.current = db;
+
+  const [registryHydrated, setRegistryHydrated] = useState(false);
+  const cloudRegistryExistsRef = useRef(false);
+  const registrySnapshotErrorRef = useRef(false);
+  const expectedCloudRegistrySignatureRef = useRef<string | null>(null);
+  const lastPersistedRegistrySignatureRef = useRef<string | null>(null);
+  const registrySignature = (value: Pick<TimetableDatabase, 'drivers' | 'vehicles' | 'commodities' | 'storeMap'>) =>
+    JSON.stringify({ drivers: value.drivers, vehicles: value.vehicles, commodities: value.commodities, storeMap: value.storeMap });
+
+  useEffect(() => {
+    if (!user && !profile) {
+      setRegistryHydrated(false);
+      cloudRegistryExistsRef.current = false;
+      expectedCloudRegistrySignatureRef.current = null;
+      lastPersistedRegistrySignatureRef.current = null;
+      return;
+    }
+    return onSnapshot(doc(firestoreDb, 'app_state', 'timetableRegistry'), snapshot => {
+      registrySnapshotErrorRef.current = false;
+      cloudRegistryExistsRef.current = snapshot.exists();
+      if (!snapshot.exists()) {
+        // No shared registry exists yet; after hydration the local demo registry may seed it.
+        expectedCloudRegistrySignatureRef.current = null;
+        setRegistryHydrated(true);
+        return;
+      }
+      const data = snapshot.data();
+      const current = timetableDbRef.current;
+      const next = {
+        ...current,
+        drivers: Array.isArray(data.drivers) ? data.drivers as TimetableDriver[] : current.drivers,
+        vehicles: Array.isArray(data.vehicles) ? data.vehicles as TimetableVehicle[] : current.vehicles,
+        commodities: Array.isArray(data.commodities) ? data.commodities as TimetableCommodity[] : current.commodities,
+        storeMap: data.storeMap && typeof data.storeMap === 'object' && !Array.isArray(data.storeMap)
+          ? data.storeMap as TimetableStoreMap : current.storeMap
+      };
+      const incomingSignature = registrySignature(next);
+      const currentSignature = registrySignature(current);
+      if (incomingSignature === currentSignature) {
+        expectedCloudRegistrySignatureRef.current = null;
+        lastPersistedRegistrySignatureRef.current = incomingSignature;
+        setRegistryHydrated(true);
+        return;
+      }
+      // The persistence effect ignores the pre-hydration render until this cloud snapshot is applied.
+      expectedCloudRegistrySignatureRef.current = incomingSignature;
+      setDb(prev => {
+        const updated = {
+          ...prev,
+          drivers: Array.isArray(data.drivers) ? data.drivers as TimetableDriver[] : prev.drivers,
+          vehicles: Array.isArray(data.vehicles) ? data.vehicles as TimetableVehicle[] : prev.vehicles,
+          commodities: Array.isArray(data.commodities) ? data.commodities as TimetableCommodity[] : prev.commodities,
+          storeMap: data.storeMap && typeof data.storeMap === 'object' && !Array.isArray(data.storeMap)
+            ? data.storeMap as TimetableStoreMap : prev.storeMap
+        };
+        saveTimetableDatabase(updated);
+        return updated;
+      });
+      setRegistryHydrated(true);
+    }, error => {
+      registrySnapshotErrorRef.current = true;
+      setRegistryHydrated(true);
+      showToast('Shared timetable registry unavailable: ' + error.message);
+    });
+  }, [user, profile]);
+
+  useEffect(() => {
+    if ((!user && !profile) || !registryHydrated || registrySnapshotErrorRef.current) return;
+    const signature = registrySignature(db);
+    const expectedCloudSignature = expectedCloudRegistrySignatureRef.current;
+    if (expectedCloudSignature !== null) {
+      if (signature !== expectedCloudSignature) return;
+      expectedCloudRegistrySignatureRef.current = null;
+      lastPersistedRegistrySignatureRef.current = signature;
+      return;
+    }
+    if (lastPersistedRegistrySignatureRef.current === signature) return;
+    const registry = {
+      drivers: db.drivers,
+      vehicles: db.vehicles,
+      commodities: db.commodities,
+      storeMap: db.storeMap,
+      updatedAt: new Date().toISOString(),
+      updatedBy: profile?.email || user?.email || 'Dispatcher'
+    };
+    // Record the intended signature before writing to avoid duplicate writes on snapshot echoes.
+    lastPersistedRegistrySignatureRef.current = signature;
+    cloudRegistryExistsRef.current = true;
+    setDoc(doc(firestoreDb, 'app_state', 'timetableRegistry'), registry).catch(error => {
+      if (lastPersistedRegistrySignatureRef.current === signature) lastPersistedRegistrySignatureRef.current = null;
+      showToast('Shared timetable registry save failed: ' + (error instanceof Error ? error.message : String(error)));
+    });
+  }, [db.drivers, db.vehicles, db.commodities, db.storeMap, registryHydrated, user, profile]);
+
+  // Keep the editor aligned with the shared schedule repository after realtime updates.
+  useEffect(() => {
+    if (!user && !profile) return;
+    const sharedSchedules = Object.fromEntries(Object.entries(contextSchedules).map(([date, schedule]) => [date, {
+      date,
+      rows: schedule.rows || [],
+      createdAt: schedule.updatedAt || new Date().toISOString(),
+      updatedAt: schedule.updatedAt || new Date().toISOString()
+    }]));
+    setDb(prev => {
+      if (JSON.stringify(prev.schedules) === JSON.stringify(sharedSchedules)) return prev;
+      const next = { ...prev, schedules: sharedSchedules };
+      saveTimetableDatabase(next);
+      return next;
+    });
+  }, [contextSchedules, user, profile]);
+
+  // A driver archived in the master repository must no longer be available for new timetable assignments.
+  // Match the legacy timetable registry by Iqama when available, otherwise by exact normalized name.
+  useEffect(() => {
+    if (!masterDrivers.length) return;
+    setDb(prev => {
+      const isArchivedMasterDriver = (item: TimetableDriver) => masterDrivers.some(master => {
+        if (master.active !== false) return false;
+        const timetableIqama = String(item.iqama || '').replace(/\\D/g, '');
+        const masterIqama = String(master.iqama || '').replace(/\\D/g, '');
+        if (timetableIqama && masterIqama) return timetableIqama === masterIqama;
+        const timetableName = String(item.name || '').toUpperCase().replace(/\\s+/g, ' ').trim();
+        const masterName = String(master.name || '').toUpperCase().replace(/\\s+/g, ' ').trim();
+        return Boolean(timetableName && masterName && timetableName === masterName);
+      });
+      const archivedIds = new Set(prev.drivers.filter(isArchivedMasterDriver).map(item => item.id));
+      if (!archivedIds.size) return prev;
+      const next: TimetableDatabase = {
+        ...prev,
+        drivers: prev.drivers.filter(item => !archivedIds.has(item.id)),
+        vehicles: prev.vehicles.map(vehicle => archivedIds.has(vehicle.defaultDriverId)
+          ? { ...vehicle, defaultDriverId: '' }
+          : vehicle)
+      };
+      saveTimetableDatabase(next);
+      return next;
+    });
+  }, [masterDrivers]);
 
   // App navigation state
   const [page, setPage] = useState<'new' | 'schedule' | 'drivers' | 'vehicles' | 'settings'>('new');
@@ -703,31 +846,30 @@ export const TimetableParserView: React.FC = () => {
     showToast('Added new blank row');
   };
 
-  const handleDeleteSchedule = () => {
+  const handleDeleteSchedule = async () => {
     if (!currentSchedule) return;
     if (!confirm(`Are you sure you want to delete the schedule for ${fmtDate(currentDate)}?`)) return;
 
-    updateDb(prev => {
-      const copy = { ...prev.schedules };
-      delete copy[currentDate];
-      const remainingDates = Object.keys(copy).sort();
-      return {
-        ...prev,
-        schedules: copy,
-        uiPrefs: {
-          ...prev.uiPrefs,
-          lastDate: remainingDates.length ? remainingDates[remainingDates.length - 1] : null
-        }
-      };
-    });
+    try {
+      await deleteDailySchedule(currentDate);
+      updateDb(prev => {
+        const copy = { ...prev.schedules };
+        delete copy[currentDate];
+        const remainingDates = Object.keys(copy).sort();
+        return {
+          ...prev,
+          schedules: copy,
+          uiPrefs: { ...prev.uiPrefs, lastDate: remainingDates.length ? remainingDates[remainingDates.length - 1] : null }
+        };
+      });
 
-    const remDates = Object.keys(db.schedules).filter(d => d !== currentDate).sort();
-    if (remDates.length) {
-      setCurrentDate(remDates[remDates.length - 1]);
-    } else {
-      setPage('new');
+      const remDates = Object.keys(db.schedules).filter(date => date !== currentDate).sort();
+      if (remDates.length) setCurrentDate(remDates[remDates.length - 1]);
+      else setPage('new');
+      showToast('Schedule deleted from the shared repository');
+    } catch (error) {
+      showToast(error instanceof Error ? 'Schedule deletion failed: ' + error.message : 'Schedule deletion failed. Your schedule was not removed.');
     }
-    showToast('Schedule deleted');
   };
 
   // -------------------------------------------------------------------

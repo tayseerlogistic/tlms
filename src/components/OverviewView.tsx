@@ -1,6 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import { useLms } from '../context/LmsContext';
 import { useAuth } from '../context/AuthContext';
+import { ksaDateISO, shiftISODate, shiftISOMonth } from '../utils/dateUtils';
+import { transactionCashImpact } from '../utils/cashbookUtils';
 import {
   Truck, Users, Fuel, DollarSign, AlertCircle, ArrowUpRight,
   TrendingUp, CheckCircle2, Clock, AlertTriangle, ShieldCheck,
@@ -36,10 +38,13 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
   const [timeRange, setTimeRange] = useState<'monthly' | '14days' | '7days'>('monthly');
   const [activeChartTab, setActiveChartTab] = useState<'both' | 'fuel' | 'manifest'>('both');
 
-  const today = new Date().toISOString().substring(0, 10);
+  const today = ksaDateISO();
   const todayManifest = manifests[today] || {};
   const activeTripsCount = Object.values(todayManifest).filter(t => t.includes('Under Loading') || t.includes('On the way')).length;
-  const maintenanceCount = Object.values(todayManifest).filter(t => t.toLowerCase().includes('maintenance')).length;
+  const maintenanceCount = Object.values(todayManifest).filter(t => String(t).toLowerCase().includes('maintenance')).length;
+  const observedFuelLiters = dieselLogs.reduce((sum, entry) => sum + Math.max(0, Number(entry.liters) || 0), 0);
+  const observedFuelCost = dieselLogs.reduce((sum, entry) => sum + Math.max(0, Number(entry.cost) || 0), 0);
+  const observedDieselPrice = observedFuelLiters > 0 ? observedFuelCost / observedFuelLiters : null;
   
   // Total fleet distance
   const totalKm = kmRecords.reduce((acc, r) => acc + (r.km || 0), 0);
@@ -48,9 +53,9 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
   let cashInflow = 0;
   let cashOutflow = 0;
   cashTransactions.forEach(t => {
-    if (t.status === 'Reversed') return;
-    if (['Cash In', 'Income', 'Transfer In', 'Advance Returned'].includes(t.type)) cashInflow += t.amount;
-    if (['Advance Given', 'Transfer Out', 'Cash Out', 'Expense Settlement'].includes(t.type)) cashOutflow += t.amount;
+    const impact = transactionCashImpact(t, cashTransactions);
+    if (impact > 0) cashInflow += impact;
+    if (impact < 0) cashOutflow += Math.abs(impact);
   });
 
   const openConflicts = conflicts.filter(c => c.status === 'open');
@@ -59,191 +64,132 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
   // DATA VISUALIZATION ENGINE 1: FUEL EFFICIENCY TRENDS OVER TIME
   // ===================================================================
   const fuelTrendData = useMemo(() => {
-    const quotaTarget = 3.0; // 3.0 KM/L standard quota
+    const quotaTarget = 3.0;
+    const todayISO = ksaDateISO();
+    const points: Array<{
+      period: string; fullDate: string; efficiency: number | null; quota: number;
+      distanceKm: number; litersConsumed: number; fuelCostSar: number; variance: number; hasData: boolean
+    }> = [];
+
+    const buildPoint = (periodKey: string, label: string, monthly: boolean) => {
+      const distance = kmRecords
+        .filter(record => monthly ? record.date?.startsWith(periodKey) : record.date === periodKey)
+        .reduce((sum, record) => sum + Math.max(0, Number(record.km) || 0), 0);
+      const fuel = dieselLogs.filter(record => monthly ? record.date?.startsWith(periodKey) : record.date === periodKey);
+      const liters = fuel.reduce((sum, record) => sum + Math.max(0, Number(record.liters) || 0), 0);
+      const cost = fuel.reduce((sum, record) => sum + Math.max(0, Number(record.cost) || 0), 0);
+      const hasData = distance > 0 && liters > 0;
+      const efficiency = hasData ? Number((distance / liters).toFixed(2)) : 0;
+      return {
+        period: label,
+        fullDate: periodKey,
+        efficiency: hasData ? efficiency : null,
+        quota: quotaTarget,
+        distanceKm: Math.round(distance),
+        litersConsumed: Math.round(liters),
+        fuelCostSar: Math.round(cost),
+        variance: hasData && efficiency > 0 ? Number((((efficiency - quotaTarget) / quotaTarget) * 100).toFixed(1)) : 0,
+        hasData
+      };
+    };
 
     if (timeRange === 'monthly') {
-      // 2026 Historical Months Jan to Oct
-      const months = [
-        { key: '2026-01', label: 'Jan 26', baselineKm: 382400, baselineEff: 2.89 },
-        { key: '2026-02', label: 'Feb 26', baselineKm: 374000, baselineEff: 2.92 },
-        { key: '2026-03', label: 'Mar 26', baselineKm: 395100, baselineEff: 2.96 },
-        { key: '2026-04', label: 'Apr 26', baselineKm: 388900, baselineEff: 3.01 },
-        { key: '2026-05', label: 'May 26', baselineKm: 399500, baselineEff: 2.98 },
-        { key: '2026-06', label: 'Jun 26', baselineKm: 405200, baselineEff: 3.04 },
-        { key: '2026-07', label: 'Jul 26', baselineKm: 412000, baselineEff: 3.02 },
-        { key: '2026-08', label: 'Aug 26', baselineKm: 418500, baselineEff: 3.07 },
-        { key: '2026-09', label: 'Sep 26', baselineKm: 426800, baselineEff: 3.12 },
-        { key: '2026-10', label: 'Oct 26', baselineKm: 98400,  baselineEff: 3.10 },
-      ];
-
-      return months.map(m => {
-        // Calculate actual KM logged from records if available
-        const monthKmRecords = kmRecords.filter(r => r.date && r.date.startsWith(m.key));
-        const recordedKm = monthKmRecords.reduce((sum, r) => sum + (r.km || 0), 0);
-        const actualKm = recordedKm > 0 ? recordedKm : m.baselineKm;
-
-        // Actual fuel liters logged or calibrated
-        const monthDiesel = dieselLogs.filter(d => d.date && d.date.startsWith(m.key));
-        const recordedLiters = monthDiesel.reduce((sum, d) => sum + (d.liters || 0), 0);
-
-        const efficiency = recordedLiters > 0 && actualKm > 0
-          ? parseFloat((actualKm / recordedLiters).toFixed(2))
-          : m.baselineEff;
-
-        const liters = recordedLiters > 0 ? recordedLiters : Math.round(actualKm / efficiency);
-        const fuelCostSar = Math.round(liters * 1.79);
-        const variance = parseFloat((((efficiency - quotaTarget) / quotaTarget) * 100).toFixed(1));
-
-        return {
-          period: m.label,
-          fullDate: m.key,
-          efficiency, // KM/L
-          quota: quotaTarget,
-          distanceKm: Math.round(actualKm / 1000), // in kKM for dual axis readability
-          litersConsumed: Math.round(liters / 1000), // in kLiters
-          fuelCostSar,
-          variance
-        };
-      });
+      for (let offset = -11; offset <= 0; offset++) {
+        const month = shiftISOMonth(todayISO, offset);
+        const date = new Date(`${month}-01T00:00:00.000Z`);
+        const label = new Intl.DateTimeFormat('en', { month: 'short', year: '2-digit', timeZone: 'UTC' }).format(date);
+        points.push(buildPoint(month, label, true));
+      }
+      return points;
     }
 
-    // Daily breakdown for 7 days or 14 days
     const daysCount = timeRange === '7days' ? 7 : 14;
-    const result = [];
-    const baseDate = new Date('2026-10-05T00:00:00Z');
-
-    for (let i = daysCount - 1; i >= 0; i--) {
-      const d = new Date(baseDate);
-      d.setUTCDate(d.getUTCDate() - i);
-      const iso = d.toISOString().substring(0, 10);
-      const label = `${d.getUTCDate()}/${d.getUTCMonth() + 1}`;
-
-      // Sum daily distance from km records
-      const dayKm = kmRecords
-        .filter(r => r.date === iso)
-        .reduce((sum, r) => sum + (r.km || 0), 0);
-
-      const actualKm = dayKm > 0 ? dayKm : (14200 + ((i * 370) % 2800));
-      // Calibrated daily fuel economy variance
-      const effVariations = [3.05, 3.12, 2.98, 3.15, 3.08, 2.95, 3.10, 3.18, 3.02, 3.14, 3.09, 3.06, 3.11, 3.13];
-      const efficiency = effVariations[i % effVariations.length];
-      const liters = Math.round(actualKm / efficiency);
-      const fuelCostSar = Math.round(liters * 1.79);
-      const variance = parseFloat((((efficiency - quotaTarget) / quotaTarget) * 100).toFixed(1));
-
-      result.push({
-        period: label,
-        fullDate: iso,
-        efficiency,
-        quota: quotaTarget,
-        distanceKm: Math.round(actualKm),
-        litersConsumed: liters,
-        fuelCostSar,
-        variance
-      });
+    for (let offset = daysCount - 1; offset >= 0; offset--) {
+      const day = shiftISODate(todayISO, -offset);
+      const [, month, date] = day.split('-');
+      points.push(buildPoint(day, `${Number(date)}/${Number(month)}`, false));
     }
-
-    return result;
+    return points;
   }, [timeRange, kmRecords, dieselLogs]);
 
   // ===================================================================
   // DATA VISUALIZATION ENGINE 2: MANIFEST COMPLETION RATES OVER TIME
   // ===================================================================
   const manifestTrendData = useMemo(() => {
-    const totalFleetDrivers = drivers.length || 64;
+    const totalFleetDrivers = drivers.length;
+    const todayISO = ksaDateISO();
+    const buildPoint = (periodKey: string, label: string, monthly: boolean) => {
+      const dateMatches = (date: string) => monthly ? date.startsWith(periodKey) : date === periodKey;
+      const scheduleEntries = Object.entries(schedules).filter(([date]) => dateMatches(date));
+      const manifestEntries = Object.entries(manifests).filter(([date]) => dateMatches(date));
+      const scheduleCount = scheduleEntries.reduce((sum, [, schedule]) =>
+        sum + (schedule.rows || []).filter(row => Boolean(row.driverName || row.plateNo)).length, 0);
+      let completed = 0;
+      let inTransit = 0;
+      let maintenance = 0;
+      let taggedCount = 0;
+      manifestEntries.forEach(([, tags]) => {
+        const values = Object.values(tags || {});
+        taggedCount += values.length;
+        values.forEach(value => {
+          const tag = String(value || '').toLowerCase();
+          if (tag.includes('delivered') || tag.includes('offload') || tag.includes('discharged') ||
+              tag.includes('completed') || tag.includes('at yanbu base') || tag === 'at base') completed++;
+          else if (tag.includes('loading') || tag.includes('on the way') || tag.includes('transit') ||
+                   tag.includes('supply for') || tag.includes('en-route') || tag.includes('en route')) inTransit++;
+          else if (tag.includes('maintenance') || tag.includes('workshop')) maintenance++;
+        });
+      });
+      const scheduledTrips = Math.max(scheduleCount, taggedCount);
+      const completionRate = scheduledTrips > 0 ? Number((Math.min(100, completed / scheduledTrips * 100)).toFixed(1)) : 0;
+      return {
+        period: label,
+        fullDate: periodKey,
+        completionRate: scheduledTrips > 0 ? completionRate : null,
+        targetSla: 95.0,
+        completedTrips: completed,
+        inTransitTrips: inTransit,
+        scheduledTrips,
+        pendingStandby: Math.max(0, scheduledTrips - completed - inTransit - maintenance),
+        hasData: scheduledTrips > 0,
+        totalFleetDrivers
+      };
+    };
 
     if (timeRange === 'monthly') {
-      // Historical monthly completion rates (Jan - Oct 2026)
-      const monthlyManifestStats = [
-        { label: 'Jan 26', scheduled: 540, completed: 498, inTransit: 28, rate: 92.2 },
-        { label: 'Feb 26', scheduled: 520, completed: 485, inTransit: 24, rate: 93.3 },
-        { label: 'Mar 26', scheduled: 565, completed: 532, inTransit: 21, rate: 94.2 },
-        { label: 'Apr 26', scheduled: 580, completed: 552, inTransit: 19, rate: 95.1 },
-        { label: 'May 26', scheduled: 595, completed: 569, inTransit: 18, rate: 95.6 },
-        { label: 'Jun 26', scheduled: 610, completed: 588, inTransit: 15, rate: 96.4 },
-        { label: 'Jul 26', scheduled: 625, completed: 604, inTransit: 14, rate: 96.6 },
-        { label: 'Aug 26', scheduled: 642, completed: 624, inTransit: 12, rate: 97.2 },
-        { label: 'Sep 26', scheduled: 658, completed: 645, inTransit: 9,  rate: 98.0 },
-        { label: 'Oct 26', scheduled: 165, completed: 158, inTransit: 5,  rate: 95.8 },
-      ];
-
-      return monthlyManifestStats.map(m => ({
-        period: m.label,
-        completionRate: m.rate,
-        targetSla: 95.0,
-        completedTrips: m.completed,
-        inTransitTrips: m.inTransit,
-        scheduledTrips: m.scheduled,
-        pendingStandby: Math.max(0, m.scheduled - m.completed - m.inTransit)
-      }));
+      const points = [];
+      for (let offset = -11; offset <= 0; offset++) {
+        const month = shiftISOMonth(todayISO, offset);
+        const date = new Date(`${month}-01T00:00:00.000Z`);
+        const label = new Intl.DateTimeFormat('en', { month: 'short', year: '2-digit', timeZone: 'UTC' }).format(date);
+        points.push(buildPoint(month, label, true));
+      }
+      return points;
     }
 
-    // Daily breakdown for 7 days or 14 days
     const daysCount = timeRange === '7days' ? 7 : 14;
-    const result = [];
-    const baseDate = new Date('2026-10-05T00:00:00Z');
-
-    for (let i = daysCount - 1; i >= 0; i--) {
-      const d = new Date(baseDate);
-      d.setUTCDate(d.getUTCDate() - i);
-      const iso = d.toISOString().substring(0, 10);
-      const label = `${d.getUTCDate()}/${d.getUTCMonth() + 1}`;
-
-      const dayTags = manifests[iso] || {};
-      const tagValues = Object.values(dayTags);
-      const taggedCount = tagValues.length;
-
-      // Extract specific status counts
-      const completed = tagValues.filter(t =>
-        t.toLowerCase().includes('delivered') ||
-        t.toLowerCase().includes('offload') ||
-        t.toLowerCase().includes('discharged') ||
-        t.toLowerCase().includes('completed') ||
-        t.toLowerCase().includes('base')
-      ).length;
-
-      const inTransit = tagValues.filter(t =>
-        t.toLowerCase().includes('loading') ||
-        t.toLowerCase().includes('on the way') ||
-        t.toLowerCase().includes('transit') ||
-        t.toLowerCase().includes('supply for')
-      ).length;
-
-      const maintenance = tagValues.filter(t => t.toLowerCase().includes('maintenance')).length;
-
-      // Realistically calculate active fulfillment
-      const activeFulfillment = completed + inTransit;
-      const effectiveScheduled = Math.max(taggedCount, 42);
-      const rate = taggedCount > 0
-        ? parseFloat((Math.min(100, ((activeFulfillment + (completed > 0 ? 0 : 20)) / effectiveScheduled) * 100)).toFixed(1))
-        : parseFloat((93.5 + ((i * 1.7) % 5.5)).toFixed(1));
-
-      result.push({
-        period: label,
-        fullDate: iso,
-        completionRate: rate,
-        targetSla: 95.0,
-        completedTrips: completed > 0 ? completed : Math.round(effectiveScheduled * 0.65),
-        inTransitTrips: inTransit > 0 ? inTransit : Math.round(effectiveScheduled * 0.30),
-        scheduledTrips: effectiveScheduled,
-        pendingStandby: Math.max(0, totalFleetDrivers - activeFulfillment - maintenance)
-      });
+    const points = [];
+    for (let offset = daysCount - 1; offset >= 0; offset--) {
+      const day = shiftISODate(todayISO, -offset);
+      const [, month, date] = day.split('-');
+      points.push(buildPoint(day, `${Number(date)}/${Number(month)}`, false));
     }
-
-    return result;
+    return points;
   }, [timeRange, manifests, drivers, schedules]);
 
   // Overall statistics for the summary cards
   const avgEfficiency = useMemo(() => {
-    if (!fuelTrendData.length) return 3.08;
-    const sum = fuelTrendData.reduce((acc, d) => acc + d.efficiency, 0);
-    return parseFloat((sum / fuelTrendData.length).toFixed(2));
+    const measured = fuelTrendData.filter(d => d.hasData);
+    if (!measured.length) return 0;
+    const sum = measured.reduce((acc, d) => acc + (d.efficiency || 0), 0);
+    return parseFloat((sum / measured.length).toFixed(2));
   }, [fuelTrendData]);
 
   const avgCompletionRate = useMemo(() => {
-    if (!manifestTrendData.length) return 96.4;
-    const sum = manifestTrendData.reduce((acc, d) => acc + d.completionRate, 0);
-    return parseFloat((sum / manifestTrendData.length).toFixed(1));
+    const measured = manifestTrendData.filter(d => d.hasData);
+    if (!measured.length) return 0;
+    const sum = measured.reduce((acc, d) => acc + (d.completionRate || 0), 0);
+    return parseFloat((sum / measured.length).toFixed(1));
   }, [manifestTrendData]);
 
   return (
@@ -259,7 +205,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
             </span>
             <h1 className="text-2xl sm:text-3xl font-extrabold text-white mt-1">Fleet Operations &amp; Central Data Hub</h1>
             <p className="text-slate-300 text-sm mt-1 max-w-2xl">
-              Consolidated management for 46 prime movers, 94 tankers &amp; trailers, and 69 professional drivers across the Kingdom of Saudi Arabia.
+              Consolidated management for {trucks.length} prime movers, {equipment.length} tankers and trailers, and {drivers.filter(driver => driver.active).length} active drivers across the Kingdom of Saudi Arabia.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -319,7 +265,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
               <p className="text-xs font-bold text-slate-400 uppercase tracking-wider font-mono">Fleet Readiness</p>
               <h3 className="text-2xl font-black text-white mt-1 font-mono">{trucks.length} Trucks</h3>
               <p className="text-xs text-emerald-400 mt-1 flex items-center gap-1 font-medium">
-                <CheckCircle2 className="w-3.5 h-3.5" /> 100% active prime movers
+                <CheckCircle2 className="w-3.5 h-3.5" /> {trucks.length ? Math.round((trucks.filter(t => t.status === 'ACTIVE').length / trucks.length) * 100) : 0}% active prime movers
               </p>
             </div>
             <div className="p-3 bg-blue-500/10 rounded-xl text-blue-400 border border-blue-500/20">
@@ -347,7 +293,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
             </div>
           </div>
           <div className="mt-4 pt-3 border-t border-slate-700/60 flex justify-between text-xs text-slate-400">
-            <span>Standby: <strong className="text-slate-200">{drivers.length - activeTripsCount - maintenanceCount}</strong></span>
+            <span>Standby: <strong className="text-slate-200">{Math.max(0, drivers.filter(d => d.active).length - activeTripsCount - maintenanceCount)}</strong></span>
             <button onClick={() => onNavigate('manifest')} className="text-blue-400 hover:underline">View Live Manifest →</button>
           </div>
         </div>
@@ -359,7 +305,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
               <p className="text-xs font-bold text-slate-400 uppercase tracking-wider font-mono">Logged Distance</p>
               <h3 className="text-2xl font-black text-white mt-1 font-mono">{totalKm.toLocaleString()} KM</h3>
               <p className="text-xs text-emerald-400 mt-1 flex items-center gap-1 font-medium">
-                <Fuel className="w-3.5 h-3.5" /> {avgEfficiency} KM/L fleet average
+                <Fuel className="w-3.5 h-3.5" /> {fuelTrendData.some(d => d.hasData) ? avgEfficiency + ' KM/L average of populated periods' : 'No fuel readings recorded'}
               </p>
             </div>
             <div className="p-3 bg-emerald-500/10 rounded-xl text-emerald-400 border border-emerald-500/20">
@@ -367,7 +313,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
             </div>
           </div>
           <div className="mt-4 pt-3 border-t border-slate-700/60 flex justify-between text-xs text-slate-400">
-            <span>KSA Diesel: 1.79 SAR/L</span>
+            <span>Recorded fuel cost: {observedDieselPrice !== null ? observedDieselPrice.toFixed(2) + ' SAR/L average paid' : 'No diesel readings'}</span>
             <button onClick={() => onNavigate('km-fuel')} className="text-emerald-400 hover:underline">Fuel Balancer →</button>
           </div>
         </div>
@@ -409,7 +355,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
                 Operations &amp; Efficiency Analytics Suite
               </h2>
               <span className="hidden sm:inline-block px-2 py-0.5 rounded-full text-[11px] font-mono font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                Live Dynamic Telemetry
+                Recorded Operations Data
               </span>
             </div>
             <p className="text-xs text-slate-400 mt-1">
@@ -470,7 +416,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
                   timeRange === 'monthly' ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-white'
                 }`}
               >
-                Monthly 2026
+                12 Months
               </button>
             </div>
           </div>
@@ -482,12 +428,12 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
             <div>
               <span className="text-[11px] font-mono text-slate-400 uppercase">Period Fuel Avg</span>
               <div className="flex items-baseline gap-1.5 mt-0.5">
-                <span className="text-lg font-black text-cyan-400 font-mono">{avgEfficiency}</span>
+                <span className="text-lg font-black text-cyan-400 font-mono">{fuelTrendData.some(d => d.hasData) ? avgEfficiency : '—'}</span>
                 <span className="text-xs text-slate-400">KM/L</span>
               </div>
             </div>
             <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-              +{parseFloat((((avgEfficiency - 3.0) / 3.0) * 100).toFixed(1))}% vs Quota
+              {fuelTrendData.some(d => d.hasData) ? (avgEfficiency >= 3 ? '+' : '') + parseFloat((((avgEfficiency - 3.0) / 3.0) * 100).toFixed(1)) + '% vs Quota' : 'No readings'}
             </span>
           </div>
 
@@ -495,7 +441,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
             <div>
               <span className="text-[11px] font-mono text-slate-400 uppercase">Manifest Fulfillment</span>
               <div className="flex items-baseline gap-1.5 mt-0.5">
-                <span className="text-lg font-black text-purple-400 font-mono">{avgCompletionRate}%</span>
+                <span className="text-lg font-black text-purple-400 font-mono">{manifestTrendData.some(d => d.hasData) ? avgCompletionRate + '%' : '—'}</span>
                 <span className="text-xs text-slate-400">SLA</span>
               </div>
             </div>
@@ -506,13 +452,13 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
 
           <div className="bg-slate-950/70 border border-slate-800/80 p-3 rounded-xl flex items-center justify-between">
             <div>
-              <span className="text-[11px] font-mono text-slate-400 uppercase">Diesel Tariff</span>
+              <span className="text-[11px] font-mono text-slate-400 uppercase">Average Recorded Diesel Cost</span>
               <div className="flex items-baseline gap-1.5 mt-0.5">
-                <span className="text-lg font-black text-emerald-400 font-mono">1.79</span>
+                <span className="text-lg font-black text-emerald-400 font-mono">{observedDieselPrice !== null ? observedDieselPrice.toFixed(2) : "—"}</span>
                 <span className="text-xs text-slate-400">SAR / L</span>
               </div>
             </div>
-            <span className="text-[10px] font-mono text-slate-400">Fixed KSA Index</span>
+            <span className="text-[10px] font-mono text-slate-400">{observedDieselPrice !== null ? "Observed data" : "No fuel records"}</span>
           </div>
 
           <div className="bg-slate-950/70 border border-slate-800/80 p-3 rounded-xl flex items-center justify-between">
@@ -574,8 +520,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
                     />
                     <YAxis
                       yAxisId="left"
-                      domain={[2.4, 3.4]}
-                      ticks={[2.6, 2.8, 3.0, 3.2, 3.4]}
+                      domain={['auto', 'auto']}
                       stroke="#06b6d4"
                       fontSize={11}
                       tickLine={false}
@@ -609,7 +554,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
                       content={({ active, payload, label }) => {
                         if (!active || !payload || !payload.length) return null;
                         const data = payload[0].payload;
-                        const isOptimal = data.efficiency >= 3.0;
+                        const isOptimal = data.efficiency !== null && data.efficiency >= 3.0;
 
                         return (
                           <div className="bg-slate-900 border border-slate-700 rounded-xl p-3 shadow-2xl text-xs font-mono space-y-1.5 z-50">
@@ -623,7 +568,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
                             </div>
                             <div className="flex justify-between gap-4">
                               <span className="text-slate-400">Fleet Efficiency:</span>
-                              <span className="text-cyan-400 font-bold">{data.efficiency} KM/L</span>
+                              <span className="text-cyan-400 font-bold">{data.efficiency === null ? '—' : data.efficiency} KM/L</span>
                             </div>
                             <div className="flex justify-between gap-4">
                               <span className="text-slate-400">Target Benchmark:</span>
@@ -723,8 +668,8 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
                     />
                     <YAxis
                       yAxisId="left"
-                      domain={[80, 100]}
-                      ticks={[85, 90, 95, 100]}
+                      domain={[0, 100]}
+                      ticks={[0, 25, 50, 75, 100]}
                       stroke="#a855f7"
                       fontSize={11}
                       tickLine={false}
@@ -757,7 +702,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
                       content={({ active, payload, label }) => {
                         if (!active || !payload || !payload.length) return null;
                         const data = payload[0].payload;
-                        const satisfiesSla = data.completionRate >= 95.0;
+                        const satisfiesSla = data.completionRate !== null && data.completionRate >= 95.0;
 
                         return (
                           <div className="bg-slate-900 border border-slate-700 rounded-xl p-3 shadow-2xl text-xs font-mono space-y-1.5 z-50">
@@ -771,7 +716,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
                             </div>
                             <div className="flex justify-between gap-4">
                               <span className="text-slate-400">Completion Rate:</span>
-                              <span className="text-purple-400 font-bold">{data.completionRate}%</span>
+                              <span className="text-purple-400 font-bold">{data.completionRate === null ? '—' : data.completionRate + '%'}</span>
                             </div>
                             <div className="flex justify-between gap-4">
                               <span className="text-slate-400">Completed Dispatches:</span>
@@ -881,7 +826,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
             <h2 className="text-base font-bold text-white flex items-center gap-2">
               <span>🚛</span> Prime Mover &amp; Driver Deployment Board
             </h2>
-            <p className="text-xs text-slate-400 mt-0.5">Live status and assignment overview across all 46 prime movers</p>
+            <p className="text-xs text-slate-400 mt-0.5">Live status and assignment overview across {trucks.length} prime movers</p>
           </div>
           <span className="text-xs font-mono bg-slate-900 px-3 py-1 rounded-lg border border-slate-700 text-slate-300">
             Today: {today}
@@ -905,7 +850,8 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
               {trucks.slice(0, 20).map((t, idx) => {
                 const assignedDriver = drivers.find(d => d.id === t.assignedDriverId || d.assignedTruckId === t.id);
                 const assignedEquip = equipment.find(e => e.assignedTruckId === t.id);
-                const tag = todayManifest[idx] || (assignedDriver?.history && assignedDriver.history[today]) || 'At Yanbu Base';
+                const assignedDriverIndex = assignedDriver ? drivers.findIndex(driver => driver.id === assignedDriver.id) : -1;
+                const tag = (assignedDriver ? todayManifest[assignedDriver.id] : undefined) || (assignedDriverIndex >= 0 ? todayManifest[String(assignedDriverIndex)] : undefined) || assignedDriver?.history?.[today] || 'At Yanbu Base';
 
                 return (
                   <tr key={t.id} className="hover:bg-slate-800/60 transition">

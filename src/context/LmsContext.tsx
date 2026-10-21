@@ -1,8 +1,9 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
-import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc, query, orderBy, limit } from 'firebase/firestore';
+import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
+import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc, query, orderBy, getDocs, writeBatch } from 'firebase/firestore';
 import { auth, db } from '../firebase/config';
 import { handleFirestoreError, OperationType } from '../firebase/errors';
 import { useAuth } from './AuthContext';
+import { ksaDateISO } from '../utils/dateUtils';
 import {
   Truck, Equipment, Driver, Commodity, StoreMapItem,
   DailySchedule, DailyManifest, CashTransaction, CashAccount,
@@ -45,15 +46,16 @@ interface LmsContextType {
   deleteDriver: (id: string) => Promise<void>;
   
   saveDailySchedule: (date: string, rows: any[], syncToManifest?: boolean) => Promise<void>;
-  saveDailyManifest: (date: string, tags: Record<number, string>) => Promise<void>;
-  saveMultiDayManifests: (batchData: Record<string, Record<number, string>>) => Promise<void>;
+  deleteDailySchedule: (date: string) => Promise<void>;
+  saveDailyManifest: (date: string, tags: Record<string, string>) => Promise<void>;
+  saveMultiDayManifests: (batchData: Record<string, Record<string, string>>) => Promise<void>;
   
   addCashTransaction: (tx: Omit<CashTransaction, 'id' | 'createdAt'>) => Promise<void>;
   addCashAccount: (account: Omit<CashAccount, 'id'>) => Promise<void>;
   deleteCashAccount: (id: string) => Promise<void>;
   addCashEmployee: (name: string) => Promise<void>;
   deleteCashEmployee: (id: string) => Promise<void>;
-  reverseCashTransaction: (id: string, reason?: string) => Promise<void>;
+  reverseCashTransaction: (id: string, reason: string) => Promise<void>;
   deleteCashTransaction: (id: string) => Promise<void>;
   
   addKmRecord: (rec: Omit<KmRecord, 'id'>) => Promise<void>;
@@ -64,12 +66,22 @@ interface LmsContextType {
   resolveConflict: (conflictId: string, note?: string) => Promise<void>;
   restoreFullBackup: (jsonContent: any) => Promise<{ success: boolean; message: string }>;
   exportFullBackup: () => void;
-  learnHistoricalRules: (rules: LearnedRule[]) => void;
+  learnHistoricalRules: (rules: LearnedRule[]) => Promise<void>;
 }
 
 const LmsContext = createContext<LmsContextType | undefined>(undefined);
 
 const LOCAL_STORAGE_KEY = 'tls_lms_offline_cache_v2';
+
+function normalizeManifestTags(tags: Record<string, string>, drivers: Driver[]): Record<string, string> {
+  const normalized: Record<string, string> = {};
+  Object.entries(tags || {}).forEach(([key, value]) => {
+    const index = Number(key);
+    const driver = key.trim() !== '' && Number.isInteger(index) && index >= 0 ? drivers[index] : undefined;
+    normalized[driver?.id || key] = value;
+  });
+  return normalized;
+}
 
 export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, profile } = useAuth();
@@ -86,40 +98,38 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const [drivers, setDrivers] = useState<Driver[]>(() => {
     let base = INITIAL_DRIVERS;
+    let loadedUserManagedList = false;
     const saved = localStorage.getItem(LOCAL_STORAGE_KEY + '_drivers_v3');
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        // Accept the user-managed offline list, including intentional deletions.
-        // A fixed-length check restored deleted drivers after refresh.
         if (Array.isArray(parsed)) {
           base = parsed;
+          loadedUserManagedList = true;
         }
-      } catch (e) {
-        // fallback to INITIAL_DRIVERS
+      } catch {
+        // Fall back to the initial demo registry when local storage is unreadable.
       }
     }
-    // Always ensure October 1–5 manifest seed tags are populated into driver history
-    return base.map((d, idx) => {
-      const hist = { ...(d.history || {}) };
-      Object.entries(SEED_OCTOBER_1_4_MANIFESTS).forEach(([dt, tags]) => {
-        if (tags[idx] && !hist[dt]) {
-          hist[dt] = tags[idx];
-        }
+    // Once a list has been saved, respect its history and archived/deleted records exactly.
+    // Seed historical tags only for a brand-new browser/demo setup.
+    if (loadedUserManagedList) return base;
+    return base.map((driver, idx) => {
+      const history = { ...(driver.history || {}) };
+      Object.entries(SEED_OCTOBER_1_4_MANIFESTS).forEach(([date, tags]) => {
+        if (tags[idx] && !history[date]) history[date] = tags[idx];
       });
-      Object.entries(OCTOBER_CONFIRMED_MANIFESTS).forEach(([dt, tags]) => {
-        if (tags[idx] && !hist[dt]) {
-          hist[dt] = tags[idx];
-        }
+      Object.entries(OCTOBER_CONFIRMED_MANIFESTS).forEach(([date, tags]) => {
+        if (tags[idx] && !history[date]) history[date] = tags[idx];
       });
-      return { ...d, history: hist };
+      return { ...driver, history };
     });
   });
 
-  const [commodities] = useState<Commodity[]>(INITIAL_COMMODITIES);
-  const [stores] = useState<StoreMapItem[]>(INITIAL_STORES);
-  const [conflicts, setConflicts] = useState<DataConflict[]>(INITIAL_DATA_CONFLICTS);
-  const [cashEmployees, setCashEmployees] = useState<{ id: string; name: string }[]>([]);
+  const [commodities, setCommodities] = useState<Commodity[]>(() => { try { const saved = localStorage.getItem(LOCAL_STORAGE_KEY + '_commodities'); return saved ? JSON.parse(saved) : INITIAL_COMMODITIES; } catch { return INITIAL_COMMODITIES; } });
+  const [stores, setStores] = useState<StoreMapItem[]>(() => { try { const saved = localStorage.getItem(LOCAL_STORAGE_KEY + '_stores'); return saved ? JSON.parse(saved) : INITIAL_STORES; } catch { return INITIAL_STORES; } });
+  const [conflicts, setConflicts] = useState<DataConflict[]>(() => { try { const saved = localStorage.getItem(LOCAL_STORAGE_KEY + '_conflicts'); return saved ? JSON.parse(saved) : INITIAL_DATA_CONFLICTS; } catch { return INITIAL_DATA_CONFLICTS; } });
+  const [cashEmployees, setCashEmployees] = useState<{ id: string; name: string }[]>(() => { try { const saved = localStorage.getItem(LOCAL_STORAGE_KEY + '_cashEmployees'); return saved ? JSON.parse(saved) : []; } catch { return []; } });
   const [cashAccounts, setCashAccounts] = useState<CashAccount[]>(() => {
     try {
       const saved = localStorage.getItem(LOCAL_STORAGE_KEY + '_accounts');
@@ -130,74 +140,68 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   });
 
   const [schedules, setSchedules] = useState<Record<string, DailySchedule>>(() => {
-    const seedSched: Record<string, DailySchedule> = { ...generateSeedSchedules(), ...OCTOBER_DAILY_SCHEDULES };
+    const seedSchedules: Record<string, DailySchedule> = { ...generateSeedSchedules(), ...OCTOBER_DAILY_SCHEDULES };
     const saved = localStorage.getItem(LOCAL_STORAGE_KEY + '_schedules_v3');
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        const merged = { ...seedSched, ...parsed };
-        // Ensure October schedules (Oct 1–5) are always present with their real rows
-        Object.entries(OCTOBER_DAILY_SCHEDULES).forEach(([dt, sched]) => {
-          if (!merged[dt] || !merged[dt].rows || merged[dt].rows.length === 0) {
-            merged[dt] = sched;
-          }
-        });
-        return merged;
-      } catch (e) {
-        return seedSched;
+        // A saved empty list is a valid user choice: do not resurrect deleted seed dates.
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as Record<string, DailySchedule>;
+      } catch {
+        // Fall through to the initial demo schedules if the cache cannot be read.
       }
     }
-    return seedSched;
+    return seedSchedules;
   });
 
   const [manifests, setManifests] = useState<Record<string, Record<string, string>>>(() => {
-    // Preload complete August 1–31 and September 1–7 seed from drivers history
     const seedManifests: Record<string, Record<string, string>> = {};
-    INITIAL_DRIVERS.forEach((d, idx) => {
-      if (d.history) {
-        Object.entries(d.history).forEach(([dt, tag]) => {
-          if (!seedManifests[dt]) seedManifests[dt] = {};
-          seedManifests[dt][idx] = tag;
+    drivers.forEach((driver, idx) => {
+      Object.entries(driver.history || {}).forEach(([date, tag]) => {
+        if (!seedManifests[date]) seedManifests[date] = {};
+        seedManifests[date][driver.id] = tag;
+      });
+    });
+    [SEED_OCTOBER_1_4_MANIFESTS, OCTOBER_CONFIRMED_MANIFESTS].forEach(source => {
+      Object.entries(source).forEach(([date, tags]) => {
+        if (!seedManifests[date]) seedManifests[date] = {};
+        Object.entries(tags).forEach(([key, tag]) => {
+          const index = Number(key);
+          const driver = key.trim() !== '' && Number.isInteger(index) && index >= 0 ? drivers[index] : undefined;
+          seedManifests[date][driver?.id || key] = tag;
         });
-      }
-    });
-
-    // Merge October 1–4 pre-seeded manifests from spreadsheet
-    Object.entries(SEED_OCTOBER_1_4_MANIFESTS).forEach(([dt, tags]) => {
-      if (!seedManifests[dt]) seedManifests[dt] = {};
-      Object.entries(tags).forEach(([idx, tag]) => {
-        seedManifests[dt][idx] = tag;
       });
     });
-
-    // Merge October 1–5 confirmed manifests (includes verified Oct 5 dispatches)
-    Object.entries(OCTOBER_CONFIRMED_MANIFESTS).forEach(([dt, tags]) => {
-      if (!seedManifests[dt]) seedManifests[dt] = {};
-      Object.entries(tags).forEach(([idx, tag]) => {
-        seedManifests[dt][idx] = tag;
-      });
-    });
-
     const saved = localStorage.getItem(LOCAL_STORAGE_KEY + '_manifests_v3');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        const merged = { ...seedManifests, ...parsed };
-        // Ensure October 1-5 is always populated with locked sequence
-        Object.entries(SEED_OCTOBER_1_4_MANIFESTS).forEach(([dt, tags]) => {
-          merged[dt] = { ...(merged[dt] || {}), ...tags };
-        });
-        Object.entries(OCTOBER_CONFIRMED_MANIFESTS).forEach(([dt, tags]) => {
-          merged[dt] = { ...(merged[dt] || {}), ...tags };
-        });
-        return merged;
-      } catch (e) {
-        return seedManifests;
-      }
+    if (!saved) return seedManifests;
+    try {
+      const parsed = JSON.parse(saved) as Record<string, Record<string, string>>;
+      const normalizedParsed: Record<string, Record<string, string>> = {};
+      Object.entries(parsed).forEach(([date, tags]) => {
+        normalizedParsed[date] = normalizeManifestTags(tags, drivers);
+      });
+      // The saved manifest collection is authoritative, including intentionally empty dates.
+      // Demo seed manifests are injected only on first initialization.
+      return normalizedParsed;
+    } catch {
+      return seedManifests;
     }
-    return seedManifests;
   });
 
+  const driversRef = useRef(drivers);
+  const rawRemoteManifestsRef = useRef<Record<string, Record<string, string>> | null>(null);
+  useEffect(() => {
+    driversRef.current = drivers;
+    // Re-map from the untouched Firestore payload when authoritative drivers load or reorder.
+    // This avoids locking a legacy numeric tag to the wrong driver if snapshots arrive out of order.
+    if (rawRemoteManifestsRef.current) {
+      const remapped: Record<string, Record<string, string>> = {};
+      Object.entries(rawRemoteManifestsRef.current).forEach(([date, tags]) => {
+        remapped[date] = normalizeManifestTags(tags, drivers);
+      });
+      setManifests(remapped);
+    }
+  }, [drivers]);
   const [cashTransactions, setCashTransactions] = useState<CashTransaction[]>(() => {
     const saved = localStorage.getItem(LOCAL_STORAGE_KEY + '_cash');
     return saved ? JSON.parse(saved) : [];
@@ -229,7 +233,12 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.setItem(LOCAL_STORAGE_KEY + '_accounts', JSON.stringify(cashAccounts));
     localStorage.setItem(LOCAL_STORAGE_KEY + '_km', JSON.stringify(kmRecords));
     localStorage.setItem(LOCAL_STORAGE_KEY + '_diesel', JSON.stringify(dieselLogs));
-  }, [trucks, equipment, drivers, schedules, manifests, cashTransactions, cashAccounts, kmRecords, dieselLogs]);
+    localStorage.setItem(LOCAL_STORAGE_KEY + '_rules', JSON.stringify(learnedRules));
+    localStorage.setItem(LOCAL_STORAGE_KEY + '_commodities', JSON.stringify(commodities));
+    localStorage.setItem(LOCAL_STORAGE_KEY + '_stores', JSON.stringify(stores));
+    localStorage.setItem(LOCAL_STORAGE_KEY + '_conflicts', JSON.stringify(conflicts));
+    localStorage.setItem(LOCAL_STORAGE_KEY + '_cashEmployees', JSON.stringify(cashEmployees));
+  }, [trucks, equipment, drivers, schedules, manifests, cashTransactions, cashAccounts, kmRecords, dieselLogs, learnedRules, commodities, stores, conflicts, cashEmployees]);
 
   // Firestore real-time subscriptions if user or profile is authenticated
   useEffect(() => {
@@ -237,56 +246,64 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     // Listen to trucks
     const unsubTrucks = onSnapshot(collection(db, 'trucks'), (snapshot) => {
-      if (!snapshot.empty) {
-        const remote = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Truck));
-        setTrucks(remote);
-      }
+      const remote = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Truck)).sort((a, b) => (a.seq || 0) - (b.seq || 0));
+      setTrucks(remote);
     }, (err) => {
       console.warn("Trucks Firestore listener notice:", err.message);
     });
 
+    const unsubEquipment = onSnapshot(collection(db, 'equipment'), (snapshot) => {
+      setEquipment(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Equipment)).sort((a, b) => (a.seq || 0) - (b.seq || 0)));
+    }, (err) => {
+      console.warn("Equipment Firestore listener notice:", err.message);
+    });
+
     // Firestore is authoritative: merging a smaller remote list resurrected deleted drivers.
     const unsubDrivers = onSnapshot(collection(db, 'drivers'), (snapshot) => {
-      if (!snapshot.empty) {
-        const remote = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Driver));
-        setDrivers(remote);
-      }
+      const remote = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Driver)).sort((a, b) => (a.seq || 0) - (b.seq || 0));
+      driversRef.current = remote;
+      setDrivers(remote);
     }, (err) => {
       console.warn("Drivers Firestore listener notice:", err.message);
     });
 
+    const unsubCommodities = onSnapshot(collection(db, 'commodities'), snapshot => {
+      setCommodities(snapshot.docs.map(item => ({ id: item.id, ...item.data() } as Commodity)));
+    }, error => console.warn('Commodities Firestore listener notice:', error.message));
+
+    const unsubStores = onSnapshot(collection(db, 'stores'), snapshot => {
+      setStores(snapshot.docs.map(item => ({ id: item.id, ...item.data() } as StoreMapItem)));
+    }, error => console.warn('Stores Firestore listener notice:', error.message));
+
+    const unsubConflicts = onSnapshot(collection(db, 'data_quality'), snapshot => {
+      setConflicts(snapshot.docs.map(item => ({ id: item.id, ...item.data() } as DataConflict)));
+    }, error => console.warn('Data-quality Firestore listener notice:', error.message));
+
     // Listen to manifests
     const unsubManifests = onSnapshot(collection(db, 'manifests'), (snapshot) => {
-      if (!snapshot.empty) {
-        setManifests(prev => {
-          const updated = { ...prev };
-          snapshot.docs.forEach(docSnap => {
-            const data = docSnap.data();
-            if (data?.date && data?.tags) {
-              updated[data.date] = { ...(updated[data.date] || {}), ...data.tags };
-            }
-          });
-          return updated;
-        });
-      }
+      const rawRemote: Record<string, Record<string, string>> = {};
+      snapshot.docs.forEach(docSnap => {
+        const data = docSnap.data();
+        if (data?.date && data?.tags && typeof data.tags === 'object' && !Array.isArray(data.tags)) {
+          rawRemote[data.date] = data.tags as Record<string, string>;
+        }
+      });
+      rawRemoteManifestsRef.current = rawRemote;
+      const remote: Record<string, Record<string, string>> = {};
+      Object.entries(rawRemote).forEach(([date, tags]) => { remote[date] = normalizeManifestTags(tags, driversRef.current); });
+      setManifests(remote);
     }, (err) => {
       console.warn("Manifests Firestore listener notice:", err.message);
     });
 
     // Listen to schedules
     const unsubSchedules = onSnapshot(collection(db, 'schedules'), (snapshot) => {
-      if (!snapshot.empty) {
-        setSchedules(prev => {
-          const updated = { ...prev };
-          snapshot.docs.forEach(docSnap => {
-            const data = docSnap.data() as DailySchedule;
-            if (data?.date && data?.rows) {
-              updated[data.date] = data;
-            }
-          });
-          return updated;
-        });
-      }
+      const remote: Record<string, DailySchedule> = {};
+      snapshot.docs.forEach(docSnap => {
+        const data = docSnap.data() as DailySchedule;
+        if (data?.date && Array.isArray(data.rows)) remote[data.date] = data;
+      });
+      setSchedules(remote);
     }, (err) => {
       console.warn("Schedules Firestore listener notice:", err.message);
     });
@@ -310,258 +327,236 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
 
     // Listen to cash transactions
-    const unsubCash = onSnapshot(query(collection(db, 'cashbook'), orderBy('dateISO', 'desc'), limit(300)), (snapshot) => {
-      if (!snapshot.empty) {
-        const remote = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as CashTransaction));
-        setCashTransactions(remote);
-      }
+    const unsubCash = onSnapshot(query(collection(db, 'cashbook'), orderBy('dateISO', 'desc')), (snapshot) => {
+      setCashTransactions(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as CashTransaction)));
     }, (err) => {
       console.warn("Cashbook Firestore listener notice:", err.message);
     });
 
     // Listen to km records
-    const unsubKm = onSnapshot(query(collection(db, 'km_records'), orderBy('date', 'desc'), limit(300)), (snapshot) => {
-      if (!snapshot.empty) {
-        const remote = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as KmRecord));
-        setKmRecords(remote);
-      }
+    const unsubKm = onSnapshot(query(collection(db, 'km_records'), orderBy('date', 'desc')), (snapshot) => {
+      setKmRecords(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as KmRecord)));
     }, (err) => {
       console.warn("KM Firestore listener notice:", err.message);
     });
 
+    const unsubDiesel = onSnapshot(query(collection(db, 'diesel_logs'), orderBy('date', 'desc')), (snapshot) => {
+      setDieselLogs(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as DieselLog)));
+    }, (err) => {
+      console.warn("Diesel logs Firestore listener notice:", err.message);
+    });
+
+    const unsubRules = onSnapshot(doc(db, 'app_state', 'learnedRules'), (snapshot) => {
+      const rules = snapshot.exists() ? snapshot.data()?.rules : undefined;
+      if (Array.isArray(rules)) setLearnedRules(rules as LearnedRule[]);
+    }, (err) => {
+      console.warn("Learned rules Firestore listener notice:", err.message);
+    });
+
     return () => {
       unsubTrucks();
+      unsubEquipment();
       unsubDrivers();
+      unsubCommodities();
+      unsubStores();
+      unsubConflicts();
       unsubManifests();
       unsubSchedules();
       unsubCash();
       unsubCashAccounts();
       unsubCashEmployees();
       unsubKm();
+      unsubDiesel();
+      unsubRules();
     };
   }, [user, profile]);
 
   // Actions
   const saveTruck = async (truck: Truck) => {
+    if (user || profile) await setDoc(doc(db, 'trucks', truck.id), truck);
     setTrucks(prev => {
-      const idx = prev.findIndex(t => t.id === truck.id);
-      if (idx >= 0) {
-        const copy = [...prev];
-        copy[idx] = truck;
-        return copy;
-      }
-      return [...prev, truck];
+      const index = prev.findIndex(item => item.id === truck.id);
+      if (index >= 0) { const next = [...prev]; next[index] = truck; return next; }
+      return [...prev, truck].sort((a, b) => (a.seq || 0) - (b.seq || 0));
     });
-
-    if (user || profile) {
-      try {
-        await setDoc(doc(db, 'trucks', truck.id), truck);
-      } catch (e) {
-        console.warn("Error saving truck to Firestore (cached locally):", e);
-      }
-    }
   };
 
   const deleteTruck = async (id: string) => {
-    setTrucks(prev => prev.filter(t => t.id !== id));
-    if (user || profile) {
-      try {
-        await deleteDoc(doc(db, 'trucks', id));
-      } catch (e) {
-        console.warn("Error deleting truck from Firestore:", e);
-      }
-    }
+    if (user || profile) await deleteDoc(doc(db, 'trucks', id));
+    setTrucks(prev => prev.filter(item => item.id !== id));
   };
 
   const saveEquipment = async (equip: Equipment) => {
+    if (user || profile) await setDoc(doc(db, 'equipment', equip.id), equip);
     setEquipment(prev => {
-      const idx = prev.findIndex(e => e.id === equip.id);
-      if (idx >= 0) {
-        const copy = [...prev];
-        copy[idx] = equip;
-        return copy;
-      }
-      return [...prev, equip];
+      const index = prev.findIndex(item => item.id === equip.id);
+      if (index >= 0) { const next = [...prev]; next[index] = equip; return next; }
+      return [...prev, equip].sort((a, b) => (a.seq || 0) - (b.seq || 0));
     });
-
-    if (user || profile) {
-      try {
-        await setDoc(doc(db, 'equipment', equip.id), equip);
-      } catch (e) {
-        console.warn("Error saving equipment to Firestore:", e);
-      }
-    }
   };
 
   const deleteEquipment = async (id: string) => {
-    setEquipment(prev => prev.filter(e => e.id !== id));
-    if (user || profile) {
-      try {
-        await deleteDoc(doc(db, 'equipment', id));
-      } catch (e) {
-        console.warn("Error deleting equipment from Firestore:", e);
-      }
-    }
+    if (user || profile) await deleteDoc(doc(db, 'equipment', id));
+    setEquipment(prev => prev.filter(item => item.id !== id));
   };
 
   const saveDriver = async (driver: Driver) => {
+    if (user || profile) await setDoc(doc(db, 'drivers', driver.id), driver);
     setDrivers(prev => {
-      const idx = prev.findIndex(d => d.id === driver.id);
-      if (idx >= 0) {
-        const copy = [...prev];
-        copy[idx] = driver;
-        return copy;
-      }
-      return [...prev, driver];
+      const index = prev.findIndex(item => item.id === driver.id);
+      if (index >= 0) { const next = [...prev]; next[index] = driver; return next; }
+      return [...prev, driver].sort((a, b) => (a.seq || 0) - (b.seq || 0));
     });
-
-    if (user || profile) {
-      try {
-        await setDoc(doc(db, 'drivers', driver.id), driver);
-      } catch (e) {
-        console.warn("Error saving driver to Firestore:", e);
-      }
-    }
   };
 
   const deleteDriver = async (id: string) => {
-    if (!auth.currentUser) {
-      throw new Error('A valid signed-in Firebase account is required to delete a driver.');
+    const existingDriver = drivers.find(driver => driver.id === id);
+    if (!existingDriver) return;
+    if (!auth.currentUser && (user || profile)) {
+      throw new Error('A valid signed-in Firebase account is required to archive a driver.');
     }
-    try {
-      await deleteDoc(doc(db, 'drivers', id));
-      setDrivers(prev => prev.filter(d => d.id !== id));
-    } catch (e) {
-      console.error("Error deleting driver from Firestore:", e);
-      throw new Error('Driver could not be deleted from the database. Check Firebase Authentication and Firestore rules, then try again.');
+
+    const archivedDriver: Driver = {
+      ...existingDriver,
+      active: false,
+      status: 'INCOMPLETE',
+      assignedTruckId: null,
+      assignedVehiclePlate: null,
+      notes: [existingDriver.notes, 'Archived ' + ksaDateISO()].filter(Boolean).join(' | ')
+    };
+    const affectedTrucks = trucks.filter(truck => truck.assignedDriverId === id);
+    if (user || profile) {
+      const batch = writeBatch(db);
+      affectedTrucks.forEach(truck => {
+        batch.set(doc(db, 'trucks', truck.id), {
+          ...truck,
+          assignedDriverId: null,
+          assignedDriverName: null
+        });
+      });
+      batch.set(doc(db, 'drivers', id), archivedDriver);
+      await batch.commit();
+    }
+
+    setTrucks(prev => prev.map(truck => truck.assignedDriverId === id
+      ? { ...truck, assignedDriverId: null, assignedDriverName: null }
+      : truck));
+    setDrivers(prev => prev.map(driver => driver.id === id ? archivedDriver : driver));
+  };
+
+  const commitFirestoreOperations = async (operations: Array<(batch: ReturnType<typeof writeBatch>) => void>) => {
+    if (!(auth.currentUser || user || profile)) return;
+    // Firestore batches are limited to 500 operations; leave headroom.
+    for (let offset = 0; offset < operations.length; offset += 450) {
+      const batch = writeBatch(db);
+      operations.slice(offset, offset + 450).forEach(operation => operation(batch));
+      await batch.commit();
     }
   };
 
   const saveDailySchedule = async (date: string, rows: any[], syncToManifest = true) => {
-    const schedObj: DailySchedule = {
-      date,
-      rows,
-      confirmed: true,
-      updatedAt: new Date().toISOString(),
-      updatedBy: profile?.email || user?.email || 'Dispatcher'
-    };
+    const now = new Date().toISOString();
+    const schedObj: DailySchedule = { date, rows, confirmed: true, updatedAt: now, updatedBy: profile?.email || user?.email || 'Dispatcher' };
+    const shouldSyncManifest = syncToManifest && rows.length > 0;
+    const nextManifest: Record<string, string> = { ...(manifests[date] || {}) };
+    if (shouldSyncManifest) {
+      rows.forEach(row => {
+        if (!row.driverName && !row.plateNo) return;
+        const driver = drivers.find(d => {
+          const driverName = (d.name || '').toUpperCase().replace(/\s+/g, ' ').trim();
+          const rowName = (row.driverName || '').toUpperCase().replace(/\s+/g, ' ').trim();
+          const nameMatch = Boolean(driverName && rowName && (driverName.includes(rowName) || rowName.includes(driverName)));
+          const plateMatch = Boolean(row.plateNo && d.assignedVehiclePlate && row.plateNo.replace(/\s+/g, '').toUpperCase() === d.assignedVehiclePlate.replace(/\s+/g, '').toUpperCase());
+          return nameMatch || plateMatch;
+        });
+        if (driver) {
+          const commodity = (row.commodity || '').split('/')[0].trim().replace(/\s+Granular$/i, '').trim();
+          const customer = row.customer || row.supplier || row.store || 'Customer';
+          const source = row.source || 'Yanbu';
+          nextManifest[driver.id] = (commodity ? commodity + ' ' : '') + 'Supply for ' + customer + ' - Under Loading at ' + source;
+        }
+      });
+    }
+    const updatedDrivers = drivers.map(driver => {
+      const tag = shouldSyncManifest ? nextManifest[driver.id] : undefined;
+      if (!tag || driver.history?.[date] === tag) return driver;
+      return { ...driver, history: { ...(driver.history || {}), [date]: tag } };
+    });
+    const operations: Array<(batch: ReturnType<typeof writeBatch>) => void> = [batch => batch.set(doc(db, 'schedules', date), schedObj)];
+    if (shouldSyncManifest) {
+      operations.push(batch => batch.set(doc(db, 'manifests', date), {
+        date, tags: nextManifest, confirmedAt: now, confirmedBy: profile?.email || user?.email || 'Dispatcher', driverCount: Object.keys(nextManifest).length
+      }));
+      updatedDrivers.forEach(driver => {
+        if (driver !== drivers.find(original => original.id === driver.id)) operations.push(batch => batch.set(doc(db, 'drivers', driver.id), driver));
+      });
+    }
+    await commitFirestoreOperations(operations);
     setSchedules(prev => ({ ...prev, [date]: schedObj }));
-
-    // Auto-sync timetable dispatched rows into manifests for the date
-    if (syncToManifest && rows && rows.length > 0) {
-      setManifests(prev => {
-        const currentManifest = { ...(prev[date] || {}) };
-        rows.forEach(r => {
-          if (!r.driverName && !r.plateNo) return;
-          const drvIdx = drivers.findIndex(d => {
-            const dNorm = (d.name || '').toUpperCase().replace(/\s+/g, ' ').trim();
-            const rNorm = (r.driverName || '').toUpperCase().replace(/\s+/g, ' ').trim();
-            const nameMatch = dNorm && rNorm && (dNorm.includes(rNorm) || rNorm.includes(dNorm));
-            const plateMatch = r.plateNo && d.assignedVehiclePlate &&
-              r.plateNo.replace(/\s+/g, '').toUpperCase() === d.assignedVehiclePlate.replace(/\s+/g, '').toUpperCase();
-            return nameMatch || plateMatch;
-          });
-
-          if (drvIdx >= 0) {
-            const commRaw = (r.commodity || '').split('/')[0].trim();
-            const comm = commRaw.replace(/\s+Granular$/i, '').trim();
-            const cust = r.customer || r.supplier || r.store || 'Customer';
-            const src = r.source || 'Yanbu';
-            const tag = `${comm ? comm + ' ' : ''}Supply for ${cust} - Under Loading at ${src}`;
-            currentManifest[drvIdx] = tag;
-          }
-        });
-        return { ...prev, [date]: currentManifest };
-      });
-    }
-
-    if (user) {
-      try {
-        await setDoc(doc(db, 'schedules', date), schedObj);
-      } catch (e) {
-        console.warn("Error saving schedule to Firestore:", e);
-      }
-    }
+    if (shouldSyncManifest) { setManifests(prev => ({ ...prev, [date]: nextManifest })); setDrivers(updatedDrivers); }
   };
 
-  const saveDailyManifest = async (date: string, tags: Record<number, string>) => {
-    setManifests(prev => ({
-      ...prev,
-      [date]: { ...(prev[date] || {}), ...tags }
+  const deleteDailySchedule = async (date: string) => {
+    if (auth.currentUser || user || profile) await deleteDoc(doc(db, 'schedules', date));
+    setSchedules(prev => { const next = { ...prev }; delete next[date]; return next; });
+  };
+
+  const saveDailyManifest = async (date: string, tags: Record<string, string>) => {
+    const normalized: Record<string, string> = {};
+    Object.entries(tags || {}).forEach(([key, value]) => {
+      const numericKey = key.trim() !== '' && Number.isInteger(Number(key));
+      const driver = numericKey ? drivers[Number(key)] : undefined;
+      normalized[driver?.id || key] = value;
+    });
+    const now = new Date().toISOString();
+    const updatedDrivers = drivers.map(driver => {
+      if (normalized[driver.id] === undefined || driver.history?.[date] === normalized[driver.id]) return driver;
+      return { ...driver, history: { ...(driver.history || {}), [date]: normalized[driver.id] } };
+    });
+    const operations: Array<(batch: ReturnType<typeof writeBatch>) => void> = [
+      batch => batch.set(doc(db, 'manifests', date), { date, tags: normalized, confirmedAt: now, confirmedBy: profile?.email || user?.email || 'Operator', driverCount: Object.keys(normalized).length })
+    ];
+    updatedDrivers.forEach(driver => {
+      if (driver !== drivers.find(original => original.id === driver.id)) operations.push(batch => batch.set(doc(db, 'drivers', driver.id), driver));
+    });
+    await commitFirestoreOperations(operations);
+    setManifests(prev => ({ ...prev, [date]: { ...(prev[date] || {}), ...normalized } }));
+    setDrivers(updatedDrivers);
+  };
+
+  const saveMultiDayManifests = async (batchData: Record<string, Record<string, string>>) => {
+    const normalizedBatch: Record<string, Record<string, string>> = {};
+    Object.entries(batchData).forEach(([date, tags]) => {
+      const normalized: Record<string, string> = {};
+      Object.entries(tags || {}).forEach(([key, value]) => {
+        const numericKey = key.trim() !== '' && Number.isInteger(Number(key));
+        const driver = numericKey ? drivers[Number(key)] : undefined;
+        normalized[driver?.id || key] = value;
+      });
+      normalizedBatch[date] = normalized;
+    });
+    const now = new Date().toISOString();
+    const historyByDriver = new Map<string, Record<string, string>>();
+    drivers.forEach(driver => historyByDriver.set(driver.id, { ...(driver.history || {}) }));
+    Object.entries(normalizedBatch).forEach(([date, tags]) => Object.entries(tags).forEach(([driverId, tag]) => {
+      const history = historyByDriver.get(driverId);
+      if (history) history[date] = tag;
     }));
-
-    // Also update driver history records
-    setDrivers(prev => {
-      const copy = [...prev];
-      Object.entries(tags).forEach(([idxStr, tag]) => {
-        const idx = Number(idxStr);
-        if (copy[idx]) {
-          copy[idx] = {
-            ...copy[idx],
-            history: { ...(copy[idx].history || {}), [date]: tag }
-          };
-        }
-      });
-      return copy;
+    const updatedDrivers = drivers.map(driver => {
+      const history = historyByDriver.get(driver.id) || driver.history || {};
+      return JSON.stringify(history) === JSON.stringify(driver.history || {}) ? driver : { ...driver, history };
     });
-
-    if (user || profile) {
-      try {
-        await setDoc(doc(db, 'manifests', date), {
-          date,
-          tags,
-          confirmedAt: new Date().toISOString(),
-          confirmedBy: profile?.email || user?.email || 'Operator',
-          driverCount: Object.keys(tags).length
-        });
-      } catch (e) {
-        console.warn("Error saving manifest to Firestore:", e);
-      }
-    }
+    const operations: Array<(batch: ReturnType<typeof writeBatch>) => void> = [];
+    Object.entries(normalizedBatch).forEach(([date, tags]) => operations.push(batch => batch.set(doc(db, 'manifests', date), {
+      date, tags, confirmedAt: now, confirmedBy: profile?.email || user?.email || 'Dispatcher', driverCount: Object.keys(tags).length
+    })));
+    updatedDrivers.forEach(driver => {
+      if (driver !== drivers.find(original => original.id === driver.id)) operations.push(batch => batch.set(doc(db, 'drivers', driver.id), driver));
+    });
+    await commitFirestoreOperations(operations);
+    setManifests(prev => { const next = { ...prev }; Object.entries(normalizedBatch).forEach(([date, tags]) => { next[date] = { ...(next[date] || {}), ...tags }; }); return next; });
+    setDrivers(updatedDrivers);
   };
-
-  const saveMultiDayManifests = async (batchData: Record<string, Record<number, string>>) => {
-    setManifests(prev => {
-      const next = { ...prev };
-      Object.entries(batchData).forEach(([dt, tags]) => {
-        next[dt] = { ...(next[dt] || {}), ...tags };
-      });
-      return next;
-    });
-
-    setDrivers(prev => {
-      const copy = [...prev];
-      Object.entries(batchData).forEach(([dt, tags]) => {
-        Object.entries(tags).forEach(([idxStr, tag]) => {
-          const idx = Number(idxStr);
-          if (copy[idx]) {
-            copy[idx] = {
-              ...copy[idx],
-              history: { ...(copy[idx].history || {}), [dt]: tag }
-            };
-          }
-        });
-      });
-      return copy;
-    });
-
-    if (user || profile) {
-      for (const [dt, tags] of Object.entries(batchData)) {
-        try {
-          await setDoc(doc(db, 'manifests', dt), {
-            date: dt,
-            tags,
-            confirmedAt: new Date().toISOString(),
-            confirmedBy: profile?.email || user?.email || 'Dispatcher',
-            driverCount: Object.keys(tags).length
-          });
-        } catch (e) {
-          console.warn("Error saving multi-day manifest to Firestore:", e);
-        }
-      }
-    }
-  };
-
   const addCashTransaction = async (txData: Omit<CashTransaction, 'id' | 'createdAt'>) => {
     const id = 'TX-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).substring(2, 6).toUpperCase();
     const newTx: CashTransaction = {
@@ -648,79 +643,42 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setCashAccounts(prev => prev.filter(account => account.id !== id));
   };
 
-  const reverseCashTransaction = async (id: string, reason?: string) => {
-    const original = cashTransactions.find(t => t.id === id);
-    if (!original) return;
-
-    const revId = 'REV-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).substring(2, 6).toUpperCase();
-    const reversalTx: CashTransaction = {
-      id: revId,
-      date: new Date().toISOString().substring(0, 10),
-      dateISO: new Date().toISOString().substring(0, 10),
-      account: original.account,
-      employee: original.employee,
-      type: 'Reversal',
-      category: original.category,
-      amount: -original.amount,
-      description: `Reversal of ${id}${reason ? ': ' + reason : ''}`,
-      status: 'Posted',
-      reversalOf: id,
-      createdAt: new Date().toISOString(),
-      createdBy: profile?.email || user?.email || 'Cashier'
+  const reverseCashTransaction = async (id: string, rawReason: string) => {
+    const reason = String(rawReason || '').trim();
+    if (!reason) throw new Error('A correction reason is required for the audit trail.');
+    const original = cashTransactions.find(tx => tx.id === id);
+    if (!original) throw new Error('Cashbook transaction not found.');
+    if (original.status === 'Reversed' || original.type === 'Reversal') throw new Error('This transaction is already reversed or is itself a reversal.');
+    const reversalId = 'REV-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).substring(2, 6).toUpperCase();
+    const reversal: CashTransaction = {
+      id: reversalId, date: ksaDateISO(), dateISO: ksaDateISO(), account: original.account, employee: original.employee,
+      type: 'Reversal', category: original.category, amount: Math.abs(original.amount),
+      description: 'Reversal of ' + id + ': ' + reason, status: 'Posted', reversalOf: id, reversedType: original.type,
+      createdAt: new Date().toISOString(), createdBy: profile?.email || user?.email || 'Cashier'
     };
-
-    setCashTransactions(prev => [
-      reversalTx,
-      ...prev.map(t => t.id === id ? { ...t, status: 'Reversed' as const } : t)
-    ]);
-
-    if (user || profile) {
-      try {
-        await setDoc(doc(db, 'cashbook', revId), reversalTx);
-        await updateDoc(doc(db, 'cashbook', id), { status: 'Reversed' });
-      } catch (e) {
-        console.warn("Error reversing cash transaction in Firestore:", e);
-      }
-    }
+    if (!(auth.currentUser || user)) throw new Error('You must be signed in to Firebase to reverse a Cashbook transaction.');
+    const batch = writeBatch(db);
+    batch.set(doc(db, 'cashbook', reversalId), reversal);
+    batch.update(doc(db, 'cashbook', id), { status: 'Reversed' });
+    await batch.commit();
+    setCashTransactions(prev => [reversal, ...prev.map(tx => tx.id === id ? { ...tx, status: 'Reversed' as const } : tx)]);
   };
 
-  const deleteCashTransaction = async (id: string) => {
-    setCashTransactions(prev => prev.filter(t => t.id !== id));
-    if (user || profile) {
-      try {
-        await deleteDoc(doc(db, 'cashbook', id));
-      } catch (e) {
-        console.warn("Error deleting cash transaction in Firestore:", e);
-      }
-    }
+  const deleteCashTransaction = async (_id: string) => {
+    throw new Error('Posted cashbook transactions cannot be permanently deleted. Use reverseCashTransaction so the original and correction remain in the audit trail.');
   };
 
   const addKmRecord = async (rec: Omit<KmRecord, 'id'>) => {
-    const id = 'KM-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).substring(2, 6).toUpperCase();
-    const newRec: KmRecord = {
-      ...rec,
-      id,
-      loggedBy: profile?.email || user?.email || 'Dispatcher'
-    };
-
+    const normalizedVehicle = rec.veh.toUpperCase().replace(/\s+/g, '');
+    const existing = kmRecords.find(item => item.date === rec.date && item.veh.toUpperCase().replace(/\s+/g, '') === normalizedVehicle);
+    const id = existing?.id || ('KM-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).substring(2, 6).toUpperCase());
+    const newRecord: KmRecord = { ...rec, id, loggedBy: profile?.email || user?.email || 'Dispatcher' };
+    if (user || profile) await setDoc(doc(db, 'km_records', id), newRecord);
     setKmRecords(prev => {
-      // Check if existing record for date and vehicle
-      const existingIdx = prev.findIndex(r => r.date === rec.date && r.veh.toUpperCase().replace(/\s+/g,'') === rec.veh.toUpperCase().replace(/\s+/g,''));
-      if (existingIdx >= 0) {
-        const copy = [...prev];
-        copy[existingIdx] = { ...copy[existingIdx], ...newRec, id: copy[existingIdx].id };
-        return copy;
-      }
-      return [newRec, ...prev];
+      const index = prev.findIndex(item => item.id === id || (item.date === rec.date && item.veh.toUpperCase().replace(/\s+/g, '') === normalizedVehicle));
+      if (index >= 0) { const next = [...prev]; next[index] = { ...next[index], ...newRecord, id: next[index].id }; return next; }
+      return [newRecord, ...prev];
     });
-
-    if (user || profile) {
-      try {
-        await setDoc(doc(db, 'km_records', id), newRec);
-      } catch (e) {
-        console.warn("Error saving KM record in Firestore:", e);
-      }
-    }
   };
 
   const batchSaveKmRecords = async (records: (Omit<KmRecord, 'id'> | KmRecord)[]) => {
@@ -745,6 +703,17 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
     const prepared = Array.from(preparedByKey.values());
 
+    if (user || profile) {
+      try {
+        for (const record of prepared) {
+          await setDoc(doc(db, 'km_records', record.id), record);
+        }
+      } catch (e) {
+        console.error("Error saving batch KM records in Firestore:", e);
+        throw new Error('KM records could not be fully saved to Firestore. The local view was left unchanged, though some remote records may have been written before the error; reload and verify before retrying.');
+      }
+    }
+
     setKmRecords(prev => {
       const copy = [...prev];
       prepared.forEach(fullRec => {
@@ -759,94 +728,135 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
       return copy;
     });
-
-    if (user || profile) {
-      try {
-        for (const record of prepared) {
-          await setDoc(doc(db, 'km_records', record.id), record);
-        }
-      } catch (e) {
-        console.error("Error saving batch KM records in Firestore:", e);
-        throw new Error('KM records were added to the local view but could not be fully synced to Firestore. Check your connection, Firebase Authentication, and Firestore rules.');
-      }
-    }
   };
 
   const deleteKmRecord = async (id: string) => {
-    setKmRecords(prev => prev.filter(r => r.id !== id));
-    if (user || profile) {
-      try {
-        await deleteDoc(doc(db, 'km_records', id));
-      } catch (e) {
-        console.warn("Error deleting KM record in Firestore:", e);
-      }
-    }
+    if (user || profile) await deleteDoc(doc(db, 'km_records', id));
+    setKmRecords(prev => prev.filter(record => record.id !== id));
   };
 
   const addDieselLog = async (logData: Omit<DieselLog, 'id'>) => {
     const id = 'DSL-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).substring(2, 6).toUpperCase();
-    const newLog: DieselLog = {
-      ...logData,
-      id,
-      loggedBy: profile?.email || user?.email || 'Cashier'
-    };
+    const newLog: DieselLog = { ...logData, id, loggedBy: profile?.email || user?.email || 'Cashier' };
+    if (user || profile) await setDoc(doc(db, 'diesel_logs', id), newLog);
     setDieselLogs(prev => [newLog, ...prev]);
-
-    if (user || profile) {
-      try {
-        await setDoc(doc(db, 'diesel_logs', id), newLog);
-      } catch (e) {
-        console.warn("Error saving diesel log to Firestore:", e);
-      }
-    }
   };
 
   const resolveConflict = async (conflictId: string, note?: string) => {
-    setConflicts(prev => prev.map(c => c.id === conflictId ? { ...c, status: 'resolved' as const, issue: note ? `${c.issue} (Resolved: ${note})` : c.issue } : c));
+    const existing = conflicts.find(item => item.id === conflictId);
+    if (!existing) return;
+    const resolved = { ...existing, status: 'resolved' as const, issue: note ? existing.issue + ' (Resolved: ' + note + ')' : existing.issue };
+    if (user || profile) await setDoc(doc(db, 'data_quality', conflictId), resolved);
+    setConflicts(prev => prev.map(item => item.id === conflictId ? resolved : item));
   };
 
-  const learnHistoricalRules = (rules: LearnedRule[]) => {
-    setLearnedRules(prev => [...prev, ...rules]);
+  const learnHistoricalRules = async (rules: LearnedRule[]) => {
+    const unique = new Map<string, LearnedRule>();
+    [...learnedRules, ...rules].forEach(rule => unique.set(String(rule.driverId || drivers[rule.driverIndex]?.id || rule.driverIndex) + '__' + rule.result, { ...rule, driverId: rule.driverId || drivers[rule.driverIndex]?.id }));
+    const nextRules = Array.from(unique.values()).sort((a, b) => b.hits - a.hits);
+    if (user || profile) await setDoc(doc(db, 'app_state', 'learnedRules'), { rules: nextRules, updatedAt: new Date().toISOString() });
+    setLearnedRules(nextRules);
   };
 
   const restoreFullBackup = async (data: any): Promise<{ success: boolean; message: string }> => {
     try {
-      if (!data) return { success: false, message: "No data payload provided" };
+      if (!data || typeof data !== 'object' || Array.isArray(data)) return { success: false, message: 'Backup must be a JSON object.' };
+      // Restore replaces complete collections. Require a real TLMS export so a small/partial JSON
+      // payload cannot accidentally erase records that are simply absent from the file.
+      if (data.meta?.schema !== 'tls-lms') return { success: false, message: 'This is not a complete TLMS backup. Export a full backup from Settings → Backup & Restore before restoring.' };
+      const requiredSections: Array<[string, boolean]> = [
+        ['trucks', Array.isArray(data.trucks)],
+        ['equipment', Array.isArray(data.equipment)],
+        ['drivers', Array.isArray(data.drivers)],
+        ['commodities', Array.isArray(data.commodities)],
+        ['stores', Array.isArray(data.stores)],
+        ['schedules', Boolean(data.schedules && typeof data.schedules === 'object' && !Array.isArray(data.schedules))],
+        ['manifests', Boolean(data.manifests && typeof data.manifests === 'object' && !Array.isArray(data.manifests))],
+        ['cashbook.accounts', Array.isArray(data.cashbook?.accounts)],
+        ['cashbook.transactions', Array.isArray(data.cashbook?.transactions)],
+        ['kmRecords', Array.isArray(data.kmRecords ?? data.km)],
+        ['dieselLogs', Array.isArray(data.dieselLogs ?? data.diesel)]
+      ];
+      const missingSections = requiredSections.filter(([, valid]) => !valid).map(([name]) => name);
+      if (missingSections.length) return { success: false, message: 'Backup is incomplete. Missing or invalid sections: ' + missingSections.join(', ') + '. Nothing was restored.' };
+      const restoreDrivers = data.drivers as Driver[];
+      const normalizedRestoreManifests: Record<string, Record<string, string>> | undefined = data.manifests
+        ? Object.fromEntries(Object.entries(data.manifests as Record<string, Record<string, string>>)
+            .map(([date, tags]) => [date, normalizeManifestTags(tags, restoreDrivers)]))
+        : undefined;
 
-      if (Array.isArray(data.trucks) && data.trucks.length > 0) {
-        setTrucks(data.trucks);
+      const arrayFields: Array<[string, unknown]> = [
+        ['trucks', data.trucks], ['equipment', data.equipment], ['drivers', data.drivers], ['commodities', data.commodities],
+        ['stores', data.stores], ['kmRecords', data.kmRecords ?? data.km], ['dieselLogs', data.dieselLogs ?? data.diesel],
+        ['dataQuality', data.dataQuality], ['learnedRules', data.learnedRules], ['cashEmployees', data.cashEmployees],
+        ['cashbook.accounts', data.cashbook?.accounts], ['cashbook.transactions', data.cashbook?.transactions]
+      ];
+      const idRequired = new Set(['trucks', 'equipment', 'drivers', 'commodities', 'stores', 'kmRecords', 'dieselLogs', 'dataQuality', 'cashEmployees', 'cashbook.accounts', 'cashbook.transactions']);
+      for (const [name, value] of arrayFields) {
+        if (value !== undefined && !Array.isArray(value)) return { success: false, message: 'Invalid backup: ' + name + ' must be an array.' };
+        if (Array.isArray(value) && idRequired.has(name) && value.some(record => !record || typeof record !== 'object' || !String(record.id || '').trim())) {
+          return { success: false, message: 'Invalid backup: every record in ' + name + ' must have an ID.' };
+        }
+        if (Array.isArray(value) && !idRequired.has(name) && value.some(record => !record || typeof record !== 'object')) {
+          return { success: false, message: 'Invalid backup: ' + name + ' must contain objects.' };
+        }
       }
-      if (Array.isArray(data.equipment) && data.equipment.length > 0) {
-        setEquipment(data.equipment);
+      for (const name of ['schedules', 'manifests']) {
+        if (data[name] !== undefined && (!data[name] || typeof data[name] !== 'object' || Array.isArray(data[name]))) {
+          return { success: false, message: 'Invalid backup: ' + name + ' must be an object keyed by date.' };
+        }
       }
-      if (Array.isArray(data.drivers) && data.drivers.length > 0) {
-        setDrivers(data.drivers);
+      if (data.cashbook !== undefined && (!data.cashbook || typeof data.cashbook !== 'object' || Array.isArray(data.cashbook))) {
+        return { success: false, message: 'Invalid backup: cashbook must be an object.' };
       }
-      if (data.manifests && typeof data.manifests === 'object') {
-        setManifests(data.manifests);
-      }
-      if (data.schedules && typeof data.schedules === 'object') {
-        setSchedules(data.schedules);
-      }
-      if (data.cashbook?.transactions && Array.isArray(data.cashbook.transactions)) {
-        setCashTransactions(data.cashbook.transactions);
-      }
-      if (Array.isArray(data.km) || Array.isArray(data.kmRecords)) {
-        setKmRecords(data.km || data.kmRecords);
-      }
-      if (Array.isArray(data.diesel) || Array.isArray(data.dieselLogs)) {
-        setDieselLogs(data.diesel || data.dieselLogs);
-      }
-      if (Array.isArray(data.dataQuality)) {
-        setConflicts(data.dataQuality);
+      exportFullBackup();
+
+      const replaceCollection = async (name: string, records: Array<Record<string, any>>) => {
+        const incoming = new Map(records.map(record => [String(record.id), record]));
+        const snapshot = await getDocs(collection(db, name));
+        for (const existing of snapshot.docs) if (!incoming.has(existing.id)) await deleteDoc(doc(db, name, existing.id));
+        for (const [id, record] of incoming) await setDoc(doc(db, name, id), record);
+      };
+      const signedIn = Boolean(user || profile);
+      if (signedIn) {
+        if (Array.isArray(data.trucks)) await replaceCollection('trucks', data.trucks);
+        if (Array.isArray(data.equipment)) await replaceCollection('equipment', data.equipment);
+        if (Array.isArray(data.drivers)) await replaceCollection('drivers', data.drivers);
+        if (Array.isArray(data.commodities)) await replaceCollection('commodities', data.commodities);
+        if (Array.isArray(data.stores)) await replaceCollection('stores', data.stores);
+        if (Array.isArray(data.cashbook?.accounts)) await replaceCollection('cash_accounts', data.cashbook.accounts);
+        if (Array.isArray(data.cashbook?.transactions)) await replaceCollection('cashbook', data.cashbook.transactions);
+        if (Array.isArray(data.cashEmployees)) await replaceCollection('cash_employees', data.cashEmployees);
+        if (Array.isArray(data.kmRecords ?? data.km)) await replaceCollection('km_records', data.kmRecords ?? data.km);
+        if (Array.isArray(data.dieselLogs ?? data.diesel)) await replaceCollection('diesel_logs', data.dieselLogs ?? data.diesel);
+        if (data.schedules) await replaceCollection('schedules', Object.entries(data.schedules).map(([date, item]) => ({ ...(item as object), id: date, date })));
+        if (normalizedRestoreManifests) await replaceCollection('manifests', Object.entries(normalizedRestoreManifests).map(([date, tags]) => ({ id: date, date, tags })));
+        if (Array.isArray(data.dataQuality)) await replaceCollection('data_quality', data.dataQuality);
+        if (Array.isArray(data.learnedRules)) await setDoc(doc(db, 'app_state', 'learnedRules'), { rules: data.learnedRules, updatedAt: new Date().toISOString() });
       }
 
+      if (Array.isArray(data.trucks)) setTrucks(data.trucks as Truck[]);
+      if (Array.isArray(data.equipment)) setEquipment(data.equipment as Equipment[]);
+      if (Array.isArray(data.drivers)) setDrivers((data.drivers as Driver[]).sort((a, b) => (a.seq || 0) - (b.seq || 0)));
+      if (Array.isArray(data.commodities)) setCommodities(data.commodities as Commodity[]);
+      if (Array.isArray(data.stores)) setStores(data.stores as StoreMapItem[]);
+      if (data.schedules) setSchedules(data.schedules as Record<string, DailySchedule>);
+      if (normalizedRestoreManifests) setManifests(normalizedRestoreManifests);
+      if (Array.isArray(data.cashbook?.accounts)) setCashAccounts(data.cashbook.accounts as CashAccount[]);
+      if (Array.isArray(data.cashbook?.transactions)) setCashTransactions(data.cashbook.transactions as CashTransaction[]);
+      if (Array.isArray(data.kmRecords ?? data.km)) setKmRecords((data.kmRecords ?? data.km) as KmRecord[]);
+      if (Array.isArray(data.dieselLogs ?? data.diesel)) setDieselLogs((data.dieselLogs ?? data.diesel) as DieselLog[]);
+      if (Array.isArray(data.dataQuality)) setConflicts(data.dataQuality as DataConflict[]);
+      if (Array.isArray(data.learnedRules)) setLearnedRules(data.learnedRules as LearnedRule[]);
+      if (Array.isArray(data.cashEmployees)) setCashEmployees(data.cashEmployees as { id: string; name: string }[]);
+
+      const syncNote = signedIn ? ' Firestore collections were synced.' : ' Restored locally only; sign in to sync to Firestore.';
       return {
         success: true,
-        message: `Restored successfully: ${data.trucks?.length || 0} Trucks, ${data.drivers?.length || 0} Drivers, ${data.equipment?.length || 0} Equipment records!`
+        message: 'Backup restored: ' + (data.trucks?.length ?? 0) + ' trucks, ' + (data.drivers?.length ?? 0) + ' drivers, ' + (data.equipment?.length ?? 0) + ' equipment, ' + (data.cashbook?.transactions?.length ?? 0) + ' cash transactions, ' + ((data.kmRecords ?? data.km)?.length ?? 0) + ' KM records, and ' + ((data.dieselLogs ?? data.diesel)?.length ?? 0) + ' diesel logs.' + syncNote
       };
     } catch (err: any) {
-      return { success: false, message: `Restore error: ${err.message}` };
+      return { success: false, message: 'Restore failed: ' + (err?.message || String(err)) + '. If signed in, Firestore may have received part of the update; review the database before retrying.' };
     }
   };
 
@@ -863,7 +873,12 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           drivers: drivers.length,
           cashTransactions: cashTransactions.length,
           kmRecords: kmRecords.length,
-          dieselLogs: dieselLogs.length
+          dieselLogs: dieselLogs.length,
+          commodities: commodities.length,
+          stores: stores.length,
+          cashAccounts: cashAccounts.length,
+          cashEmployees: cashEmployees.length,
+          learnedRules: learnedRules.length
         }
       },
       trucks,
@@ -877,6 +892,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         accounts: cashAccounts,
         transactions: cashTransactions
       },
+      cashEmployees,
       kmRecords,
       dieselLogs,
       dataQuality: conflicts,
@@ -887,7 +903,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `TLS_LMS_Master_Backup_${new Date().toISOString().substring(0, 10)}.json`;
+    a.download = `TLS_LMS_Master_Backup_${ksaDateISO()}.json`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -916,6 +932,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     saveDriver,
     deleteDriver,
     saveDailySchedule,
+    deleteDailySchedule,
     saveDailyManifest,
     saveMultiDayManifests,
     addCashTransaction,

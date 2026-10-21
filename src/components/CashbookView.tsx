@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { useLms } from '../context/LmsContext';
 import { useAuth } from '../context/AuthContext';
 import { CashTransaction } from '../types';
+import { ksaDateISO, isValidISODate } from '../utils/dateUtils';
+import { transactionCashImpact, transactionEmployeeAdvanceImpact } from '../utils/cashbookUtils';
 import * as XLSX from 'xlsx';
 import { jsPDF } from 'jspdf';
 import {
@@ -27,6 +29,11 @@ export const CashbookView: React.FC = () => {
   const [accountName, setAccountName] = useState('');
   const [accountOpening, setAccountOpening] = useState('0');
   const [accountError, setAccountError] = useState('');
+  const [showPdfOptions, setShowPdfOptions] = useState(false);
+  const [pdfEmployeeFilter, setPdfEmployeeFilter] = useState('');
+  const [pdfFromDate, setPdfFromDate] = useState('');
+  const [pdfToDate, setPdfToDate] = useState('');
+  const [pdfError, setPdfError] = useState('');
 
   // Statement view state
   const [statementEmployee, setStatementEmployee] = useState<string | null>(null);
@@ -39,18 +46,10 @@ export const CashbookView: React.FC = () => {
   let totalOutflow = 0;
 
   cashTransactions.forEach(t => {
-    if (t.status === 'Reversed') return;
-    const isInf = ['Cash In', 'Income', 'Transfer In', 'Advance Returned'].includes(t.type);
-    const isOut = ['Advance Given', 'Transfer Out', 'Cash Out', 'Expense Settlement'].includes(t.type);
-
-    if (isInf) {
-      totalInflow += t.amount;
-      accountBalances[t.account] = (accountBalances[t.account] || 0) + t.amount;
-    }
-    if (isOut) {
-      totalOutflow += t.amount;
-      accountBalances[t.account] = (accountBalances[t.account] || 0) - t.amount;
-    }
+    const impact = transactionCashImpact(t, cashTransactions);
+    if (impact > 0) totalInflow += impact;
+    if (impact < 0) totalOutflow += Math.abs(impact);
+    if (impact !== 0) accountBalances[t.account] = (accountBalances[t.account] || 0) + impact;
   });
 
   const totalCash = Object.values(accountBalances).reduce((a, b) => a + b, 0);
@@ -58,13 +57,9 @@ export const CashbookView: React.FC = () => {
   // Outstanding Employee Advances
   const employeeBalances: Record<string, number> = {};
   cashTransactions.forEach(t => {
-    if (t.status === 'Reversed' || !t.employee) return;
-    if (t.type === 'Advance Given') {
-      employeeBalances[t.employee] = (employeeBalances[t.employee] || 0) + t.amount;
-    }
-    if (t.type === 'Expense Settlement' || t.type === 'Advance Returned') {
-      employeeBalances[t.employee] = (employeeBalances[t.employee] || 0) - t.amount;
-    }
+    if (!t.employee) return;
+    const impact = transactionEmployeeAdvanceImpact(t, cashTransactions);
+    if (impact !== 0) employeeBalances[t.employee] = (employeeBalances[t.employee] || 0) + impact;
   });
 
   const totalOutstandingAdvances = Object.values(employeeBalances).reduce((a, b) => a + Math.max(0, b), 0);
@@ -98,8 +93,8 @@ export const CashbookView: React.FC = () => {
     }
     try {
       await addCashTransaction({
-        date: (fd.get('date') as string) || new Date().toISOString().substring(0, 10),
-        dateISO: (fd.get('date') as string) || new Date().toISOString().substring(0, 10),
+        date: (fd.get('date') as string) || ksaDateISO(),
+        dateISO: (fd.get('date') as string) || ksaDateISO(),
         account: fd.get('account') as string,
         type,
         employee,
@@ -187,53 +182,66 @@ export const CashbookView: React.FC = () => {
       Account: t.account,
       Type: t.type,
       Category: t.category,
-      Amount: t.amount,
+      'Signed Cash Impact (SAR)': transactionCashImpact(t, filtered),
       Description: t.description,
       Status: t.status,
       'Created By': t.createdBy || 'Staff'
     })));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Cashbook_Ledger');
-    XLSX.writeFile(wb, `TLS_Cashbook_${new Date().toISOString().substring(0, 10)}.xlsx`);
+    XLSX.writeFile(wb, `TLS_Cashbook_${ksaDateISO()}.xlsx`);
   };
 
   const exportPDF = () => {
-    const employeeFilter = (window.prompt('Filter by employee name (leave blank for all employees):', '') || '').trim().toLowerCase();
-    const fromDate = (window.prompt('From date YYYY-MM-DD (leave blank for no start limit):', '') || '').trim();
-    const toDate = (window.prompt('To date YYYY-MM-DD (leave blank for no end limit):', '') || '').trim();
-    const reportRows = filtered.filter(t =>
-      (!employeeFilter || (t.employee || '').toLowerCase().includes(employeeFilter)) &&
-      (!fromDate || t.dateISO >= fromDate) &&
-      (!toDate || t.dateISO <= toDate)
-    );
-    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
-    doc.setFontSize(16);
-    doc.text('Tayseer Logistics - Cashbook Report', 14, 15);
-    doc.setFontSize(9);
-    doc.text(`Account: ${filterAccount || 'All accounts'} | Employee: ${employeeFilter || 'All employees'}`, 14, 22);
-    doc.text(`Period: ${fromDate || 'Beginning'} to ${toDate || 'Today'} | Rows: ${reportRows.length}`, 14, 28);
+    const employeeFilter = pdfEmployeeFilter.trim().toLowerCase();
+    const fromDate = pdfFromDate.trim();
+    const toDate = pdfToDate.trim();
+    if (fromDate && !isValidISODate(fromDate)) { setPdfError('Enter a valid start date in YYYY-MM-DD format.'); return; }
+    if (toDate && !isValidISODate(toDate)) { setPdfError('Enter a valid end date in YYYY-MM-DD format.'); return; }
+    if (fromDate && toDate && fromDate > toDate) { setPdfError('The start date must be on or before the end date.'); return; }
+
+    const reportRows = filtered
+      .filter(t => (!employeeFilter || (t.employee || '').toLowerCase().includes(employeeFilter)) &&
+        (!fromDate || (t.dateISO || t.date) >= fromDate) &&
+        (!toDate || (t.dateISO || t.date) <= toDate))
+      .slice()
+      .sort((a, b) => (a.dateISO || a.date).localeCompare(b.dateISO || b.date));
+
+    if (!reportRows.length) { setPdfError('No cashbook transactions match these report filters. Adjust the filters and try again.'); return; }
+    setPdfError('');
+    const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    pdf.setFontSize(16);
+    pdf.text('Tayseer Logistics - Cashbook Report', 14, 15);
+    pdf.setFontSize(9);
+    pdf.text('Current ledger filters are applied. Account: ' + (filterAccount || 'All accounts') + ' | Employee: ' + (employeeFilter || 'All employees'), 14, 22);
+    pdf.text('Period: ' + (fromDate || 'Beginning') + ' to ' + (toDate || 'Today') + ' | Rows: ' + reportRows.length, 14, 28);
     const headers = ['Date', 'Employee', 'Account', 'Type', 'Category', 'Amount (SAR)', 'Description', 'Status'];
     const widths = [24, 34, 32, 30, 28, 27, 75, 24];
     let y = 36;
     const drawHeader = () => {
       let x = 14;
-      doc.setFont('helvetica', 'bold');
-      headers.forEach((h, i) => { doc.text(h, x, y); x += widths[i]; });
+      pdf.setFont('helvetica', 'bold');
+      headers.forEach((header, index) => { pdf.text(header, x, y); x += widths[index]; });
       y += 6;
-      doc.setFont('helvetica', 'normal');
-      doc.line(14, y - 3, 281, y - 3);
+      pdf.setFont('helvetica', 'normal');
+      pdf.line(14, y - 3, 288, y - 3);
     };
     drawHeader();
-    reportRows.forEach(t => {
-      const cells = [t.dateISO, t.employee || '—', t.account, t.type, t.category, Number(t.amount).toFixed(2), t.description || '', t.status];
-      const wrapped = cells.map((value, i) => doc.splitTextToSize(String(value), widths[i] - 2));
+    reportRows.forEach(tx => {
+      const cells = [tx.dateISO || tx.date, tx.employee || '—', tx.account, tx.type, tx.category, transactionCashImpact(tx, reportRows).toFixed(2), tx.description || '', tx.status];
+      const wrapped = cells.map((value, index) => pdf.splitTextToSize(String(value), widths[index] - 2));
       const rowHeight = Math.max(6, ...wrapped.map(lines => lines.length * 4));
-      if (y + rowHeight > 190) { doc.addPage(); y = 15; drawHeader(); }
+      if (y + rowHeight > 190) { pdf.addPage(); y = 15; drawHeader(); }
       let x = 14;
-      wrapped.forEach((lines, i) => { doc.text(lines, x, y); x += widths[i]; });
+      wrapped.forEach((lines, index) => { pdf.text(lines, x, y); x += widths[index]; });
       y += rowHeight + 2;
     });
-    doc.save(`TLS_Cashbook_Report_${new Date().toISOString().slice(0, 10)}.pdf`);
+    const netTotal = reportRows.reduce((sum, tx) => sum + transactionCashImpact(tx, reportRows), 0);
+    if (y > 185) { pdf.addPage(); y = 20; }
+    pdf.setFont('helvetica', 'bold');
+    pdf.text('Signed net of listed transactions (excluding reversed): SAR ' + netTotal.toFixed(2), 14, y + 4);
+    pdf.save('TLS_Cashbook_Report_' + ksaDateISO() + '.pdf');
+    setShowPdfOptions(false);
   };
 
   return (
@@ -257,7 +265,7 @@ export const CashbookView: React.FC = () => {
             <Download className="w-3.5 h-3.5" /> Export Excel
           </button>
           <button
-            onClick={exportPDF}
+            onClick={() => { setPdfError(''); setShowPdfOptions(true); }}
             className="bg-rose-700 hover:bg-rose-600 text-white text-xs font-semibold px-3 py-2 rounded-xl border border-rose-600 flex items-center gap-1.5 transition"
           >
             <FileText className="w-3.5 h-3.5" /> Export PDF
@@ -402,6 +410,7 @@ export const CashbookView: React.FC = () => {
               <option value="Cash Out">Cash Out</option>
               <option value="Transfer In">Transfer In</option>
               <option value="Transfer Out">Transfer Out</option>
+              <option value="Reversal">Reversal / Correction</option>
             </select>
           </div>
         </div>
@@ -424,7 +433,9 @@ export const CashbookView: React.FC = () => {
             </thead>
             <tbody className="divide-y divide-slate-800">
               {filtered.map(t => {
-                const isInf = ['Cash In', 'Income', 'Transfer In', 'Advance Returned'].includes(t.type);
+                const cashImpact = transactionCashImpact(t, cashTransactions);
+                const isInf = cashImpact > 0;
+                const isOut = cashImpact < 0;
                 return (
                   <tr key={t.id} className="hover:bg-slate-800/60 transition">
                     <td className="p-3 font-mono font-bold text-slate-300">{t.id}</td>
@@ -451,8 +462,8 @@ export const CashbookView: React.FC = () => {
                       </span>
                     </td>
                     <td className="p-3 text-slate-400">{t.category}</td>
-                    <td className={`p-3 text-right font-mono font-bold text-sm ${isInf ? 'text-emerald-400' : 'text-rose-400'}`}>
-                      {isInf ? '+' : '-'}{t.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    <td className={`p-3 text-right font-mono font-bold text-sm ${isInf ? 'text-emerald-400' : isOut ? 'text-rose-400' : 'text-slate-300'}`}>
+                      {cashImpact > 0 ? '+' : cashImpact < 0 ? '−' : '—'}{Math.abs(Number(t.amount) || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </td>
                     <td className="p-3 text-slate-300 max-w-xs truncate">{t.description || '—'}</td>
                     <td className="p-3">
@@ -466,26 +477,22 @@ export const CashbookView: React.FC = () => {
                       {(isCashier || isAdmin) && t.status !== 'Reversed' && t.type !== 'Reversal' && (
                         <div className="flex items-center justify-end gap-1.5">
                           <button
-                            onClick={() => {
-                              const reason = prompt("Enter reversal reason:");
-                              if (reason !== null) reverseCashTransaction(t.id, reason);
+                            onClick={async () => {
+                              const reason = window.prompt("Enter the reason for this correction:");
+                              if (reason === null) return;
+                              if (!reason.trim()) { alert("A correction reason is required."); return; }
+                              try {
+                                await reverseCashTransaction(t.id, reason.trim());
+                              } catch (error) {
+                                alert(error instanceof Error ? error.message : "The reversal could not be saved.");
+                              }
                             }}
                             className="p-1 text-slate-400 hover:text-amber-400"
                             title="Reverse transaction"
                           >
                             <RotateCcw className="w-3.5 h-3.5" />
                           </button>
-                          {isAdmin && (
-                            <button
-                              onClick={() => {
-                                if (confirm(`Permanently delete transaction ${t.id}?`)) deleteCashTransaction(t.id);
-                              }}
-                              className="p-1 text-slate-400 hover:text-rose-400"
-                              title="Delete"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          )}
+
                         </div>
                       )}
                     </td>
@@ -512,7 +519,7 @@ export const CashbookView: React.FC = () => {
                   <input
                     name="date"
                     type="date"
-                    defaultValue={new Date().toISOString().substring(0, 10)}
+                    defaultValue={ksaDateISO()}
                     required
                     className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:border-blue-500"
                   />
@@ -625,6 +632,37 @@ export const CashbookView: React.FC = () => {
         </div>
       )}
 
+      {/* Modal: Cashbook PDF report filters */}
+      {showPdfOptions && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4">
+            <div>
+              <h3 className="font-bold text-white text-lg">Export Cashbook PDF</h3>
+              <p className="text-xs text-slate-400 mt-1">The current ledger search, type, and account filters will be applied, together with the filters below.</p>
+            </div>
+            <label className="block text-xs text-slate-300 font-semibold">
+              Employee contains
+              <input value={pdfEmployeeFilter} onChange={e => setPdfEmployeeFilter(e.target.value)} placeholder="All employees" className="mt-1 w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" />
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <label className="block text-xs text-slate-300 font-semibold">
+                From date
+                <input type="date" value={pdfFromDate} max={pdfToDate || undefined} onChange={e => { setPdfFromDate(e.target.value); setPdfError(''); }} className="mt-1 w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" />
+              </label>
+              <label className="block text-xs text-slate-300 font-semibold">
+                To date
+                <input type="date" value={pdfToDate} min={pdfFromDate || undefined} onChange={e => { setPdfToDate(e.target.value); setPdfError(''); }} className="mt-1 w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white" />
+              </label>
+            </div>
+            {pdfError && <p role="alert" className="text-xs text-rose-300 bg-rose-950/40 border border-rose-700/60 rounded-lg p-3">{pdfError}</p>}
+            <div className="flex justify-end gap-2 pt-2">
+              <button onClick={() => { setShowPdfOptions(false); setPdfError(''); }} className="px-4 py-2 rounded-lg text-xs font-bold text-slate-300 bg-slate-800 border border-slate-700">Cancel</button>
+              <button onClick={exportPDF} className="px-4 py-2 rounded-lg text-xs font-bold text-white bg-rose-700 hover:bg-rose-600">Export PDF</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modal: Employee Statement */}
       {statementEmployee && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-50">
@@ -648,19 +686,22 @@ export const CashbookView: React.FC = () => {
               <h4 className="text-xs font-bold uppercase text-slate-400 font-mono">Transaction History</h4>
               <div className="divide-y divide-slate-800 border border-slate-800 rounded-xl overflow-hidden">
                 {cashTransactions
-                  .filter(t => t.employee === statementEmployee && t.status !== 'Reversed')
-                  .map(t => (
+                  .filter(t => t.employee === statementEmployee && (t.status !== 'Reversed' || cashTransactions.some(reversal => reversal.type === 'Reversal' && reversal.reversalOf === t.id)))
+                  .map(t => {
+                    const advanceImpact = transactionEmployeeAdvanceImpact(t, cashTransactions);
+                    return (
                     <div key={t.id} className="p-3 bg-slate-900/60 flex items-center justify-between text-xs">
                       <div>
                         <div className="font-mono text-slate-400 text-[10px]">{t.dateISO} &bull; {t.id}</div>
                         <div className="font-semibold text-white mt-0.5">{t.type} ({t.category})</div>
                         <div className="text-slate-400 text-[11px]">{t.description}</div>
                       </div>
-                      <div className={`font-mono font-bold text-sm ${t.type === 'Advance Given' ? 'text-amber-400' : 'text-emerald-400'}`}>
-                        {t.type === 'Advance Given' ? '+' : '-'}{t.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      <div className={`font-mono font-bold text-sm ${advanceImpact > 0 ? 'text-amber-400' : advanceImpact < 0 ? 'text-emerald-400' : 'text-slate-400'}`}>
+                        {advanceImpact > 0 ? '+' : advanceImpact < 0 ? '−' : '—'}{Math.abs(Number(t.amount) || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
               </div>
             </div>
           </div>

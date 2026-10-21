@@ -1,4 +1,6 @@
 import React, { useEffect, useState } from 'react';
+import { doc, onSnapshot, setDoc } from 'firebase/firestore';
+import { db } from '../firebase/config';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { useLms } from '../context/LmsContext';
@@ -20,7 +22,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onBackToCommandCenter
 }) => {
   const { theme, toggleTheme } = useTheme();
-  const { role, isAdmin } = useAuth();
+  const { user, profile, role, isAdmin } = useAuth();
   const {
     trucks, drivers, equipment, schedules, manifests, kmRecords,
     cashTransactions, conflicts, exportFullBackup, restoreFullBackup
@@ -33,13 +35,46 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [brandSubtitle, setBrandSubtitle] = useState(() => localStorage.getItem('tlms.brandSubtitle') || 'Tayseer Group Central Fleet Operating System');
   const [brandLogoUrl, setBrandLogoUrl] = useState(() => localStorage.getItem('tlms.brandLogoUrl') || '');
   const [brandSaved, setBrandSaved] = useState(false);
+  const [brandError, setBrandError] = useState('');
 
-  const saveBranding = () => {
-    localStorage.setItem('tlms.brandName', brandName.trim() || 'TLS Logistics LMS');
-    localStorage.setItem('tlms.brandSubtitle', brandSubtitle.trim() || 'Tayseer Group Central Fleet Operating System');
-    localStorage.setItem('tlms.brandLogoUrl', brandLogoUrl.trim());
-    window.dispatchEvent(new CustomEvent('tlms-branding-updated'));
-    setBrandSaved(true);
+  useEffect(() => {
+    if (!user && !profile) return;
+    return onSnapshot(doc(db, 'app_state', 'branding'), snapshot => {
+      if (!snapshot.exists()) return;
+      const data = snapshot.data();
+      if (typeof data.brandName === 'string') setBrandName(data.brandName);
+      if (typeof data.brandSubtitle === 'string') setBrandSubtitle(data.brandSubtitle);
+      if (typeof data.brandLogoUrl === 'string') setBrandLogoUrl(data.brandLogoUrl);
+      localStorage.setItem('tlms.brandName', typeof data.brandName === 'string' ? data.brandName : 'TLS Logistics LMS');
+      localStorage.setItem('tlms.brandSubtitle', typeof data.brandSubtitle === 'string' ? data.brandSubtitle : 'Tayseer Group Central Fleet Operating System');
+      localStorage.setItem('tlms.brandLogoUrl', typeof data.brandLogoUrl === 'string' ? data.brandLogoUrl : '');
+      window.dispatchEvent(new CustomEvent('tlms-branding-updated'));
+    }, error => {
+      console.warn('Shared branding listener notice:', error.message);
+      setBrandError('Shared branding could not be loaded from Firebase. Local branding is still available in this browser.');
+    });
+  }, [user, profile]);
+
+  const saveBranding = async () => {
+    const next = {
+      brandName: brandName.trim() || 'TLS Logistics LMS',
+      brandSubtitle: brandSubtitle.trim() || 'Tayseer Group Central Fleet Operating System',
+      brandLogoUrl: brandLogoUrl.trim(),
+      updatedAt: new Date().toISOString(),
+      updatedBy: profile?.email || user?.email || 'Admin'
+    };
+    setBrandError('');
+    try {
+      if (user || profile) await setDoc(doc(db, 'app_state', 'branding'), next);
+      localStorage.setItem('tlms.brandName', next.brandName);
+      localStorage.setItem('tlms.brandSubtitle', next.brandSubtitle);
+      localStorage.setItem('tlms.brandLogoUrl', next.brandLogoUrl);
+      window.dispatchEvent(new CustomEvent('tlms-branding-updated'));
+      setBrandSaved(true);
+    } catch (error) {
+      setBrandError(error instanceof Error ? 'Branding save failed: ' + error.message : 'Branding could not be saved.');
+      setBrandSaved(false);
+    }
   };
 
   const openConflictsCount = conflicts.filter(c => c.status === 'open').length;
@@ -153,7 +188,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
             <div className="rounded-xl border border-slate-700 bg-slate-900/70 p-4 space-y-3">
               <h4 className="text-sm font-bold text-white">Website Name &amp; Logo</h4>
-              <p className="text-xs text-slate-400">Change the title shown in the navigation header. Logo must be an image URL; leave blank to use the default lightning icon. This setting is saved in this browser.</p>
+              <p className="text-xs text-slate-400">Change the name, subtitle, and logo shown across TLMS. Signed-in users share the branding through Firebase; guest/demo changes stay in this browser.</p>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <label className="text-xs font-semibold text-slate-300 space-y-1 block">
                   <span>Website name</span>
@@ -169,9 +204,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <input value={brandLogoUrl} onChange={e => { setBrandLogoUrl(e.target.value); setBrandSaved(false); }} className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white" placeholder="https://example.com/logo.png" />
               </label>
               <div className="flex items-center justify-between gap-3">
-                <span className="text-xs text-slate-400">{brandSaved ? 'Branding saved for this browser.' : 'Save to apply the branding to the header.'}</span>
+                <span className="text-xs text-slate-400">{brandSaved ? ((user || profile) ? 'Branding saved to shared settings.' : 'Branding saved in this browser only.') : 'Save to apply the branding to the header.'}</span>
                 <button type="button" onClick={saveBranding} className="rounded-lg bg-blue-600 hover:bg-blue-500 px-4 py-2 text-xs font-bold text-white">Save Branding</button>
               </div>
+              {brandError && <p role="alert" className="text-xs text-rose-300 mt-2">{brandError}</p>}
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

@@ -21,7 +21,7 @@ export interface MultiDayParseResult {
   totalEntriesCount: number;
   entries: ParsedManifestEntry[];
   unmatchedLines: string[];
-  manifestByDate: Record<string, Record<number, string>>; // date -> { driverIndex -> tag }
+  manifestByDate: Record<string, Record<string, string>>; // date -> { stable driver ID -> tag }
 }
 
 const norm = (s: string) => String(s || '').toUpperCase().replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
@@ -144,7 +144,7 @@ export function parseMultiDayManifest(
   dateColMap.sort((a, b) => a.dateStr.localeCompare(b.dateStr));
   const detectedDates = Array.from(new Set(dateColMap.map(d => d.dateStr))).sort();
 
-  const manifestByDate: Record<string, Record<number, string>> = {};
+  const manifestByDate: Record<string, Record<string, string>> = {};
   detectedDates.forEach(dt => {
     manifestByDate[dt] = {};
   });
@@ -219,7 +219,7 @@ export function parseMultiDayManifest(
         if (val && val.trim() && val !== '-' && val !== '—') {
           const cleanedTag = val.trim();
           tagsByDate[dCol.dateStr] = cleanedTag;
-          manifestByDate[dCol.dateStr][matchedDriverIndex] = cleanedTag;
+          manifestByDate[dCol.dateStr][matchedDriver.id || String(matchedDriverIndex)] = cleanedTag;
           totalEntriesCount++;
         }
       }
@@ -315,6 +315,6 @@ FAYIZ IJAZ MUHAMMAD		PAKISTAN			TLS				L-EMP0651		At Yanbu	At Yanbu	At Yanbu	At 
 ARIF ANSARI		INDIA			TLS				L-EMP0661		At Yanbu	At Yanbu	At Yanbu	At Yanbu
 MUHAMMAD ABRAR		PAKISTAN			TLS				L-EMP0665		At Yanbu	At Yanbu	At Yanbu	At Yanbu`;
 
-export const SEED_OCTOBER_1_4_MANIFESTS: Record<string, Record<number, string>> =
+export const SEED_OCTOBER_1_4_MANIFESTS: Record<string, Record<string, string>> =
   parseMultiDayManifest(SAMPLE_OCTOBER_1_4_MANIFEST_TEXT, ALL_84_DRIVERS, '2026-10').manifestByDate;
 

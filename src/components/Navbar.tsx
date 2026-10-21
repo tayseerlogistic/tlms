@@ -3,6 +3,8 @@ import { useAuth } from '../context/AuthContext';
 import { useLms } from '../context/LmsContext';
 import { useTheme } from '../context/ThemeContext';
 import { UserRole } from '../types';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { db } from '../firebase/config';
 import {
   Truck, FileSpreadsheet, ClipboardList, Wallet, Gauge,
   Shield, LogOut, LogIn, Settings, Sun, Moon
@@ -31,20 +33,30 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, setCurrentTab, onOpe
     };
     window.addEventListener('tlms-branding-updated', syncBranding);
     window.addEventListener('storage', syncBranding);
+    const unsubscribe = (user || profile) ? onSnapshot(doc(db, 'app_state', 'branding'), snapshot => {
+      if (!snapshot.exists()) return;
+      const data = snapshot.data();
+      if (typeof data.brandName === 'string') { setBrandName(data.brandName); localStorage.setItem('tlms.brandName', data.brandName); }
+      if (typeof data.brandSubtitle === 'string') { setBrandSubtitle(data.brandSubtitle); localStorage.setItem('tlms.brandSubtitle', data.brandSubtitle); }
+      if (typeof data.brandLogoUrl === 'string') { setBrandLogoUrl(data.brandLogoUrl); localStorage.setItem('tlms.brandLogoUrl', data.brandLogoUrl); }
+      document.title = typeof data.brandName === 'string' ? data.brandName : 'TLS Logistics LMS';
+      window.dispatchEvent(new CustomEvent('tlms-branding-updated'));
+    }, error => console.warn('Shared branding listener notice:', error.message)) : undefined;
     return () => {
       window.removeEventListener('tlms-branding-updated', syncBranding);
       window.removeEventListener('storage', syncBranding);
+      unsubscribe?.();
     };
-  }, []);
+  }, [user, profile]);
 
   const openConflictsCount = conflicts.filter(c => c.status === 'open').length;
 
   const navItems = [
-    { id: 'overview', label: 'Command Center', icon: Gauge },
-    { id: 'timetable', label: 'Timetable Dispatch', icon: FileSpreadsheet },
-    { id: 'manifest', label: 'Daily Manifest', icon: ClipboardList },
-    { id: 'km-fuel', label: 'KM & Fuel Balancing', icon: Truck },
-    { id: 'cashbook', label: 'Cashbook Pro', icon: Wallet },
+    { id: 'overview', label: 'Command Center', icon: Gauge, badge: undefined as number | undefined },
+    { id: 'timetable', label: 'Timetable Dispatch', icon: FileSpreadsheet, badge: undefined as number | undefined },
+    { id: 'manifest', label: 'Daily Manifest', icon: ClipboardList, badge: undefined as number | undefined },
+    { id: 'km-fuel', label: 'KM & Fuel Balancing', icon: Truck, badge: undefined as number | undefined },
+    { id: 'cashbook', label: 'Cashbook Pro', icon: Wallet, badge: undefined as number | undefined },
   ];
 
   const roleColors: Record<UserRole, { bg: string; text: string; border: string }> = {
@@ -108,6 +120,12 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, setCurrentTab, onOpe
 
         <div className="min-w-0 flex flex-wrap items-center justify-start xl:justify-end gap-2 sm:gap-3 xl:col-start-2 xl:row-start-1 xl:row-span-2">
         <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3">
+          {!user && !profile && (
+            <span title="Unsigned changes are local demo data and are not shared with other users." className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wide text-amber-300">
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+              Demo · Local only
+            </span>
+          )}
           {/* Quick Settings Shortcut button */}
           <button
             onClick={() => setCurrentTab('settings')}

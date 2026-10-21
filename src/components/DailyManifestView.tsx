@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useLms } from '../context/LmsContext';
 import { useAuth } from '../context/AuthContext';
 import { ManifestSuggestion, LearnedRule } from '../types';
+import { ksaDateISO, shiftISODate } from '../utils/dateUtils';
 import {
   trainManifestAiModel, getManifestModelStats, ModelTrainingStats,
   predictManifestForDriver
@@ -25,26 +26,13 @@ function norm(s: string): string {
 }
 
 function shiftDateStr(dateStr: string, deltaDays: number): string {
-  try {
-    const parts = (dateStr || '').split('-').map(Number);
-    if (parts.length === 3 && !isNaN(parts[0]) && !isNaN(parts[1]) && !isNaN(parts[2])) {
-      const dt = new Date(parts[0], parts[1] - 1, parts[2]);
-      dt.setDate(dt.getDate() + deltaDays);
-      const y = dt.getFullYear();
-      const m = String(dt.getMonth() + 1).padStart(2, '0');
-      const d = String(dt.getDate()).padStart(2, '0');
-      return `${y}-${m}-${d}`;
-    }
-  } catch (e) {
-    // fallback
-  }
-  return dateStr;
+  return shiftISODate(dateStr, deltaDays);
 }
 
 function localTodayISO(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  return ksaDateISO();
 }
+
 
 export const DailyManifestView: React.FC = () => {
   const {
@@ -55,6 +43,8 @@ export const DailyManifestView: React.FC = () => {
   const { isDispatcher, isAdmin } = useAuth();
 
   const [selectedDate, setSelectedDate] = useState(() => localTodayISO());
+  // Archived drivers remain available for historical dates, but never enter a new/current manifest.
+  const operationalDrivers = useMemo(() => selectedDate < localTodayISO() ? drivers : drivers.filter(driver => driver.active !== false), [selectedDate, drivers]);
   const [subTab, setSubTab] = useState<'manifest' | 'history' | 'learning' | 'bulk' | 'paste-multi'>('manifest');
   const [selectedDriverIdx, setSelectedDriverIdx] = useState(0);
 
@@ -100,11 +90,12 @@ export const DailyManifestView: React.FC = () => {
   const [manifestFilter, setManifestFilter] = useState<'all' | 'scheduled' | 'transit' | 'offloading' | 'returning'>('all');
 
   // Editable tags for currently selected date
-  const [localTags, setLocalTags] = useState<Record<number, string>>({});
+  const [localTags, setLocalTags] = useState<Record<string, string>>({});
   const [autoSyncedCount, setAutoSyncedCount] = useState<number>(0);
 
   const todayTags = manifests[selectedDate] || {};
   const currentSchedule = schedules[selectedDate]?.rows || [];
+  const getDriverTag = (tags: Record<string, string>, driverId: string, driverIdx: number) => tags[driverId] ?? tags[String(driverIdx)] ?? '';
 
   // Identify temporary / 1-day rental drivers in today's schedule who are NOT in the 64 master fleet sequence
   const temporaryRentScheduleDrivers = React.useMemo(() => {
@@ -136,32 +127,30 @@ export const DailyManifestView: React.FC = () => {
   // -------------------------------------------------------------
   const handleRetrainAiModel = async () => {
     setIsRetraining(true);
-    setRetrainStepMsg('Ingesting historical schedules & driver logs (August 1–31 & September 1–7)...');
-    await new Promise(r => setTimeout(r, 600));
-
-    setRetrainStepMsg('Analyzing multi-day cycle progressions (Loading → En-Route → Offloading → Return)...');
-    await new Promise(r => setTimeout(r, 600));
-
-    setRetrainStepMsg('Extracting route transition models & calibrating accuracy weights...');
-    await new Promise(r => setTimeout(r, 500));
-
-    const result = trainManifestAiModel(drivers, schedules, manifests, learnedRules);
-    learnHistoricalRules(result.rules);
-    setModelStats(result.stats);
-
-    setIsRetraining(false);
-    setRetrainStepMsg('');
-    showToast(`⚡ AI Manifest Model retrained! Analyzed ${result.stats.totalTripsIngested} dispatches across ${result.stats.distinctDates} dates. Accuracy evaluated at ${result.stats.accuracyRate}%.`, 'success');
+    setRetrainStepMsg('Analyzing available driver histories, manifests, and timetable records…');
+    // Yield once so the working state renders; progress is not simulated.
+    await new Promise(resolve => setTimeout(resolve, 0));
+    try {
+      const result = trainManifestAiModel(drivers, schedules, manifests, learnedRules);
+      await learnHistoricalRules(result.rules);
+      setModelStats(result.stats);
+      showToast('Model refreshed from ' + result.stats.totalTripsIngested + ' distinct recorded driver/date/status observations. Accuracy remains unmeasured without a separate validation set.', 'success');
+    } catch (error) {
+      showToast(error instanceof Error ? 'Model training failed: ' + error.message : 'Model training failed.', 'error');
+    } finally {
+      setIsRetraining(false);
+      setRetrainStepMsg('');
+    }
   };
 
   const handleAutoPredictAll = () => {
-    const updated: Record<number, string> = {};
-    drivers.forEach((d, idx) => {
-      const pred = predictManifestTag(idx, selectedDate);
-      updated[idx] = pred.text;
+    const updated: Record<string, string> = {};
+    operationalDrivers.forEach(driver => {
+      const idx = drivers.findIndex(item => item.id === driver.id);
+      updated[driver.id] = predictManifestTag(idx, selectedDate).text;
     });
     setLocalTags(updated);
-    showToast(`🔮 Auto-applied high-confidence AI predictions for all ${drivers.length} drivers on ${selectedDate}!`, 'success');
+    showToast('Generated heuristic suggestions for ' + operationalDrivers.length + ' drivers on ' + selectedDate + '. Review suggestions before confirming the manifest.', 'info');
   };
 
   // -------------------------------------------------------------
@@ -176,7 +165,7 @@ export const DailyManifestView: React.FC = () => {
     if (pastManifestDates.length) {
       const lastDate = pastManifestDates[pastManifestDates.length - 1];
       if (manifests[lastDate]) {
-        const tag = manifests[lastDate][driverIdx] || manifests[lastDate][String(driverIdx)];
+        const tag = getDriverTag(manifests[lastDate], d.id, driverIdx);
         if (tag) return tag;
       }
     }
@@ -199,7 +188,7 @@ export const DailyManifestView: React.FC = () => {
     const d = drivers[driverIdx];
     if (!d) return { text: 'At Yanbu', conf: 'low', reason: 'Driver record not found' };
 
-    const confirmed = manifests[date]?.[driverIdx] || manifests[date]?.[String(driverIdx)];
+    const confirmed = manifests[date]?.[d.id] || manifests[date]?.[String(driverIdx)];
     const prev = getPreviousTag(driverIdx, date);
     const daySchedule = schedules[date]?.rows || [];
 
@@ -236,24 +225,23 @@ export const DailyManifestView: React.FC = () => {
 
   const handleApplyMultiSync = async () => {
     if (!parsedMultiResult || !parsedMultiResult.mappedDriversCount) return;
-
     setIsSyncingMulti(true);
-    await saveMultiDayManifests(parsedMultiResult.manifestByDate);
-
-    // Retrain AI Model to assimilate the newly synced multi-day historical manifests
-    const retrain = trainManifestAiModel(drivers, schedules, manifests, learnedRules);
-    learnHistoricalRules(retrain.rules);
-    setModelStats(retrain.stats);
-
-    setIsSyncingMulti(false);
-    showToast(
-      `⚡ Successfully synchronized ${parsedMultiResult.totalEntriesCount} manifest tags across ${parsedMultiResult.detectedDates.length} dates (${parsedMultiResult.detectedDates.join(', ')})! Real-time suggestions updated for today.`,
-      'success'
-    );
-
-    // Switch to Oct 5 (today) and manifest view
-    setSelectedDate(localTodayISO());
-    setSubTab('manifest');
+    try {
+      await saveMultiDayManifests(parsedMultiResult.manifestByDate);
+      const retrain = trainManifestAiModel(drivers, schedules, manifests, learnedRules);
+      await learnHistoricalRules(retrain.rules);
+      setModelStats(retrain.stats);
+      showToast(
+        'Synchronized ' + parsedMultiResult.totalEntriesCount + ' manifest tags across ' + parsedMultiResult.detectedDates.length + ' dates. Accuracy remains unmeasured until an independent validation set is available.',
+        'success'
+      );
+      setSelectedDate(localTodayISO());
+      setSubTab('manifest');
+    } catch (error) {
+      showToast(error instanceof Error ? 'Multi-day manifest sync failed: ' + error.message : 'Multi-day manifest sync failed. Check the connection and retry after verifying the saved dates.', 'error');
+    } finally {
+      setIsSyncingMulti(false);
+    }
   };
 
   // -------------------------------------------------------------
@@ -264,41 +252,41 @@ export const DailyManifestView: React.FC = () => {
     setAutoSyncedCount(schedRows.length);
 
     // Initialize localTags with predicted tags or confirmed tags
-    const initial: Record<number, string> = {};
-    drivers.forEach((d, idx) => {
-      const existing = todayTags[idx] || todayTags[String(idx)];
-      if (existing) {
-        initial[idx] = existing;
-      } else {
-        const pred = predictManifestTag(idx, selectedDate);
-        initial[idx] = pred.text;
-      }
+    const initial: Record<string, string> = {};
+    operationalDrivers.forEach(driver => {
+      const idx = drivers.findIndex(item => item.id === driver.id);
+      const existing = getDriverTag(todayTags, driver.id, idx);
+      initial[driver.id] = existing || predictManifestTag(idx, selectedDate).text;
     });
     setLocalTags(initial);
-  }, [selectedDate, schedules, manifests, drivers]);
+  }, [selectedDate, schedules, manifests, drivers, operationalDrivers]);
 
-  const handleTagChange = (idx: number, val: string) => {
-    setLocalTags(prev => ({ ...prev, [idx]: val }));
+  const handleTagChange = (driverId: string, val: string) => {
+    setLocalTags(prev => ({ ...prev, [driverId]: val }));
   };
 
   // -------------------------------------------------------------
   // CONFIRM & SAVE
   // -------------------------------------------------------------
   const handleConfirmAndSave = async () => {
-    const finalTags: Record<number, string> = {};
-    drivers.forEach((d, idx) => {
-      const existing = localTags[idx] !== undefined ? localTags[idx] : (todayTags[idx] || todayTags[String(idx)] || predictManifestTag(idx, selectedDate).text);
-      finalTags[idx] = existing;
+    const finalTags: Record<string, string> = {};
+    operationalDrivers.forEach(driver => {
+      const idx = drivers.findIndex(item => item.id === driver.id);
+      finalTags[driver.id] = localTags[driver.id] !== undefined ? localTags[driver.id] :
+        (getDriverTag(todayTags, driver.id, idx) || predictManifestTag(idx, selectedDate).text);
     });
-
-    await saveDailyManifest(selectedDate, finalTags);
-    showToast(`✓ Confirmed and saved daily manifest for all ${drivers.length} drivers on ${selectedDate}!`, 'success');
+    try {
+      await saveDailyManifest(selectedDate, finalTags);
+      showToast('Confirmed and saved the manifest for ' + operationalDrivers.length + ' drivers on ' + selectedDate + '.', 'success');
+    } catch (error) {
+      showToast(error instanceof Error ? 'Manifest was not saved: ' + error.message : 'Manifest was not saved. Check the connection and permissions.', 'error');
+    }
   };
 
   // -------------------------------------------------------------
   // HISTORICAL SCHEDULE LEARNER ENGINE
   // -------------------------------------------------------------
-  const handleLearnHistoricalSchedules = () => {
+  const handleLearnHistoricalSchedules = async () => {
     if (!learningPasteText.trim()) {
       showToast("Please paste historical schedule text first.", 'error');
       return;
@@ -308,7 +296,7 @@ export const DailyManifestView: React.FC = () => {
     let detectedDates = 0;
     let totalRows = 0;
     let rulesAdded = 0;
-    const newRules: LearnedRule[] = [];
+    const stagedRules = new Map<string, LearnedRule>();
 
     // Parse date blocks
     let currentDate = '';
@@ -348,34 +336,32 @@ export const DailyManifestView: React.FC = () => {
       rows.forEach(r => {
         const driverIdx = drivers.findIndex(d => norm(d.name).includes(norm(r.driver)) || norm(r.driver).includes(norm(d.name)));
         if (driverIdx >= 0) {
-          const actualTag = manifestForDate[driverIdx];
+          const actualTag = manifestForDate[drivers[driverIdx].id] || manifestForDate[String(driverIdx)];
           if (actualTag) {
             const ruleKey = `${norm(r.source)}>${norm(r.destination)}|${norm(r.customer)}|${norm(r.commodity)}`;
-            const existing = learnedRules.find(lr => lr.driverIndex === driverIdx && lr.result === actualTag);
-            if (existing) {
-              existing.hits += 1;
-              existing.lastSeen = dt;
-            } else {
-              newRules.push({
-                driverIndex: driverIdx,
-                driverName: drivers[driverIdx].name,
-                keys: [ruleKey],
-                result: actualTag,
-                hits: 1,
-                lastSeen: dt
-              });
-              rulesAdded++;
-            }
+            const driver = drivers[driverIdx];
+            const stableRuleKey = `${driver.id}__${actualTag}`;
+            const existing = stagedRules.get(stableRuleKey) ||
+              learnedRules.find(rule => (rule.driverId ? rule.driverId === driver.id : rule.driverIndex === driverIdx) && rule.result === actualTag);
+            stagedRules.set(stableRuleKey, {
+              driverId: driver.id,
+              driverIndex: driverIdx,
+              driverName: driver.name,
+              keys: Array.from(new Set([...(existing?.keys || []), ruleKey])),
+              result: actualTag,
+              hits: (existing?.hits || 0) + 1,
+              lastSeen: !existing || dt > existing.lastSeen ? dt : existing.lastSeen
+            });
+            if (!existing) rulesAdded++;
           }
         }
       });
     });
 
-    if (newRules.length > 0) {
-      learnHistoricalRules(newRules);
-    }
+    const newRules = Array.from(stagedRules.values());
+    if (newRules.length > 0) await learnHistoricalRules(newRules);
 
-    setLearningResult(`Processed ${detectedDates} date blocks (${totalRows} schedule rows). Learned & updated ${rulesAdded} high-confidence progression patterns!`);
+    setLearningResult(`Processed ${detectedDates} date blocks (${totalRows} schedule rows). Persisted ${newRules.length} stable-driver route rules (${rulesAdded} new patterns).`);
   };
 
   // -------------------------------------------------------------
@@ -388,33 +374,38 @@ export const DailyManifestView: React.FC = () => {
 
   const handleSaveBulk = async () => {
     const lines = bulkTagsText.replace(/\r/g, '').split('\n').map(l => l.trim()).filter(Boolean);
-    if (lines.length !== drivers.length) {
-      showToast(`Count Mismatch: Pasted ${lines.length} lines, but master driver sequence requires exactly ${drivers.length} lines.`, 'error');
+    if (lines.length !== operationalDrivers.length) {
+      showToast(`Count Mismatch: Pasted ${lines.length} lines, but the driver sequence for ${selectedDate} requires exactly ${operationalDrivers.length} lines.`, 'error');
       return;
     }
 
-    const bulkMap: Record<number, string> = {};
-    lines.forEach((tag, idx) => {
-      bulkMap[idx] = tag;
-    });
+    const bulkMap: Record<string, string> = {};
+    lines.forEach((tag, idx) => { if (operationalDrivers[idx]) bulkMap[operationalDrivers[idx].id] = tag; });
 
-    await saveDailyManifest(selectedDate, bulkMap);
-    showToast(`Saved ${lines.length} bulk tags in locked driver sequence for ${selectedDate}!`, 'success');
-    setBulkTagsText('');
-    setBulkPreviewCount(null);
+    try {
+      await saveDailyManifest(selectedDate, bulkMap);
+      showToast('Saved ' + lines.length + ' bulk tags in the driver sequence for ' + selectedDate + '.', 'success');
+      setBulkTagsText('');
+      setBulkPreviewCount(null);
+    } catch (error) {
+      showToast(error instanceof Error ? 'Bulk manifest was not saved: ' + error.message : 'Bulk manifest was not saved. Verify the data and retry.', 'error');
+    }
   };
 
   // -------------------------------------------------------------
   // EXCEL & CSV EXPORT
   // -------------------------------------------------------------
   const exportExcel = () => {
-    const data = drivers.map((d, idx) => ({
-      'SL#': idx + 1,
-      'Driver Name': d.name,
-      'Employee No': d.empNo,
-      'Vehicle Plate': d.assignedVehiclePlate || '—',
-      [selectedDate]: localTags[idx] !== undefined ? localTags[idx] : (todayTags[idx] || predictManifestTag(idx, selectedDate).text)
-    }));
+    const data = operationalDrivers.map(driver => {
+      const idx = drivers.findIndex(item => item.id === driver.id);
+      return {
+        'SL#': driver.seq || idx + 1,
+        'Driver Name': driver.name,
+        'Employee No': driver.empNo,
+        'Vehicle Plate': driver.assignedVehiclePlate || '—',
+        [selectedDate]: localTags[driver.id] !== undefined ? localTags[driver.id] : (getDriverTag(todayTags, driver.id, idx) || predictManifestTag(idx, selectedDate).text)
+      };
+    });
 
     const ws = XLSX.utils.json_to_sheet(data);
     const wb = XLSX.utils.book_new();
@@ -539,7 +530,7 @@ export const DailyManifestView: React.FC = () => {
             </div>
           </div>
           <span className="text-xs bg-purple-900/80 border border-purple-600 px-3 py-1 rounded-xl text-purple-200 font-mono font-bold">
-            Ingesting 984+ Historical Trips
+            Historical manifest learning
           </span>
         </div>
       )}
@@ -554,12 +545,12 @@ export const DailyManifestView: React.FC = () => {
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="text-base font-extrabold text-white">AI Manifest Prediction &amp; Training Engine</h3>
-                <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] font-mono font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
-                  <Sparkles className="w-3 h-3 text-emerald-400" /> {modelStats.accuracyRate}% Accuracy
+                <span className="bg-slate-700/70 text-slate-300 border border-slate-600 text-[10px] font-mono font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
+                  <Sparkles className="w-3 h-3 text-slate-400" /> Accuracy not measured
                 </span>
               </div>
               <p className="text-xs text-slate-300 mt-0.5">
-                Trained on historical August &amp; September daily manifests &bull; Auto-syncs timetable dispatches &bull; Heuristic cycle progression
+                Learns patterns from available manifest history &bull; Auto-syncs timetable dispatches &bull; Heuristic cycle progression
               </p>
             </div>
           </div>
@@ -575,9 +566,9 @@ export const DailyManifestView: React.FC = () => {
             <button
               onClick={handleAutoPredictAll}
               className="bg-gradient-to-r from-sky-600 to-blue-600 hover:from-sky-500 hover:to-blue-500 text-white font-bold text-xs px-4 py-2 rounded-xl shadow-md transition flex items-center gap-1.5 cursor-pointer"
-              title={`Apply AI predictions to all ${drivers.length} drivers for this date`}
+              title={`Apply heuristic suggestions to all ${operationalDrivers.length} drivers for ${selectedDate}`}
             >
-              <Sparkles className="w-3.5 h-3.5 text-sky-200" /> 🔮 Auto-Predict All {drivers.length} Drivers for Today
+              <Sparkles className="w-3.5 h-3.5 text-sky-200" /> 🔮 Auto-Predict All {operationalDrivers.length} Drivers for {selectedDate}
             </button>
           </div>
         </div>
@@ -587,13 +578,13 @@ export const DailyManifestView: React.FC = () => {
           <div className="bg-slate-950/70 p-3 rounded-xl border border-slate-800">
             <span className="text-[10px] font-mono uppercase text-slate-400">INGESTED DISPATCHES</span>
             <div className="text-base font-black text-white font-mono mt-0.5">{modelStats.totalTripsIngested} Trips</div>
-            <div className="text-[10px] text-slate-500">August &bull; September historical data</div>
+            <div className="text-[10px] text-slate-500">Available historical records</div>
           </div>
 
           <div className="bg-slate-950/70 p-3 rounded-xl border border-slate-800">
             <span className="text-[10px] font-mono uppercase text-slate-400">DRIVERS MODELLED</span>
-            <div className="text-base font-black text-sky-400 font-mono mt-0.5">{drivers.length} Fleet Drivers</div>
-            <div className="text-[10px] text-slate-500">Locked master sequence 1–{drivers.length}</div>
+            <div className="text-base font-black text-sky-400 font-mono mt-0.5">{operationalDrivers.length} Operational Drivers</div>
+            <div className="text-[10px] text-slate-500">Archived drivers remain available on historical dates.</div>
           </div>
 
           <div className="bg-slate-950/70 p-3 rounded-xl border border-slate-800">
@@ -634,7 +625,7 @@ export const DailyManifestView: React.FC = () => {
             </div>
           </div>
           <div className="text-[11px] font-mono text-amber-300/80 bg-amber-900/30 px-3 py-1.5 rounded-xl border border-amber-500/30 shrink-0">
-            Locked Manifest Sequence (1–{drivers.length})
+            Manifest sequence for {selectedDate}: {operationalDrivers.length} drivers
           </div>
         </div>
       )}
@@ -651,9 +642,10 @@ export const DailyManifestView: React.FC = () => {
           <button
             onClick={() => {
               const schedRows = schedules[selectedDate]?.rows || [];
-              const updated: Record<number, string> = {};
-              drivers.forEach((d, idx) => {
-                updated[idx] = predictManifestTag(idx, selectedDate).text;
+              const updated: Record<string, string> = {};
+              operationalDrivers.forEach(driver => {
+                const idx = drivers.findIndex(item => item.id === driver.id);
+                updated[driver.id] = predictManifestTag(idx, selectedDate).text;
               });
               setLocalTags(updated);
               showToast("Re-synchronized manifest predictions with latest timetable schedule!", 'info');
@@ -678,7 +670,7 @@ export const DailyManifestView: React.FC = () => {
             subTab === 'manifest' ? 'border-emerald-500 text-white' : 'border-transparent text-slate-400 hover:text-slate-200'
           }`}
         >
-          <ClipboardList className="w-4 h-4" /> Daily Manifest ({drivers.length} Drivers)
+          <ClipboardList className="w-4 h-4" /> Daily Manifest ({operationalDrivers.length} Drivers)
         </button>
         <button
           onClick={() => setSubTab('paste-multi')}
@@ -737,7 +729,7 @@ export const DailyManifestView: React.FC = () => {
                 onClick={() => setManifestFilter('all')}
                 className={`px-2.5 py-1 rounded-lg font-bold transition ${manifestFilter === 'all' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'}`}
               >
-                All ({drivers.length})
+                All ({operationalDrivers.length})
               </button>
               <button
                 onClick={() => setManifestFilter('scheduled')}
@@ -766,7 +758,7 @@ export const DailyManifestView: React.FC = () => {
             </div>
 
             <span className="font-mono text-slate-400 hidden sm:inline">
-              Locked driver sequence (SL 1–{drivers.length})
+              Driver sequence for {selectedDate}; master sequence numbers are preserved
             </span>
           </div>
 
@@ -784,11 +776,12 @@ export const DailyManifestView: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800">
-                {drivers
-                  .map((d, idx) => {
+                {operationalDrivers
+                  .map((d) => {
+                    const idx = drivers.findIndex(item => item.id === d.id);
                     const prev = getPreviousTag(idx, selectedDate);
                     const pred = predictManifestTag(idx, selectedDate);
-                    const currentVal = localTags[idx] !== undefined ? localTags[idx] : (todayTags[idx] || todayTags[String(idx)] || pred.text);
+                    const currentVal = localTags[d.id] !== undefined ? localTags[d.id] : (getDriverTag(todayTags, d.id, idx) || pred.text);
 
                     const matchedRow = currentSchedule.find(r => {
                       const rn = norm(r.driverName);
@@ -863,12 +856,12 @@ export const DailyManifestView: React.FC = () => {
                             <textarea
                               rows={2}
                               value={currentVal}
-                              onChange={(e) => handleTagChange(idx, e.target.value)}
+                              onChange={(e) => handleTagChange(d.id, e.target.value)}
                               className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-white text-xs font-mono focus:outline-none focus:border-blue-500 custom-scrollbar"
                             />
                             {differsFromPred && (
                               <button
-                                onClick={() => handleTagChange(idx, pred.text)}
+                                onClick={() => handleTagChange(d.id, pred.text)}
                                 className="absolute right-2 top-2 bg-purple-900/80 hover:bg-purple-800 text-purple-200 text-[10px] font-mono px-2 py-0.5 rounded border border-purple-700 shadow flex items-center gap-1 cursor-pointer"
                                 title="Reset to AI suggested prediction"
                               >
@@ -890,7 +883,7 @@ export const DailyManifestView: React.FC = () => {
                               <button
                                 key={preset}
                                 type="button"
-                                onClick={() => handleTagChange(idx, preset)}
+                                onClick={() => handleTagChange(d.id, preset)}
                                 className={`text-[9px] px-1.5 py-0.5 rounded font-mono transition border ${
                                   currentVal === preset
                                     ? 'bg-blue-600 text-white border-blue-400 font-bold'
@@ -940,7 +933,7 @@ export const DailyManifestView: React.FC = () => {
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
               <h3 className="font-bold text-white text-base">Driver Historical Timeline</h3>
-              <p className="text-xs text-slate-400 mt-0.5">August and September 1–7 verified day-by-day records</p>
+              <p className="text-xs text-slate-400 mt-0.5">Recorded day-by-day data available in this workspace</p>
             </div>
             <select
               value={selectedDriverIdx}
@@ -1017,7 +1010,7 @@ Date: 2026-09-06
                   <button
                     onClick={handleRetrainAiModel}
                     className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow-lg flex items-center gap-1.5 transition"
-                    title="Train directly on stored August & September dispatch schedules and manifests"
+                    title="Train on the available stored dispatch schedules and manifests"
                   >
                     <Sparkles className="w-3.5 h-3.5" /> ⚡ Auto-Train on Stored Data
                   </button>
@@ -1112,7 +1105,7 @@ Date: 2026-09-06
           <div>
             <h3 className="font-bold text-white text-base">Bulk Import Manifest Tags for {selectedDate}</h3>
             <p className="text-xs text-slate-400 mt-1">
-              Select date, then paste one tag per line in the same order as the locked driver sequence (SL 1 to {drivers.length}). Count must match exactly before saving.
+              Select a date, then paste one tag per line in that date's driver sequence ({operationalDrivers.length} drivers). Past dates include archived drivers so historical records can be maintained.
             </p>
           </div>
 
@@ -1123,7 +1116,7 @@ Date: 2026-09-06
             placeholder={`SULPHER Collection from LUBEREFF
 SA Supply for CISCO - Under Offloading at Kuwait
 FC Supply for ZAMIL - Under Loading at Yanbu
-... (exactly ${drivers.length} lines)`}
+... (exactly ${operationalDrivers.length} lines)`}
             className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-white font-mono placeholder-slate-600 focus:outline-none focus:border-emerald-500"
           />
 
@@ -1137,16 +1130,16 @@ FC Supply for ZAMIL - Under Loading at Yanbu
 
             {bulkPreviewCount !== null && (
               <span className={`text-xs font-mono font-bold ${
-                bulkPreviewCount === drivers.length ? 'text-emerald-400' : 'text-amber-400'
+                bulkPreviewCount === operationalDrivers.length ? 'text-emerald-400' : 'text-amber-400'
               }`}>
-                Detected {bulkPreviewCount} tags / {drivers.length} required.
+                Detected {bulkPreviewCount} tags / {operationalDrivers.length} required.
                 {bulkPreviewCount === drivers.length ? ' ✓ Match confirmed!' : ' ⚠️ Mismatch! Check pasted lines.'}
               </span>
             )}
 
             <button
               onClick={handleSaveBulk}
-              disabled={bulkPreviewCount !== drivers.length}
+              disabled={bulkPreviewCount !== operationalDrivers.length}
               className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs px-5 py-2.5 rounded-xl shadow-lg transition"
             >
               Save Bulk Tags
