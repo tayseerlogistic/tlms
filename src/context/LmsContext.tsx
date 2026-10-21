@@ -773,10 +773,29 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const restoreFullBackup = async (data: any): Promise<{ success: boolean; message: string }> => {
     try {
       if (!data || typeof data !== 'object' || Array.isArray(data)) return { success: false, message: 'Backup must be a JSON object.' };
-      if (data.meta?.schema && data.meta.schema !== 'tls-lms') return { success: false, message: 'This file is not a recognized TLMS backup.' };
-      const recognized = ['trucks', 'equipment', 'drivers', 'commodities', 'stores', 'schedules', 'manifests', 'kmRecords', 'km', 'dieselLogs', 'diesel', 'dataQuality', 'learnedRules', 'cashEmployees'];
-      const found = recognized.some(key => Object.prototype.hasOwnProperty.call(data, key)) || Array.isArray(data.cashbook?.transactions) || Array.isArray(data.cashbook?.accounts);
-      if (!found) return { success: false, message: 'No recognized TLMS backup fields were found. Nothing was restored.' };
+      // Restore replaces complete collections. Require a real TLMS export so a small/partial JSON
+      // payload cannot accidentally erase records that are simply absent from the file.
+      if (data.meta?.schema !== 'tls-lms') return { success: false, message: 'This is not a complete TLMS backup. Export a full backup from Settings → Backup & Restore before restoring.' };
+      const requiredSections: Array<[string, boolean]> = [
+        ['trucks', Array.isArray(data.trucks)],
+        ['equipment', Array.isArray(data.equipment)],
+        ['drivers', Array.isArray(data.drivers)],
+        ['commodities', Array.isArray(data.commodities)],
+        ['stores', Array.isArray(data.stores)],
+        ['schedules', Boolean(data.schedules && typeof data.schedules === 'object' && !Array.isArray(data.schedules))],
+        ['manifests', Boolean(data.manifests && typeof data.manifests === 'object' && !Array.isArray(data.manifests))],
+        ['cashbook.accounts', Array.isArray(data.cashbook?.accounts)],
+        ['cashbook.transactions', Array.isArray(data.cashbook?.transactions)],
+        ['kmRecords', Array.isArray(data.kmRecords ?? data.km)],
+        ['dieselLogs', Array.isArray(data.dieselLogs ?? data.diesel)]
+      ];
+      const missingSections = requiredSections.filter(([, valid]) => !valid).map(([name]) => name);
+      if (missingSections.length) return { success: false, message: 'Backup is incomplete. Missing or invalid sections: ' + missingSections.join(', ') + '. Nothing was restored.' };
+      const restoreDrivers = data.drivers as Driver[];
+      const normalizedRestoreManifests: Record<string, Record<string, string>> | undefined = data.manifests
+        ? Object.fromEntries(Object.entries(data.manifests as Record<string, Record<string, string>>)
+            .map(([date, tags]) => [date, normalizeManifestTags(tags, restoreDrivers)]))
+        : undefined;
 
       const arrayFields: Array<[string, unknown]> = [
         ['trucks', data.trucks], ['equipment', data.equipment], ['drivers', data.drivers], ['commodities', data.commodities],
@@ -823,7 +842,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (Array.isArray(data.kmRecords ?? data.km)) await replaceCollection('km_records', data.kmRecords ?? data.km);
         if (Array.isArray(data.dieselLogs ?? data.diesel)) await replaceCollection('diesel_logs', data.dieselLogs ?? data.diesel);
         if (data.schedules) await replaceCollection('schedules', Object.entries(data.schedules).map(([date, item]) => ({ ...(item as object), id: date, date })));
-        if (data.manifests) await replaceCollection('manifests', Object.entries(data.manifests).map(([date, tags]) => ({ id: date, date, tags })));
+        if (normalizedRestoreManifests) await replaceCollection('manifests', Object.entries(normalizedRestoreManifests).map(([date, tags]) => ({ id: date, date, tags })));
         if (Array.isArray(data.dataQuality)) await replaceCollection('data_quality', data.dataQuality);
         if (Array.isArray(data.learnedRules)) await setDoc(doc(db, 'app_state', 'learnedRules'), { rules: data.learnedRules, updatedAt: new Date().toISOString() });
       }
@@ -834,13 +853,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (Array.isArray(data.commodities)) setCommodities(data.commodities as Commodity[]);
       if (Array.isArray(data.stores)) setStores(data.stores as StoreMapItem[]);
       if (data.schedules) setSchedules(data.schedules as Record<string, DailySchedule>);
-      if (data.manifests) {
-        const normalizedManifests: Record<string, Record<string, string>> = {};
-        Object.entries(data.manifests as Record<string, Record<string, string>>).forEach(([date, tags]) => {
-          normalizedManifests[date] = normalizeManifestTags(tags, Array.isArray(data.drivers) ? data.drivers as Driver[] : drivers);
-        });
-        setManifests(normalizedManifests);
-      }
+      if (normalizedRestoreManifests) setManifests(normalizedRestoreManifests);
       if (Array.isArray(data.cashbook?.accounts)) setCashAccounts(data.cashbook.accounts as CashAccount[]);
       if (Array.isArray(data.cashbook?.transactions)) setCashTransactions(data.cashbook.transactions as CashTransaction[]);
       if (Array.isArray(data.kmRecords ?? data.km)) setKmRecords((data.kmRecords ?? data.km) as KmRecord[]);
