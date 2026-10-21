@@ -124,6 +124,12 @@ export const TimetableParserView: React.FC = () => {
             storeMap: data.storeMap && typeof data.storeMap === 'object' && !Array.isArray(data.storeMap)
               ? data.storeMap as TimetableStoreMap : prev.storeMap
           };
+          const unchanged =
+            JSON.stringify(prev.drivers) === JSON.stringify(next.drivers) &&
+            JSON.stringify(prev.vehicles) === JSON.stringify(next.vehicles) &&
+            JSON.stringify(prev.commodities) === JSON.stringify(next.commodities) &&
+            JSON.stringify(prev.storeMap) === JSON.stringify(next.storeMap);
+          if (unchanged) return prev;
           saveTimetableDatabase(next);
           return next;
         });
