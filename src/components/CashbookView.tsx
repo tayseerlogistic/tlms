@@ -182,7 +182,7 @@ export const CashbookView: React.FC = () => {
       Account: t.account,
       Type: t.type,
       Category: t.category,
-      Amount: t.amount,
+      'Signed Cash Impact (SAR)': transactionCashImpact(t, filtered),
       Description: t.description,
       Status: t.status,
       'Created By': t.createdBy || 'Staff'
@@ -228,7 +228,7 @@ export const CashbookView: React.FC = () => {
     };
     drawHeader();
     reportRows.forEach(tx => {
-      const cells = [tx.dateISO || tx.date, tx.employee || '—', tx.account, tx.type, tx.category, Number(tx.amount).toFixed(2), tx.description || '', tx.status];
+      const cells = [tx.dateISO || tx.date, tx.employee || '—', tx.account, tx.type, tx.category, transactionCashImpact(tx, reportRows).toFixed(2), tx.description || '', tx.status];
       const wrapped = cells.map((value, index) => pdf.splitTextToSize(String(value), widths[index] - 2));
       const rowHeight = Math.max(6, ...wrapped.map(lines => lines.length * 4));
       if (y + rowHeight > 190) { pdf.addPage(); y = 15; drawHeader(); }
