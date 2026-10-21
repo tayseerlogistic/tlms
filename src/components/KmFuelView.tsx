@@ -697,8 +697,17 @@ TLS Fleet Management`;
         const [year, monthNumber] = month.split('-').map(Number);
         return new Intl.DateTimeFormat('en', { month: 'short', year: 'numeric', timeZone: 'UTC' }).format(new Date(Date.UTC(year, monthNumber - 1, 1)));
       }).join(', ');
-      const skippedNote = parsed.skippedRows ? ` ${parsed.skippedRows} invalid row(s) were skipped.` : '';
-      alert(`Successfully imported ${parsed.records.length} KM records across ${parsed.months.length} month(s): ${monthLabel}.${skippedNote}`);
+      const latestImportedMonth = parsed.months[parsed.months.length - 1];
+      if (latestImportedMonth) {
+        // The file may contain historical months, not the month that was previously selected.
+        // Show the latest imported month immediately so users can verify the imported daily KM.
+        setSelectedMonth(latestImportedMonth);
+        setMatrixMonth(latestImportedMonth);
+        setMatrixViewMode('month-grid');
+        setActiveTab('monthly-matrix');
+      }
+      const skippedNote = parsed.skippedRows ? ` ${parsed.skippedRows} invalid row(s) or daily reading(s) were skipped.` : '';
+      alert(`Successfully imported ${parsed.records.length} KM readings across ${parsed.months.length} month(s): ${monthLabel}. The latest imported month is now selected in the daily KM matrix.${skippedNote}`);
       setIsUploadModalOpen(false);
       setUploadJsonText('');
     } catch (error) {
@@ -2230,7 +2239,7 @@ TLS Fleet Management`;
                                   }`}
                                   title={`${t.plate} on ${dateKey}: ${rec ? `${rec.km} KM (Odo: ${rec.odometer || '—'})` : '0 KM / Empty'}. Click to edit.`}
                                 >
-                                  {rec && rec.km > 0 ? rec.km : '—'}
+                                  {rec ? (rec.km || 0).toLocaleString() : '—'}
                                 </td>
                               );
                             })}
