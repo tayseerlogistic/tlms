@@ -602,7 +602,8 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const reverseCashTransaction = async (id: string, reason?: string) => {
     const original = cashTransactions.find(tx => tx.id === id);
-    if (!original) return;
+    if (!original) throw new Error('Cashbook transaction not found.');
+    if (original.status === 'Reversed' || original.type === 'Reversal') throw new Error('This transaction is already reversed or is itself a reversal.');
     const reversalId = 'REV-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).substring(2, 6).toUpperCase();
     const reversal: CashTransaction = {
       id: reversalId, date: ksaDateISO(), dateISO: ksaDateISO(), account: original.account, employee: original.employee,
@@ -610,16 +611,16 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       description: 'Reversal of ' + id + (reason ? ': ' + reason : ''), status: 'Posted', reversalOf: id, reversedType: original.type,
       createdAt: new Date().toISOString(), createdBy: profile?.email || user?.email || 'Cashier'
     };
-    if (user || profile) {
-      await setDoc(doc(db, 'cashbook', reversalId), reversal);
-      await updateDoc(doc(db, 'cashbook', id), { status: 'Reversed' });
-    }
+    if (!(auth.currentUser || user)) throw new Error('You must be signed in to Firebase to reverse a Cashbook transaction.');
+    const batch = writeBatch(db);
+    batch.set(doc(db, 'cashbook', reversalId), reversal);
+    batch.update(doc(db, 'cashbook', id), { status: 'Reversed' });
+    await batch.commit();
     setCashTransactions(prev => [reversal, ...prev.map(tx => tx.id === id ? { ...tx, status: 'Reversed' as const } : tx)]);
   };
 
-  const deleteCashTransaction = async (id: string) => {
-    if (user || profile) await deleteDoc(doc(db, 'cashbook', id));
-    setCashTransactions(prev => prev.filter(tx => tx.id !== id));
+  const deleteCashTransaction = async (_id: string) => {
+    throw new Error('Posted cashbook transactions cannot be permanently deleted. Use reverseCashTransaction so the original and correction remain in the audit trail.');
   };
 
   const addKmRecord = async (rec: Omit<KmRecord, 'id'>) => {
