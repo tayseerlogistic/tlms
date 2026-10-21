@@ -401,127 +401,91 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const saveDailySchedule = async (date: string, rows: any[], syncToManifest = true) => {
     const schedObj: DailySchedule = {
-      date,
-      rows,
-      confirmed: true,
-      updatedAt: new Date().toISOString(),
+      date, rows, confirmed: true, updatedAt: new Date().toISOString(),
       updatedBy: profile?.email || user?.email || 'Dispatcher'
     };
+    if (user || profile) await setDoc(doc(db, 'schedules', date), schedObj);
     setSchedules(prev => ({ ...prev, [date]: schedObj }));
 
-    // Auto-sync timetable dispatched rows into manifests for the date
     if (syncToManifest && rows && rows.length > 0) {
-      setManifests(prev => {
-        const currentManifest = { ...(prev[date] || {}) };
-        rows.forEach(r => {
-          if (!r.driverName && !r.plateNo) return;
-          const drvIdx = drivers.findIndex(d => {
-            const dNorm = (d.name || '').toUpperCase().replace(/\s+/g, ' ').trim();
-            const rNorm = (r.driverName || '').toUpperCase().replace(/\s+/g, ' ').trim();
-            const nameMatch = dNorm && rNorm && (dNorm.includes(rNorm) || rNorm.includes(dNorm));
-            const plateMatch = r.plateNo && d.assignedVehiclePlate &&
-              r.plateNo.replace(/\s+/g, '').toUpperCase() === d.assignedVehiclePlate.replace(/\s+/g, '').toUpperCase();
-            return nameMatch || plateMatch;
-          });
-
-          if (drvIdx >= 0) {
-            const commRaw = (r.commodity || '').split('/')[0].trim();
-            const comm = commRaw.replace(/\s+Granular$/i, '').trim();
-            const cust = r.customer || r.supplier || r.store || 'Customer';
-            const src = r.source || 'Yanbu';
-            const tag = `${comm ? comm + ' ' : ''}Supply for ${cust} - Under Loading at ${src}`;
-            currentManifest[drvIdx] = tag;
-          }
+      const currentManifest: Record<string, string> = { ...(manifests[date] || {}) };
+      rows.forEach(row => {
+        if (!row.driverName && !row.plateNo) return;
+        const driver = drivers.find(d => {
+          const dNorm = (d.name || '').toUpperCase().replace(/\s+/g, ' ').trim();
+          const rNorm = (row.driverName || '').toUpperCase().replace(/\s+/g, ' ').trim();
+          const nameMatch = dNorm && rNorm && (dNorm.includes(rNorm) || rNorm.includes(dNorm));
+          const plateMatch = row.plateNo && d.assignedVehiclePlate && row.plateNo.replace(/\s+/g, '').toUpperCase() === d.assignedVehiclePlate.replace(/\s+/g, '').toUpperCase();
+          return Boolean(nameMatch || plateMatch);
         });
-        return { ...prev, [date]: currentManifest };
-      });
-    }
-
-    if (user) {
-      try {
-        await setDoc(doc(db, 'schedules', date), schedObj);
-      } catch (e) {
-        console.warn("Error saving schedule to Firestore:", e);
-      }
-    }
-  };
-
-  const saveDailyManifest = async (date: string, tags: Record<number, string>) => {
-    setManifests(prev => ({
-      ...prev,
-      [date]: { ...(prev[date] || {}), ...tags }
-    }));
-
-    // Also update driver history records
-    setDrivers(prev => {
-      const copy = [...prev];
-      Object.entries(tags).forEach(([idxStr, tag]) => {
-        const idx = Number(idxStr);
-        if (copy[idx]) {
-          copy[idx] = {
-            ...copy[idx],
-            history: { ...(copy[idx].history || {}), [date]: tag }
-          };
+        if (driver) {
+          const commRaw = (row.commodity || '').split('/')[0].trim();
+          const comm = commRaw.replace(/\s+Granular$/i, '').trim();
+          const customer = row.customer || row.supplier || row.store || 'Customer';
+          const source = row.source || 'Yanbu';
+          currentManifest[driver.id] = (comm ? comm + ' ' : '') + 'Supply for ' + customer + ' - Under Loading at ' + source;
         }
       });
-      return copy;
-    });
-
-    if (user || profile) {
-      try {
-        await setDoc(doc(db, 'manifests', date), {
-          date,
-          tags,
-          confirmedAt: new Date().toISOString(),
-          confirmedBy: profile?.email || user?.email || 'Operator',
-          driverCount: Object.keys(tags).length
-        });
-      } catch (e) {
-        console.warn("Error saving manifest to Firestore:", e);
-      }
+      if (user || profile) await setDoc(doc(db, 'manifests', date), {
+        date, tags: currentManifest, confirmedAt: new Date().toISOString(),
+        confirmedBy: profile?.email || user?.email || 'Dispatcher', driverCount: Object.keys(currentManifest).length
+      });
+      setManifests(prev => ({ ...prev, [date]: currentManifest }));
     }
   };
 
-  const saveMultiDayManifests = async (batchData: Record<string, Record<number, string>>) => {
+  const deleteDailySchedule = async (date: string) => {
+    if (user || profile) await deleteDoc(doc(db, 'schedules', date));
+    setSchedules(prev => { const next = { ...prev }; delete next[date]; return next; });
+  };
+
+  const saveDailyManifest = async (date: string, tags: Record<string, string>) => {
+    const normalized: Record<string, string> = {};
+    Object.entries(tags || {}).forEach(([key, value]) => {
+      const numericKey = key.trim() !== '' && Number.isInteger(Number(key));
+      const driver = numericKey ? drivers[Number(key)] : undefined;
+      normalized[driver?.id || key] = value;
+    });
+    if (user || profile) await setDoc(doc(db, 'manifests', date), {
+      date, tags: normalized, confirmedAt: new Date().toISOString(),
+      confirmedBy: profile?.email || user?.email || 'Operator', driverCount: Object.keys(normalized).length
+    });
+    setManifests(prev => ({ ...prev, [date]: { ...(prev[date] || {}), ...normalized } }));
+    setDrivers(prev => prev.map(driver => {
+      const tag = normalized[driver.id];
+      return tag ? { ...driver, history: { ...(driver.history || {}), [date]: tag } } : driver;
+    }));
+  };
+
+  const saveMultiDayManifests = async (batchData: Record<string, Record<string, string>>) => {
+    const normalizedBatch: Record<string, Record<string, string>> = {};
+    Object.entries(batchData).forEach(([date, tags]) => {
+      const normalized: Record<string, string> = {};
+      Object.entries(tags || {}).forEach(([key, value]) => {
+        const numericKey = key.trim() !== '' && Number.isInteger(Number(key));
+        const driver = numericKey ? drivers[Number(key)] : undefined;
+        normalized[driver?.id || key] = value;
+      });
+      normalizedBatch[date] = normalized;
+    });
+    if (user || profile) {
+      for (const [date, tags] of Object.entries(normalizedBatch)) {
+        await setDoc(doc(db, 'manifests', date), {
+          date, tags, confirmedAt: new Date().toISOString(),
+          confirmedBy: profile?.email || user?.email || 'Dispatcher', driverCount: Object.keys(tags).length
+        });
+      }
+    }
     setManifests(prev => {
       const next = { ...prev };
-      Object.entries(batchData).forEach(([dt, tags]) => {
-        next[dt] = { ...(next[dt] || {}), ...tags };
-      });
+      Object.entries(normalizedBatch).forEach(([date, tags]) => { next[date] = { ...(next[date] || {}), ...tags }; });
       return next;
     });
-
-    setDrivers(prev => {
-      const copy = [...prev];
-      Object.entries(batchData).forEach(([dt, tags]) => {
-        Object.entries(tags).forEach(([idxStr, tag]) => {
-          const idx = Number(idxStr);
-          if (copy[idx]) {
-            copy[idx] = {
-              ...copy[idx],
-              history: { ...(copy[idx].history || {}), [dt]: tag }
-            };
-          }
-        });
-      });
-      return copy;
-    });
-
-    if (user || profile) {
-      for (const [dt, tags] of Object.entries(batchData)) {
-        try {
-          await setDoc(doc(db, 'manifests', dt), {
-            date: dt,
-            tags,
-            confirmedAt: new Date().toISOString(),
-            confirmedBy: profile?.email || user?.email || 'Dispatcher',
-            driverCount: Object.keys(tags).length
-          });
-        } catch (e) {
-          console.warn("Error saving multi-day manifest to Firestore:", e);
-        }
-      }
-    }
+    setDrivers(prev => prev.map(driver => {
+      const history = { ...(driver.history || {}) };
+      Object.entries(normalizedBatch).forEach(([date, tags]) => { if (tags[driver.id]) history[date] = tags[driver.id]; });
+      return { ...driver, history };
+    }));
   };
 
   const addCashTransaction = async (txData: Omit<CashTransaction, 'id' | 'createdAt'>) => {
@@ -617,8 +581,8 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const revId = 'REV-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).substring(2, 6).toUpperCase();
     const reversalTx: CashTransaction = {
       id: revId,
-      date: new Date().toISOString().substring(0, 10),
-      dateISO: new Date().toISOString().substring(0, 10),
+      date: ksaDateISO(),
+      dateISO: ksaDateISO(),
       account: original.account,
       employee: original.employee,
       type: 'Reversal',
@@ -878,6 +842,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     saveDriver,
     deleteDriver,
     saveDailySchedule,
+    deleteDailySchedule,
     saveDailyManifest,
     saveMultiDayManifests,
     addCashTransaction,
