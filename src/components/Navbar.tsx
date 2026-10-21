@@ -118,6 +118,12 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, setCurrentTab, onOpe
 
         <div className="min-w-0 flex flex-wrap items-center justify-start xl:justify-end gap-2 sm:gap-3 xl:col-start-2 xl:row-start-1 xl:row-span-2">
         <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3">
+          {!user && !profile && (
+            <span title="Unsigned changes are local demo data and are not shared with other users." className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wide text-amber-300">
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+              Demo · Local only
+            </span>
+          )}
           {/* Quick Settings Shortcut button */}
           <button
             onClick={() => setCurrentTab('settings')}
