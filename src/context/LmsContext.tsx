@@ -440,15 +440,21 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setDrivers(prev => prev.map(driver => driver.id === id ? archivedDriver : driver));
   };
 
+  const commitFirestoreOperations = async (operations: Array<(batch: ReturnType<typeof writeBatch>) => void>) => {
+    if (!(auth.currentUser || user || profile)) return;
+    // Firestore batches are limited to 500 operations; leave headroom.
+    for (let offset = 0; offset < operations.length; offset += 450) {
+      const batch = writeBatch(db);
+      operations.slice(offset, offset + 450).forEach(operation => operation(batch));
+      await batch.commit();
+    }
+  };
+
   const saveDailySchedule = async (date: string, rows: any[], syncToManifest = true) => {
     const now = new Date().toISOString();
-    const schedObj: DailySchedule = {
-      date, rows, confirmed: true, updatedAt: now,
-      updatedBy: profile?.email || user?.email || 'Dispatcher'
-    };
+    const schedObj: DailySchedule = { date, rows, confirmed: true, updatedAt: now, updatedBy: profile?.email || user?.email || 'Dispatcher' };
     const shouldSyncManifest = syncToManifest && rows.length > 0;
     const nextManifest: Record<string, string> = { ...(manifests[date] || {}) };
-
     if (shouldSyncManifest) {
       rows.forEach(row => {
         if (!row.driverName && !row.plateNo) return;
@@ -456,8 +462,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           const driverName = (d.name || '').toUpperCase().replace(/\s+/g, ' ').trim();
           const rowName = (row.driverName || '').toUpperCase().replace(/\s+/g, ' ').trim();
           const nameMatch = Boolean(driverName && rowName && (driverName.includes(rowName) || rowName.includes(driverName)));
-          const plateMatch = Boolean(row.plateNo && d.assignedVehiclePlate &&
-            row.plateNo.replace(/\s+/g, '').toUpperCase() === d.assignedVehiclePlate.replace(/\s+/g, '').toUpperCase());
+          const plateMatch = Boolean(row.plateNo && d.assignedVehiclePlate && row.plateNo.replace(/\s+/g, '').toUpperCase() === d.assignedVehiclePlate.replace(/\s+/g, '').toUpperCase());
           return nameMatch || plateMatch;
         });
         if (driver) {
@@ -468,25 +473,27 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
       });
     }
-
-    // Persist schedule and derived manifest together so a failed write does not report a successful partial save.
-    if (user || profile) {
-      const batch = writeBatch(db);
-      batch.set(doc(db, 'schedules', date), schedObj);
-      if (shouldSyncManifest) {
-        batch.set(doc(db, 'manifests', date), {
-          date, tags: nextManifest, confirmedAt: now,
-          confirmedBy: profile?.email || user?.email || 'Dispatcher', driverCount: Object.keys(nextManifest).length
-        });
-      }
-      await batch.commit();
+    const updatedDrivers = drivers.map(driver => {
+      const tag = shouldSyncManifest ? nextManifest[driver.id] : undefined;
+      if (!tag || driver.history?.[date] === tag) return driver;
+      return { ...driver, history: { ...(driver.history || {}), [date]: tag } };
+    });
+    const operations: Array<(batch: ReturnType<typeof writeBatch>) => void> = [batch => batch.set(doc(db, 'schedules', date), schedObj)];
+    if (shouldSyncManifest) {
+      operations.push(batch => batch.set(doc(db, 'manifests', date), {
+        date, tags: nextManifest, confirmedAt: now, confirmedBy: profile?.email || user?.email || 'Dispatcher', driverCount: Object.keys(nextManifest).length
+      }));
+      updatedDrivers.forEach(driver => {
+        if (driver !== drivers.find(original => original.id === driver.id)) operations.push(batch => batch.set(doc(db, 'drivers', driver.id), driver));
+      });
     }
-
+    await commitFirestoreOperations(operations);
     setSchedules(prev => ({ ...prev, [date]: schedObj }));
-    if (shouldSyncManifest) setManifests(prev => ({ ...prev, [date]: nextManifest }));
+    if (shouldSyncManifest) { setManifests(prev => ({ ...prev, [date]: nextManifest })); setDrivers(updatedDrivers); }
   };
+
   const deleteDailySchedule = async (date: string) => {
-    if (user || profile) await deleteDoc(doc(db, 'schedules', date));
+    if (auth.currentUser || user || profile) await deleteDoc(doc(db, 'schedules', date));
     setSchedules(prev => { const next = { ...prev }; delete next[date]; return next; });
   };
 
@@ -497,15 +504,20 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const driver = numericKey ? drivers[Number(key)] : undefined;
       normalized[driver?.id || key] = value;
     });
-    if (user || profile) await setDoc(doc(db, 'manifests', date), {
-      date, tags: normalized, confirmedAt: new Date().toISOString(),
-      confirmedBy: profile?.email || user?.email || 'Operator', driverCount: Object.keys(normalized).length
+    const now = new Date().toISOString();
+    const updatedDrivers = drivers.map(driver => {
+      if (normalized[driver.id] === undefined || driver.history?.[date] === normalized[driver.id]) return driver;
+      return { ...driver, history: { ...(driver.history || {}), [date]: normalized[driver.id] } };
     });
+    const operations: Array<(batch: ReturnType<typeof writeBatch>) => void> = [
+      batch => batch.set(doc(db, 'manifests', date), { date, tags: normalized, confirmedAt: now, confirmedBy: profile?.email || user?.email || 'Operator', driverCount: Object.keys(normalized).length })
+    ];
+    updatedDrivers.forEach(driver => {
+      if (driver !== drivers.find(original => original.id === driver.id)) operations.push(batch => batch.set(doc(db, 'drivers', driver.id), driver));
+    });
+    await commitFirestoreOperations(operations);
     setManifests(prev => ({ ...prev, [date]: { ...(prev[date] || {}), ...normalized } }));
-    setDrivers(prev => prev.map(driver => {
-      const tag = normalized[driver.id];
-      return tag ? { ...driver, history: { ...(driver.history || {}), [date]: tag } } : driver;
-    }));
+    setDrivers(updatedDrivers);
   };
 
   const saveMultiDayManifests = async (batchData: Record<string, Record<string, string>>) => {
@@ -519,26 +531,28 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
       normalizedBatch[date] = normalized;
     });
-    if (user || profile) {
-      for (const [date, tags] of Object.entries(normalizedBatch)) {
-        await setDoc(doc(db, 'manifests', date), {
-          date, tags, confirmedAt: new Date().toISOString(),
-          confirmedBy: profile?.email || user?.email || 'Dispatcher', driverCount: Object.keys(tags).length
-        });
-      }
-    }
-    setManifests(prev => {
-      const next = { ...prev };
-      Object.entries(normalizedBatch).forEach(([date, tags]) => { next[date] = { ...(next[date] || {}), ...tags }; });
-      return next;
-    });
-    setDrivers(prev => prev.map(driver => {
-      const history = { ...(driver.history || {}) };
-      Object.entries(normalizedBatch).forEach(([date, tags]) => { if (tags[driver.id]) history[date] = tags[driver.id]; });
-      return { ...driver, history };
+    const now = new Date().toISOString();
+    const historyByDriver = new Map<string, Record<string, string>>();
+    drivers.forEach(driver => historyByDriver.set(driver.id, { ...(driver.history || {}) }));
+    Object.entries(normalizedBatch).forEach(([date, tags]) => Object.entries(tags).forEach(([driverId, tag]) => {
+      const history = historyByDriver.get(driverId);
+      if (history) history[date] = tag;
     }));
+    const updatedDrivers = drivers.map(driver => {
+      const history = historyByDriver.get(driver.id) || driver.history || {};
+      return JSON.stringify(history) === JSON.stringify(driver.history || {}) ? driver : { ...driver, history };
+    });
+    const operations: Array<(batch: ReturnType<typeof writeBatch>) => void> = [];
+    Object.entries(normalizedBatch).forEach(([date, tags]) => operations.push(batch => batch.set(doc(db, 'manifests', date), {
+      date, tags, confirmedAt: now, confirmedBy: profile?.email || user?.email || 'Dispatcher', driverCount: Object.keys(tags).length
+    })));
+    updatedDrivers.forEach(driver => {
+      if (driver !== drivers.find(original => original.id === driver.id)) operations.push(batch => batch.set(doc(db, 'drivers', driver.id), driver));
+    });
+    await commitFirestoreOperations(operations);
+    setManifests(prev => { const next = { ...prev }; Object.entries(normalizedBatch).forEach(([date, tags]) => { next[date] = { ...(next[date] || {}), ...tags }; }); return next; });
+    setDrivers(updatedDrivers);
   };
-
   const addCashTransaction = async (txData: Omit<CashTransaction, 'id' | 'createdAt'>) => {
     const id = 'TX-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).substring(2, 6).toUpperCase();
     const newTx: CashTransaction = {
