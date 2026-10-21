@@ -726,10 +726,14 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         ['dataQuality', data.dataQuality], ['learnedRules', data.learnedRules], ['cashEmployees', data.cashEmployees],
         ['cashbook.accounts', data.cashbook?.accounts], ['cashbook.transactions', data.cashbook?.transactions]
       ];
+      const idRequired = new Set(['trucks', 'equipment', 'drivers', 'commodities', 'stores', 'kmRecords', 'dieselLogs', 'dataQuality', 'cashEmployees', 'cashbook.accounts', 'cashbook.transactions']);
       for (const [name, value] of arrayFields) {
         if (value !== undefined && !Array.isArray(value)) return { success: false, message: 'Invalid backup: ' + name + ' must be an array.' };
-        if (Array.isArray(value) && value.some(record => !record || typeof record !== 'object' || !String(record.id || '').trim())) {
+        if (Array.isArray(value) && idRequired.has(name) && value.some(record => !record || typeof record !== 'object' || !String(record.id || '').trim())) {
           return { success: false, message: 'Invalid backup: every record in ' + name + ' must have an ID.' };
+        }
+        if (Array.isArray(value) && !idRequired.has(name) && value.some(record => !record || typeof record !== 'object')) {
+          return { success: false, message: 'Invalid backup: ' + name + ' must contain objects.' };
         }
       }
       for (const name of ['schedules', 'manifests']) {
@@ -772,7 +776,13 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (Array.isArray(data.commodities)) setCommodities(data.commodities as Commodity[]);
       if (Array.isArray(data.stores)) setStores(data.stores as StoreMapItem[]);
       if (data.schedules) setSchedules(data.schedules as Record<string, DailySchedule>);
-      if (data.manifests) setManifests(data.manifests as Record<string, Record<string, string>>);
+      if (data.manifests) {
+        const normalizedManifests: Record<string, Record<string, string>> = {};
+        Object.entries(data.manifests as Record<string, Record<string, string>>).forEach(([date, tags]) => {
+          normalizedManifests[date] = normalizeManifestTags(tags, Array.isArray(data.drivers) ? data.drivers as Driver[] : drivers);
+        });
+        setManifests(normalizedManifests);
+      }
       if (Array.isArray(data.cashbook?.accounts)) setCashAccounts(data.cashbook.accounts as CashAccount[]);
       if (Array.isArray(data.cashbook?.transactions)) setCashTransactions(data.cashbook.transactions as CashTransaction[]);
       if (Array.isArray(data.kmRecords ?? data.km)) setKmRecords((data.kmRecords ?? data.km) as KmRecord[]);
