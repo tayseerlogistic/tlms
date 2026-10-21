@@ -3,6 +3,7 @@ import { useLms } from '../context/LmsContext';
 import { useAuth } from '../context/AuthContext';
 import { CashTransaction } from '../types';
 import { ksaDateISO, isValidISODate } from '../utils/dateUtils';
+import { transactionCashImpact, transactionEmployeeAdvanceImpact } from '../utils/cashbookUtils';
 import * as XLSX from 'xlsx';
 import { jsPDF } from 'jspdf';
 import {
@@ -10,23 +11,6 @@ import {
   RotateCcw, Trash2, ArrowUpRight, ArrowDownRight, User,
   CheckCircle2, AlertCircle, FileText, Users, Building2
 } from 'lucide-react';
-
-const CASH_IN_TYPES: CashTransaction['type'][] = ['Cash In', 'Income', 'Transfer In', 'Advance Returned'];
-const CASH_OUT_TYPES: CashTransaction['type'][] = ['Advance Given', 'Transfer Out', 'Cash Out', 'Expense Settlement'];
-
-function transactionCashImpact(tx: CashTransaction, allTransactions: CashTransaction[]): number {
-  if (tx.status === 'Reversed') return 0;
-  const amount = Math.abs(Number(tx.amount) || 0);
-  if (tx.type === 'Reversal') {
-    const originalType = tx.reversedType || allTransactions.find(item => item.id === tx.reversalOf)?.type;
-    if (originalType && CASH_IN_TYPES.includes(originalType)) return -amount;
-    if (originalType && CASH_OUT_TYPES.includes(originalType)) return amount;
-    return Number(tx.amount) || 0;
-  }
-  if (CASH_IN_TYPES.includes(tx.type)) return amount;
-  if (CASH_OUT_TYPES.includes(tx.type)) return -amount;
-  return 0;
-}
 
 export const CashbookView: React.FC = () => {
   const { cashTransactions, cashAccounts, cashEmployees, drivers, addCashTransaction, addCashAccount, deleteCashAccount, addCashEmployee, deleteCashEmployee, reverseCashTransaction, deleteCashTransaction } = useLms();
@@ -73,15 +57,9 @@ export const CashbookView: React.FC = () => {
   // Outstanding Employee Advances
   const employeeBalances: Record<string, number> = {};
   cashTransactions.forEach(t => {
-    if (t.status === 'Reversed' || !t.employee) return;
-    if (t.type === 'Reversal') {
-      const originalType = t.reversedType || cashTransactions.find(item => item.id === t.reversalOf)?.type;
-      if (originalType === 'Advance Given') employeeBalances[t.employee] = (employeeBalances[t.employee] || 0) - Math.abs(t.amount);
-      if (originalType === 'Expense Settlement' || originalType === 'Advance Returned') employeeBalances[t.employee] = (employeeBalances[t.employee] || 0) + Math.abs(t.amount);
-      return;
-    }
-    if (t.type === 'Advance Given') employeeBalances[t.employee] = (employeeBalances[t.employee] || 0) + t.amount;
-    if (t.type === 'Expense Settlement' || t.type === 'Advance Returned') employeeBalances[t.employee] = (employeeBalances[t.employee] || 0) - t.amount;
+    if (!t.employee) return;
+    const impact = transactionEmployeeAdvanceImpact(t, cashTransactions);
+    if (impact !== 0) employeeBalances[t.employee] = (employeeBalances[t.employee] || 0) + impact;
   });
 
   const totalOutstandingAdvances = Object.values(employeeBalances).reduce((a, b) => a + Math.max(0, b), 0);
