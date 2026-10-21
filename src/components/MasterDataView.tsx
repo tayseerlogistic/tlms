@@ -269,8 +269,8 @@ export const MasterDataView: React.FC = () => {
                           {t.status}
                         </span>
                       </td>
-                      <td className="p-3 font-mono text-slate-300">{t.istemaraExp || '2026-12-31'}</td>
-                      <td className="p-3 font-mono text-slate-300">{t.insuranceExp || '2026-12-31'}</td>
+                      <td className="p-3 font-mono text-slate-300">{t.istemaraExp || '—'}</td>
+                      <td className="p-3 font-mono text-slate-300">{t.insuranceExp || '—'}</td>
                       <td className="p-3 text-right">
                         {(isAdmin || isDispatcher) && (
                           <div className="flex items-center justify-end gap-2">
@@ -546,7 +546,7 @@ export const MasterDataView: React.FC = () => {
                   <input
                     name="istemaraExp"
                     type="date"
-                    defaultValue={editingTruck?.istemaraExp || '2026-12-31'}
+                    defaultValue={editingTruck?.istemaraExp || ''}
                     className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white text-xs font-mono"
                   />
                 </div>
