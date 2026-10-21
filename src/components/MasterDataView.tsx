@@ -49,6 +49,9 @@ export const MasterDataView: React.FC = () => {
     const formData = new FormData(form);
 
     const plate = (formData.get('plate') as string).trim().toUpperCase();
+    if (!plate) { alert('Truck plate is required.'); return; }
+    const plateNorm = plate.replace(/\s+/g, '');
+    if (trucks.some(truck => truck.id !== editingTruck?.id && truck.plateNorm === plateNorm)) { alert('A truck with this normalized plate already exists.'); return; }
     const assignedDriverId = formData.get('driverId') as string;
     const selectedDriver = drivers.find(d => d.id === assignedDriverId);
 
@@ -56,7 +59,7 @@ export const MasterDataView: React.FC = () => {
       id: editingTruck ? editingTruck.id : `trk-${Date.now().toString(36)}`,
       seq: editingTruck ? editingTruck.seq : trucks.length + 1,
       plate,
-      plateNorm: plate.replace(/\s+/g, ''),
+      plateNorm,
       type: 'Truck',
       description: (formData.get('description') as string) || 'Fleet Truck',
       status: (formData.get('status') as any) || 'ACTIVE',
@@ -82,6 +85,19 @@ export const MasterDataView: React.FC = () => {
     const empNo = (formData.get('empNo') as string).trim();
     const iqama = (formData.get('iqama') as string).trim();
     const mobile = (formData.get('mobile') as string).trim();
+    const duplicateDriver = drivers.find(driver => driver.id !== editingDriver?.id && (
+      Boolean(empNo && driver.empNo.trim().toLowerCase() === empNo.toLowerCase()) ||
+      Boolean(iqama && driver.iqama.replace(/\D/g, '') === iqama.replace(/\D/g, '')) ||
+      Boolean(name && driver.name.trim().toLowerCase() === name.toLowerCase() && driver.active)
+    ));
+    if (duplicateDriver) {
+      const reason = empNo && duplicateDriver.empNo.trim().toLowerCase() === empNo.toLowerCase()
+        ? 'employee number'
+        : iqama && duplicateDriver.iqama.replace(/\D/g, '') === iqama.replace(/\D/g, '')
+          ? 'Iqama number' : 'driver name';
+      alert('Duplicate ' + reason + ' found for ' + duplicateDriver.name + '. Review the existing master record before saving.');
+      return;
+    }
 
     const driverToSave: Driver = {
       id: editingDriver ? editingDriver.id : `drv-${Date.now().toString(36)}`,
@@ -110,6 +126,8 @@ export const MasterDataView: React.FC = () => {
     const formData = new FormData(form);
 
     const equipNo = (formData.get('equipNo') as string).trim().toUpperCase();
+    if (!equipNo) { alert('Equipment number is required.'); return; }
+    if (equipment.some(item => item.id !== editingEquip?.id && item.equipNorm === equipNo.replace(/\s+/g, ''))) { alert('This equipment number already exists.'); return; }
     const type = (formData.get('type') as any) || 'Tanker';
 
     const equipToSave: Equipment = {
@@ -136,7 +154,7 @@ export const MasterDataView: React.FC = () => {
           <h2 className="text-xl sm:text-2xl font-black text-white flex items-center gap-2">
             <Layers className="w-6 h-6 text-blue-400" /> Central Master Data Repository
           </h2>
-          <p className="text-xs text-slate-400 mt-1">Single source of truth for all 46 trucks, 94 equipment items, and 69 drivers</p>
+          <p className="text-xs text-slate-400 mt-1">Fleet register: {trucks.length} trucks, {equipment.length} equipment items, and {drivers.filter(d => d.active).length} active drivers ({drivers.filter(d => !d.active).length} archived).</p>
         </div>
 
         <div className="flex items-center gap-3">
@@ -356,7 +374,10 @@ export const MasterDataView: React.FC = () => {
                 {filteredDrivers.map((d) => (
                   <tr key={d.id} className="hover:bg-slate-800/60 transition">
                     <td className="p-3 font-mono text-slate-400">#{d.seq}</td>
-                    <td className="p-3 font-bold text-white text-sm">{d.name}</td>
+                    <td className="p-3 font-bold text-white text-sm">
+                      {d.name}
+                      {!d.active && <span className="ml-2 inline-flex rounded bg-slate-700 px-1.5 py-0.5 text-[9px] font-bold text-slate-300">ARCHIVED</span>}
+                    </td>
                     <td className="p-3 font-mono text-blue-400 font-bold">{d.empNo || '—'}</td>
                     <td className="p-3 font-mono text-slate-300">
                       {d.iqama ? d.iqama : <span className="text-amber-400 font-semibold">Missing</span>}
@@ -379,11 +400,11 @@ export const MasterDataView: React.FC = () => {
                           {isAdmin && (
                             <button
                               onClick={async () => {
-                                if (!confirm(`Delete driver ${d.name}?`)) return;
+                                if (!confirm(`Archive driver ${d.name}? This preserves historical manifests and clears their current truck assignment.`)) return;
                                 try {
                                   await deleteDriver(d.id);
                                 } catch (error) {
-                                  alert(error instanceof Error ? error.message : 'Could not delete driver.');
+                                  alert(error instanceof Error ? error.message : 'Could not archive driver.');
                                 }
                               }}
                               className="text-rose-400 hover:text-rose-300 p-1"
@@ -410,7 +431,7 @@ export const MasterDataView: React.FC = () => {
               <ShieldAlert className="w-5 h-5 text-amber-400" /> Data Quality Anomaly &amp; Conflict Inspector
             </h3>
             <p className="text-xs text-slate-400 mt-1">
-              The automated sanitizer detected {conflicts.length} anomalies across legacy driver assignments and odometer histories.
+              The data-quality inspector currently tracks {conflicts.length} findings across legacy driver assignments and odometer histories.
             </p>
           </div>
 
