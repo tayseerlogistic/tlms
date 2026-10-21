@@ -41,8 +41,9 @@ export function trainManifestAiModel(
 
   // Ingest existing rules
   existingRules.forEach(r => {
-    const key = `${r.driverIndex}__${r.result}`;
-    rulesMap.set(key, { ...r });
+    const driverId = r.driverId || drivers[r.driverIndex]?.id;
+    const key = `${driverId || r.driverIndex}__${r.result}`;
+    rulesMap.set(key, { ...r, ...(driverId ? { driverId } : {}) });
   });
 
   // 1. Ingest all driver individual historical logs (August 1 to 31 & September 1 to 7)
@@ -75,7 +76,7 @@ export function trainManifestAiModel(
       else if (normTag.includes('MARAFIQ')) patternKey = 'YANBU>YANBU|MARAFIQ|SMBS';
       else if (normTag.includes('LEHAA')) patternKey = 'YANBU>WADI AL DAWASSIR|LEHAA|SOP';
 
-      const ruleKey = `${drvIdx}__${tag}`;
+      const ruleKey = `${drv.id}__${tag}`;
       const existing = rulesMap.get(ruleKey);
       if (existing) {
         existing.hits += 1;
@@ -83,6 +84,7 @@ export function trainManifestAiModel(
         existing.lastSeen = dt;
       } else {
         rulesMap.set(ruleKey, {
+          driverId: drv.id,
           driverIndex: drvIdx,
           driverName: drv.name,
           keys: [patternKey],
@@ -101,8 +103,10 @@ export function trainManifestAiModel(
     const schedRows = daySchedule?.rows || [];
 
     Object.entries(tagsMap).forEach(([idxStr, tag]) => {
-      const drvIdx = parseInt(idxStr, 10);
-      if (isNaN(drvIdx) || !drivers[drvIdx]) return;
+      const numericIndex = Number(idxStr);
+      const hasLegacyIndex = idxStr.trim() !== '' && Number.isInteger(numericIndex) && String(numericIndex) === idxStr;
+      const drvIdx = hasLegacyIndex ? numericIndex : drivers.findIndex(driver => driver.id === idxStr);
+      if (drvIdx < 0 || !drivers[drvIdx]) return;
       tripsCount++;
 
       const drv = drivers[drvIdx];
@@ -110,8 +114,9 @@ export function trainManifestAiModel(
       const matchedRow = schedRows.find(r => {
         const dNorm = normText(drv.name);
         const rNorm = normText(r.driverName);
-        return dNorm.includes(rNorm) || rNorm.includes(dNorm) ||
-          (r.plateNo && drv.assignedVehiclePlate && normText(r.plateNo).replace(/\s+/g, '') === normText(drv.assignedVehiclePlate).replace(/\s+/g, ''));
+        const nameMatch = Boolean(dNorm && rNorm && (dNorm.includes(rNorm) || rNorm.includes(dNorm)));
+        const plateMatch = Boolean(r.plateNo && drv.assignedVehiclePlate && normText(r.plateNo).replace(/\s+/g, '') === normText(drv.assignedVehiclePlate).replace(/\s+/g, ''));
+        return nameMatch || plateMatch;
       });
 
       if (matchedRow) {
@@ -121,7 +126,7 @@ export function trainManifestAiModel(
         const comm = normText(matchedRow.commodity?.split('/')[0] || '');
         const key = `${src}>${dst}|${cust}|${comm}`;
 
-        const ruleKey = `${drvIdx}__${tag}`;
+        const ruleKey = `${drv.id}__${tag}`;
         const existing = rulesMap.get(ruleKey);
         if (existing) {
           existing.hits += 2;
@@ -129,6 +134,7 @@ export function trainManifestAiModel(
           existing.lastSeen = dt;
         } else {
           rulesMap.set(ruleKey, {
+            driverId: drv.id,
             driverIndex: drvIdx,
             driverName: drv.name,
             keys: [key],
@@ -416,7 +422,7 @@ export function predictManifestForDriver(
   }
 
   // 3. CHECK LEARNED HISTORICAL RULES & PREFERENCES
-  const driverRules = learnedRules.filter(r => r.driverIndex === driverIndex);
+  const driverRules = learnedRules.filter(r => r.driverId ? r.driverId === driver.id : r.driverIndex === driverIndex);
   if (driverRules.length > 0) {
     const topRule = driverRules[0];
     if (topRule.hits >= 3 && !topRule.result.includes('Offloading')) {
