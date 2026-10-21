@@ -85,8 +85,8 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
         fullDate: periodKey,
         efficiency: hasData ? efficiency : null,
         quota: quotaTarget,
-        distanceKm: monthly ? Number((distance / 1000).toFixed(1)) : Math.round(distance),
-        litersConsumed: monthly ? Number((liters / 1000).toFixed(1)) : Math.round(liters),
+        distanceKm: Math.round(distance),
+        litersConsumed: Math.round(liters),
         fuelCostSar: Math.round(cost),
         variance: hasData && efficiency > 0 ? Number((((efficiency - quotaTarget) / quotaTarget) * 100).toFixed(1)) : 0,
         hasData
@@ -205,7 +205,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
             </span>
             <h1 className="text-2xl sm:text-3xl font-extrabold text-white mt-1">Fleet Operations &amp; Central Data Hub</h1>
             <p className="text-slate-300 text-sm mt-1 max-w-2xl">
-              Consolidated management for 46 prime movers, 94 tankers &amp; trailers, and 69 professional drivers across the Kingdom of Saudi Arabia.
+              Consolidated management for {trucks.length} prime movers, {equipment.length} tankers and trailers, and {drivers.filter(driver => driver.active).length} active drivers across the Kingdom of Saudi Arabia.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
