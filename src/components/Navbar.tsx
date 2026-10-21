@@ -50,11 +50,11 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, setCurrentTab, onOpe
   const openConflictsCount = conflicts.filter(c => c.status === 'open').length;
 
   const navItems = [
-    { id: 'overview', label: 'Command Center', icon: Gauge },
-    { id: 'timetable', label: 'Timetable Dispatch', icon: FileSpreadsheet },
-    { id: 'manifest', label: 'Daily Manifest', icon: ClipboardList },
-    { id: 'km-fuel', label: 'KM & Fuel Balancing', icon: Truck },
-    { id: 'cashbook', label: 'Cashbook Pro', icon: Wallet },
+    { id: 'overview', label: 'Command Center', icon: Gauge, badge: undefined as number | undefined },
+    { id: 'timetable', label: 'Timetable Dispatch', icon: FileSpreadsheet, badge: undefined as number | undefined },
+    { id: 'manifest', label: 'Daily Manifest', icon: ClipboardList, badge: undefined as number | undefined },
+    { id: 'km-fuel', label: 'KM & Fuel Balancing', icon: Truck, badge: undefined as number | undefined },
+    { id: 'cashbook', label: 'Cashbook Pro', icon: Wallet, badge: undefined as number | undefined },
   ];
 
   const roleColors: Record<UserRole, { bg: string; text: string; border: string }> = {
