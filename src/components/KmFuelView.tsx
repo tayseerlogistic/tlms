@@ -2239,7 +2239,7 @@ TLS Fleet Management`;
                                   }`}
                                   title={`${t.plate} on ${dateKey}: ${rec ? `${rec.km} KM (Odo: ${rec.odometer || '—'})` : '0 KM / Empty'}. Click to edit.`}
                                 >
-                                  {rec && rec.km > 0 ? rec.km : '—'}
+                                  {rec ? (rec.km || 0).toLocaleString() : '—'}
                                 </td>
                               );
                             })}
