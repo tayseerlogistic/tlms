@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useLms } from '../context/LmsContext';
 import { useAuth } from '../context/AuthContext';
+import { ksaDateISO } from '../utils/dateUtils';
 import {
   Truck, Navigation, CheckCircle2, DollarSign, Gauge,
   Clock, MapPin, Send, AlertCircle, Phone
@@ -28,9 +29,9 @@ export const DriverPortalView: React.FC = () => {
     );
   }
 
-  const today = new Date().toISOString().substring(0, 10);
+  const today = ksaDateISO();
   const driverIdx = drivers.findIndex(d => d.id === currentDriver.id);
-  const currentTag = (manifests[today] && manifests[today][driverIdx]) || 'At Yanbu Base';
+  const currentTag = manifests[today]?.[currentDriver.id] || manifests[today]?.[String(driverIdx)] || 'At Yanbu Base';
 
   // Find assigned truck
   const assignedTruck = trucks.find(t => t.assignedDriverId === currentDriver.id || t.plate === currentDriver.assignedVehiclePlate);
@@ -52,7 +53,7 @@ export const DriverPortalView: React.FC = () => {
 
   const handleUpdateTripStage = async (newStage: string) => {
     const updatedTag = `${newStage} - ${assignedTruck?.plate || 'Fleet'}`;
-    await saveDailyManifest(today, { [driverIdx]: updatedTag });
+    await saveDailyManifest(today, { [currentDriver.id]: updatedTag });
     alert(`Status updated to: ${newStage}`);
   };
 
