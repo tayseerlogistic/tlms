@@ -236,7 +236,7 @@ export const CashbookView: React.FC = () => {
       wrapped.forEach((lines, index) => { pdf.text(lines, x, y); x += widths[index]; });
       y += rowHeight + 2;
     });
-    const netTotal = reportRows.reduce((sum, tx) => sum + transactionCashImpact(tx, cashTransactions), 0);
+    const netTotal = reportRows.reduce((sum, tx) => sum + transactionCashImpact(tx, reportRows), 0);
     if (y > 185) { pdf.addPage(); y = 20; }
     pdf.setFont('helvetica', 'bold');
     pdf.text('Signed net of listed transactions (excluding reversed): SAR ' + netTotal.toFixed(2), 14, y + 4);
@@ -410,6 +410,7 @@ export const CashbookView: React.FC = () => {
               <option value="Cash Out">Cash Out</option>
               <option value="Transfer In">Transfer In</option>
               <option value="Transfer Out">Transfer Out</option>
+              <option value="Reversal">Reversal / Correction</option>
             </select>
           </div>
         </div>
@@ -432,7 +433,9 @@ export const CashbookView: React.FC = () => {
             </thead>
             <tbody className="divide-y divide-slate-800">
               {filtered.map(t => {
-                const isInf = ['Cash In', 'Income', 'Transfer In', 'Advance Returned'].includes(t.type);
+                const cashImpact = transactionCashImpact(t, cashTransactions);
+                const isInf = cashImpact > 0;
+                const isOut = cashImpact < 0;
                 return (
                   <tr key={t.id} className="hover:bg-slate-800/60 transition">
                     <td className="p-3 font-mono font-bold text-slate-300">{t.id}</td>
@@ -459,8 +462,8 @@ export const CashbookView: React.FC = () => {
                       </span>
                     </td>
                     <td className="p-3 text-slate-400">{t.category}</td>
-                    <td className={`p-3 text-right font-mono font-bold text-sm ${isInf ? 'text-emerald-400' : 'text-rose-400'}`}>
-                      {isInf ? '+' : '-'}{t.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    <td className={`p-3 text-right font-mono font-bold text-sm ${isInf ? 'text-emerald-400' : isOut ? 'text-rose-400' : 'text-slate-300'}`}>
+                      {cashImpact > 0 ? '+' : cashImpact < 0 ? '−' : '—'}{Math.abs(Number(t.amount) || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </td>
                     <td className="p-3 text-slate-300 max-w-xs truncate">{t.description || '—'}</td>
                     <td className="p-3">
@@ -474,9 +477,15 @@ export const CashbookView: React.FC = () => {
                       {(isCashier || isAdmin) && t.status !== 'Reversed' && t.type !== 'Reversal' && (
                         <div className="flex items-center justify-end gap-1.5">
                           <button
-                            onClick={() => {
-                              const reason = prompt("Enter reversal reason:");
-                              if (reason !== null) reverseCashTransaction(t.id, reason);
+                            onClick={async () => {
+                              const reason = window.prompt("Enter the reason for this correction:");
+                              if (reason === null) return;
+                              if (!reason.trim()) { alert("A correction reason is required."); return; }
+                              try {
+                                await reverseCashTransaction(t.id, reason.trim());
+                              } catch (error) {
+                                alert(error instanceof Error ? error.message : "The reversal could not be saved.");
+                              }
                             }}
                             className="p-1 text-slate-400 hover:text-amber-400"
                             title="Reverse transaction"
@@ -677,19 +686,22 @@ export const CashbookView: React.FC = () => {
               <h4 className="text-xs font-bold uppercase text-slate-400 font-mono">Transaction History</h4>
               <div className="divide-y divide-slate-800 border border-slate-800 rounded-xl overflow-hidden">
                 {cashTransactions
-                  .filter(t => t.employee === statementEmployee && t.status !== 'Reversed')
-                  .map(t => (
+                  .filter(t => t.employee === statementEmployee && (t.status !== 'Reversed' || cashTransactions.some(reversal => reversal.type === 'Reversal' && reversal.reversalOf === t.id)))
+                  .map(t => {
+                    const advanceImpact = transactionEmployeeAdvanceImpact(t, cashTransactions);
+                    return (
                     <div key={t.id} className="p-3 bg-slate-900/60 flex items-center justify-between text-xs">
                       <div>
                         <div className="font-mono text-slate-400 text-[10px]">{t.dateISO} &bull; {t.id}</div>
                         <div className="font-semibold text-white mt-0.5">{t.type} ({t.category})</div>
                         <div className="text-slate-400 text-[11px]">{t.description}</div>
                       </div>
-                      <div className={`font-mono font-bold text-sm ${t.type === 'Advance Given' ? 'text-amber-400' : 'text-emerald-400'}`}>
-                        {t.type === 'Advance Given' ? '+' : '-'}{t.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      <div className={`font-mono font-bold text-sm ${advanceImpact > 0 ? 'text-amber-400' : advanceImpact < 0 ? 'text-emerald-400' : 'text-slate-400'}`}>
+                        {advanceImpact > 0 ? '+' : advanceImpact < 0 ? '−' : '—'}{Math.abs(Number(t.amount) || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
               </div>
             </div>
           </div>
