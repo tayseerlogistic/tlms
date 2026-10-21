@@ -1,4 +1,4 @@
-import React, { useState, lazy, Suspense } from 'react';
+import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { ThemeProvider } from './context/ThemeContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { LmsProvider } from './context/LmsContext';
@@ -18,6 +18,25 @@ const MainAppContent: React.FC = () => {
   const [currentTab, setCurrentTab] = useState<string>('overview');
   const [isGuestMode, setIsGuestMode] = useState<boolean>(false);
   const [isLoginModalOpen, setIsLoginModalOpen] = useState<boolean>(false);
+  const [brandName, setBrandName] = useState(() => localStorage.getItem('tlms.brandName') || 'TLS Logistics LMS');
+  const [brandSubtitle, setBrandSubtitle] = useState(() => localStorage.getItem('tlms.brandSubtitle') || 'Tayseer Group Central Fleet Operating System');
+
+  useEffect(() => {
+    const syncBranding = () => {
+      const nextName = localStorage.getItem('tlms.brandName') || 'TLS Logistics LMS';
+      const nextSubtitle = localStorage.getItem('tlms.brandSubtitle') || 'Tayseer Group Central Fleet Operating System';
+      setBrandName(nextName);
+      setBrandSubtitle(nextSubtitle);
+      document.title = nextName;
+    };
+    syncBranding();
+    window.addEventListener('tlms-branding-updated', syncBranding);
+    window.addEventListener('storage', syncBranding);
+    return () => {
+      window.removeEventListener('tlms-branding-updated', syncBranding);
+      window.removeEventListener('storage', syncBranding);
+    };
+  }, []);
 
   const isAuthenticated = Boolean(user || profile);
 
@@ -41,7 +60,7 @@ const MainAppContent: React.FC = () => {
           />
         </Suspense>
         <footer className="mt-8 text-center text-xs text-slate-500 font-mono">
-          TLS Logistics LMS &bull; Tayseer Group Fleet Central Platform &bull; Zero Public Registration Policy
+{brandName} &bull; {brandSubtitle} &bull; Test Version
         </footer>
       </div>
     );
@@ -126,7 +145,7 @@ const MainAppContent: React.FC = () => {
 
       {/* Footer */}
       <footer className="border-t border-slate-900 bg-slate-950/80 py-4 text-center text-xs text-slate-400 font-mono">
-        <p>TLS Logistics Management System &bull; Tayseer Group Fleet Central Platform &bull; Zero Public Registration Policy</p>
+        <p>{brandName} &bull; {brandSubtitle} &bull; Test Version</p>
       </footer>
     </div>
   );
