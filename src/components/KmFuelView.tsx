@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useLms } from '../context/LmsContext';
 import { useAuth } from '../context/AuthContext';
+import { ksaDateISO, shiftISODate } from '../utils/dateUtils';
 import { KSA_DIESEL_PRICE, COMPANY_KM_PER_LITER_QUOTA } from '../data/seedData';
 import { KmRecord, DieselLog, Truck, Driver } from '../types';
 import * as XLSX from 'xlsx';
@@ -23,10 +24,7 @@ import {
   Sparkles, Filter, Check, Phone, Eye, Save
 } from 'lucide-react';
 
-function localISODate(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-}
+function localISODate(): string { return ksaDateISO(); }
 
 function monthKeyToISO(value: unknown): string | null {
   const raw = String(value ?? '').trim();
@@ -40,7 +38,7 @@ function monthKeyToISO(value: unknown): string | null {
   const monthIndex = monthNames.findIndex(name => normalized.includes(name) || normalized.slice(0, 3) === name.slice(0, 3));
   if (monthIndex < 0) return null;
   const yearMatch = normalized.match(/(?:19|20)\d{2}/);
-  const year = yearMatch ? Number(yearMatch[0]) : new Date().getFullYear();
+  const year = yearMatch ? Number(yearMatch[0]) : Number(ksaDateISO().slice(0, 4));
   return `${year}-${String(monthIndex + 1).padStart(2, '0')}`;
 }
 
@@ -67,7 +65,7 @@ export const KmFuelView: React.FC = () => {
   const { isAdmin, isDispatcher, isCashier } = useAuth();
 
   const monthOptions = (() => {
-    const currentYear = new Date().getFullYear();
+    const currentYear = Number(ksaDateISO().slice(0, 4));
     const years = new Set<number>(Array.from({ length: 7 }, (_, i) => currentYear - 3 + i));
     kmRecords.forEach(record => {
       const match = String(record.date || '').match(/^(\d{4})-/);
@@ -121,7 +119,7 @@ export const KmFuelView: React.FC = () => {
   const [uploadJsonText, setUploadJsonText] = useState('');
 
   const [isDieselBatchModalOpen, setIsDieselBatchModalOpen] = useState(false);
-  const [batchDieselMonth, setBatchDieselMonth] = useState(() => new Date().toISOString().substring(0, 7));
+  const [batchDieselMonth, setBatchDieselMonth] = useState(() => ksaDateISO().substring(0, 7));
   const [batchDieselText, setBatchDieselText] = useState('');
 
   const [isFleetSetupOpen, setIsFleetSetupOpen] = useState(false);
@@ -131,7 +129,7 @@ export const KmFuelView: React.FC = () => {
   const [isQuickMeterModalOpen, setIsQuickMeterModalOpen] = useState(false);
   const [meterTruck, setMeterTruck] = useState<Truck | null>(null);
   const [meterInputVal, setMeterInputVal] = useState('');
-  const [meterDate, setMeterDate] = useState(() => new Date().toISOString().substring(0, 10));
+  const [meterDate, setMeterDate] = useState(() => ksaDateISO());
 
   const [isQuickFuelModalOpen, setIsQuickFuelModalOpen] = useState(false);
   const [fuelTruck, setFuelTruck] = useState<Truck | null>(null);
@@ -1806,9 +1804,7 @@ TLS Fleet Management`;
                 <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-700 rounded-xl px-2 py-1">
                   <button
                     onClick={() => {
-                      const d = new Date(readingDate);
-                      d.setDate(d.getDate() - 1);
-                      setReadingDate(d.toISOString().substring(0, 10));
+                      setReadingDate(shiftISODate(readingDate, -1));
                     }}
                     title="Previous Date"
                     className="p-1 hover:bg-slate-800 text-slate-300 rounded font-bold transition text-xs"
@@ -1823,9 +1819,7 @@ TLS Fleet Management`;
                   />
                   <button
                     onClick={() => {
-                      const d = new Date(readingDate);
-                      d.setDate(d.getDate() + 1);
-                      setReadingDate(d.toISOString().substring(0, 10));
+                      setReadingDate(shiftISODate(readingDate, 1));
                     }}
                     title="Next Date"
                     className="p-1 hover:bg-slate-800 text-slate-300 rounded font-bold transition text-xs"
