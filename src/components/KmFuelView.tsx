@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useLms } from '../context/LmsContext';
 import { useAuth } from '../context/AuthContext';
 import { ksaDateISO, shiftISODate } from '../utils/dateUtils';
+import { parseMonthlyKmUpload } from '../utils/kmImportUtils';
 import { KSA_DIESEL_PRICE, COMPANY_KM_PER_LITER_QUOTA } from '../data/seedData';
 import { KmRecord, DieselLog, Truck, Driver } from '../types';
 import * as XLSX from 'xlsx';
@@ -25,22 +26,6 @@ import {
 } from 'lucide-react';
 
 function localISODate(): string { return ksaDateISO(); }
-
-function monthKeyToISO(value: unknown): string | null {
-  const raw = String(value ?? '').trim();
-  const numeric = raw.match(/^(\d{4})[-/](\d{1,2})(?:[-/]\d{1,2})?$/);
-  if (numeric) {
-    const month = Number(numeric[2]);
-    if (month >= 1 && month <= 12) return `${numeric[1]}-${String(month).padStart(2, '0')}`;
-  }
-  const monthNames = ['january','february','march','april','may','june','july','august','september','october','november','december'];
-  const normalized = raw.toLowerCase();
-  const monthIndex = monthNames.findIndex(name => normalized.includes(name) || normalized.slice(0, 3) === name.slice(0, 3));
-  if (monthIndex < 0) return null;
-  const yearMatch = normalized.match(/(?:19|20)\d{2}/);
-  const year = yearMatch ? Number(yearMatch[0]) : Number(ksaDateISO().slice(0, 4));
-  return `${year}-${String(monthIndex + 1).padStart(2, '0')}`;
-}
 
 // Register Chart.js elements
 Chart.register(
@@ -701,73 +686,25 @@ TLS Fleet Management`;
   // -------------------------------------------------------------
   const handleMonthlyKmUpload = async () => {
     if (!uploadJsonText.trim()) {
-      alert("Please paste JSON data or choose a .json file.");
+      alert('Please paste JSON data or choose a .json file.');
       return;
     }
-
     try {
-      const data = JSON.parse(uploadJsonText);
       const fallbackMonth = uploadMonthSelect !== 'auto' ? uploadMonthSelect : localISODate().slice(0, 7);
-      const groups: Array<{ month: string; rows: any[] }> = [];
-
-      if (Array.isArray(data)) {
-        groups.push({ month: fallbackMonth, rows: data });
-      } else if (data && typeof data === 'object') {
-        const root = data.months && typeof data.months === 'object' && !Array.isArray(data.months)
-          ? data.months
-          : data;
-        for (const [key, value] of Object.entries(root)) {
-          if (!Array.isArray(value)) continue;
-          groups.push({ month: monthKeyToISO(key) || fallbackMonth, rows: value as any[] });
-        }
-        if (groups.length === 0 && Array.isArray((data as any).records)) {
-          groups.push({ month: fallbackMonth, rows: (data as any).records });
-        }
-      }
-
-      if (!groups.length) {
-        throw new Error('JSON must be an array of records or an object whose month keys contain arrays of records.');
-      }
-
-      const records: Array<Omit<KmRecord, 'id'> | KmRecord> = [];
-      for (const group of groups) {
-        for (const row of group.rows) {
-          if (!row || typeof row !== 'object') continue;
-          const plate = resolvePlate(row['Truck Plate#'] || row['Truck Plate'] || row.vehicle || row.Plate || row.veh || row.plate || '');
-          const rawKm = row['Total KM/M'] ?? row['Total KM'] ?? row.km ?? row.KM ?? row.distance;
-          const kmVal = Number.parseFloat(String(rawKm ?? ''));
-          if (!plate || !Number.isFinite(kmVal) || kmVal < 0) continue;
-
-          const rowMonth = monthKeyToISO(row.month || row.Month || row.period || row.Period);
-          const rawDate = String(row.date || row.Date || '').trim();
-          const date = /^\d{4}-\d{2}-\d{2}$/.test(rawDate)
-            ? rawDate
-            : `${rowMonth || group.month}-15`;
-          const rawOdometer = Number(row.odometer ?? row.Odometer);
-          records.push({
-            date,
-            veh: plate,
-            odometer: Number.isFinite(rawOdometer) && rawOdometer > 0 ? rawOdometer : 100000 + kmVal,
-            km: kmVal,
-            notes: `Uploaded Monthly Run (${group.month})`
-          });
-        }
-      }
-
-      if (!records.length) {
-        throw new Error('No valid records found. Each row needs a truck plate and a non-negative KM value.');
-      }
-
-      await batchSaveKmRecords(records);
-      const importedMonths = new Set(records.map(record => record.date.slice(0, 7))).size;
-      alert(`Successfully integrated ${records.length} KM records across ${importedMonths} month(s).`);
+      const parsed = parseMonthlyKmUpload(uploadJsonText, fallbackMonth, resolvePlate, Number(localISODate().slice(0, 4)));
+      await batchSaveKmRecords(parsed.records);
+      const monthLabel = parsed.months.map(month => {
+        const [year, monthNumber] = month.split('-').map(Number);
+        return new Intl.DateTimeFormat('en', { month: 'short', year: 'numeric', timeZone: 'UTC' }).format(new Date(Date.UTC(year, monthNumber - 1, 1)));
+      }).join(', ');
+      const skippedNote = parsed.skippedRows ? ` ${parsed.skippedRows} invalid row(s) were skipped.` : '';
+      alert(`Successfully imported ${parsed.records.length} KM records across ${parsed.months.length} month(s): ${monthLabel}.${skippedNote}`);
       setIsUploadModalOpen(false);
       setUploadJsonText('');
-    } catch (err: any) {
-      alert("Failed to import JSON: " + (err?.message || String(err)));
+    } catch (error) {
+      alert('Failed to import JSON: ' + (error instanceof Error ? error.message : String(error)));
     }
   };
-
   // -------------------------------------------------------------
   // BATCH DIESEL INGESTION
   // -------------------------------------------------------------
