@@ -426,40 +426,50 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const saveDailySchedule = async (date: string, rows: any[], syncToManifest = true) => {
+    const now = new Date().toISOString();
     const schedObj: DailySchedule = {
-      date, rows, confirmed: true, updatedAt: new Date().toISOString(),
+      date, rows, confirmed: true, updatedAt: now,
       updatedBy: profile?.email || user?.email || 'Dispatcher'
     };
-    if (user || profile) await setDoc(doc(db, 'schedules', date), schedObj);
-    setSchedules(prev => ({ ...prev, [date]: schedObj }));
+    const shouldSyncManifest = syncToManifest && rows.length > 0;
+    const nextManifest: Record<string, string> = { ...(manifests[date] || {}) };
 
-    if (syncToManifest && rows && rows.length > 0) {
-      const currentManifest: Record<string, string> = { ...(manifests[date] || {}) };
+    if (shouldSyncManifest) {
       rows.forEach(row => {
         if (!row.driverName && !row.plateNo) return;
         const driver = drivers.find(d => {
-          const dNorm = (d.name || '').toUpperCase().replace(/\s+/g, ' ').trim();
-          const rNorm = (row.driverName || '').toUpperCase().replace(/\s+/g, ' ').trim();
-          const nameMatch = dNorm && rNorm && (dNorm.includes(rNorm) || rNorm.includes(dNorm));
-          const plateMatch = row.plateNo && d.assignedVehiclePlate && row.plateNo.replace(/\s+/g, '').toUpperCase() === d.assignedVehiclePlate.replace(/\s+/g, '').toUpperCase();
-          return Boolean(nameMatch || plateMatch);
+          const driverName = (d.name || '').toUpperCase().replace(/\s+/g, ' ').trim();
+          const rowName = (row.driverName || '').toUpperCase().replace(/\s+/g, ' ').trim();
+          const nameMatch = Boolean(driverName && rowName && (driverName.includes(rowName) || rowName.includes(driverName)));
+          const plateMatch = Boolean(row.plateNo && d.assignedVehiclePlate &&
+            row.plateNo.replace(/\s+/g, '').toUpperCase() === d.assignedVehiclePlate.replace(/\s+/g, '').toUpperCase());
+          return nameMatch || plateMatch;
         });
         if (driver) {
-          const commRaw = (row.commodity || '').split('/')[0].trim();
-          const comm = commRaw.replace(/\s+Granular$/i, '').trim();
+          const commodity = (row.commodity || '').split('/')[0].trim().replace(/\s+Granular$/i, '').trim();
           const customer = row.customer || row.supplier || row.store || 'Customer';
           const source = row.source || 'Yanbu';
-          currentManifest[driver.id] = (comm ? comm + ' ' : '') + 'Supply for ' + customer + ' - Under Loading at ' + source;
+          nextManifest[driver.id] = (commodity ? commodity + ' ' : '') + 'Supply for ' + customer + ' - Under Loading at ' + source;
         }
       });
-      if (user || profile) await setDoc(doc(db, 'manifests', date), {
-        date, tags: currentManifest, confirmedAt: new Date().toISOString(),
-        confirmedBy: profile?.email || user?.email || 'Dispatcher', driverCount: Object.keys(currentManifest).length
-      });
-      setManifests(prev => ({ ...prev, [date]: currentManifest }));
     }
-  };
 
+    // Persist schedule and derived manifest together so a failed write does not report a successful partial save.
+    if (user || profile) {
+      const batch = writeBatch(db);
+      batch.set(doc(db, 'schedules', date), schedObj);
+      if (shouldSyncManifest) {
+        batch.set(doc(db, 'manifests', date), {
+          date, tags: nextManifest, confirmedAt: now,
+          confirmedBy: profile?.email || user?.email || 'Dispatcher', driverCount: Object.keys(nextManifest).length
+        });
+      }
+      await batch.commit();
+    }
+
+    setSchedules(prev => ({ ...prev, [date]: schedObj }));
+    if (shouldSyncManifest) setManifests(prev => ({ ...prev, [date]: nextManifest }));
+  };
   const deleteDailySchedule = async (date: string) => {
     if (user || profile) await deleteDoc(doc(db, 'schedules', date));
     setSchedules(prev => { const next = { ...prev }; delete next[date]; return next; });
