@@ -204,9 +204,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <input value={brandLogoUrl} onChange={e => { setBrandLogoUrl(e.target.value); setBrandSaved(false); }} className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white" placeholder="https://example.com/logo.png" />
               </label>
               <div className="flex items-center justify-between gap-3">
-                <span className="text-xs text-slate-400">{brandSaved ? 'Branding saved for this browser.' : 'Save to apply the branding to the header.'}</span>
+                <span className="text-xs text-slate-400">{brandSaved ? ((user || profile) ? 'Branding saved to shared settings.' : 'Branding saved in this browser only.') : 'Save to apply the branding to the header.'}</span>
                 <button type="button" onClick={saveBranding} className="rounded-lg bg-blue-600 hover:bg-blue-500 px-4 py-2 text-xs font-bold text-white">Save Branding</button>
               </div>
+              {brandError && <p role="alert" className="text-xs text-rose-300 mt-2">{brandError}</p>}
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
