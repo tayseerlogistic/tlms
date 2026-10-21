@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useLms } from '../context/LmsContext';
 import { useAuth } from '../context/AuthContext';
 import { TimetableRow } from '../types';
+import { doc, onSnapshot, setDoc } from 'firebase/firestore';
+import { db as firestoreDb } from '../firebase/config';
 import * as XLSX from 'xlsx';
 import {
   Calendar, FileSpreadsheet, Plus, Download, Copy, Trash2, Search,
@@ -97,6 +99,60 @@ export const TimetableParserView: React.FC = () => {
     }
     return loaded;
   });
+
+  const [registryHydrated, setRegistryHydrated] = useState(false);
+  const cloudRegistryExistsRef = useRef(false);
+  const registrySnapshotErrorRef = useRef(false);
+
+  useEffect(() => {
+    if (!user && !profile) {
+      setRegistryHydrated(false);
+      cloudRegistryExistsRef.current = false;
+      return;
+    }
+    return onSnapshot(doc(firestoreDb, 'app_state', 'timetableRegistry'), snapshot => {
+      cloudRegistryExistsRef.current = snapshot.exists();
+      registrySnapshotErrorRef.current = false;
+      if (snapshot.exists()) {
+        const data = snapshot.data();
+        setDb(prev => {
+          const next = {
+            ...prev,
+            drivers: Array.isArray(data.drivers) ? data.drivers as TimetableDriver[] : prev.drivers,
+            vehicles: Array.isArray(data.vehicles) ? data.vehicles as TimetableVehicle[] : prev.vehicles,
+            commodities: Array.isArray(data.commodities) ? data.commodities as TimetableCommodity[] : prev.commodities,
+            storeMap: data.storeMap && typeof data.storeMap === 'object' && !Array.isArray(data.storeMap)
+              ? data.storeMap as TimetableStoreMap : prev.storeMap
+          };
+          saveTimetableDatabase(next);
+          return next;
+        });
+      }
+      setRegistryHydrated(true);
+    }, error => {
+      registrySnapshotErrorRef.current = true;
+      setRegistryHydrated(true);
+      showToast('Shared timetable registry unavailable: ' + error.message);
+    });
+  }, [user, profile]);
+
+  useEffect(() => {
+    if ((!user && !profile) || !registryHydrated || registrySnapshotErrorRef.current) return;
+    const registry = {
+      drivers: db.drivers,
+      vehicles: db.vehicles,
+      commodities: db.commodities,
+      storeMap: db.storeMap,
+      updatedAt: new Date().toISOString(),
+      updatedBy: profile?.email || user?.email || 'Dispatcher'
+    };
+    // The first signed-in session publishes the local registry only when no shared copy exists.
+    // Once a shared copy exists, edits to any registry section are pushed for other sessions.
+    cloudRegistryExistsRef.current = true;
+    setDoc(doc(firestoreDb, 'app_state', 'timetableRegistry'), registry).catch(error => {
+      showToast('Shared timetable registry save failed: ' + (error instanceof Error ? error.message : String(error)));
+    });
+  }, [db.drivers, db.vehicles, db.commodities, db.storeMap, registryHydrated, user, profile]);
 
   // Keep the editor aligned with the shared schedule repository after realtime updates.
   useEffect(() => {
