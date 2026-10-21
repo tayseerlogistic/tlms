@@ -130,6 +130,7 @@ export interface ManifestSuggestion {
 }
 
 export interface LearnedRule {
+  driverId?: string; // Stable master-driver identity; driverIndex remains for legacy imports.
   driverIndex: number;
   driverName: string;
   keys: string[];
