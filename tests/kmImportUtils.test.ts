@@ -38,6 +38,38 @@ test('row-level month metadata overrides the containing JSON group', () => {
   assert.deepEqual(parsed.months, ['2026-10']);
 });
 
+test('wide fleet exports import each daily KM value and skip invalid negative readings', () => {
+  const parsed = parseMonthlyKmUpload(JSON.stringify({
+    'January - 2026': [{
+      'Truck Plate#': 'D J A 4827',
+      '1-Jan': 946,
+      '2-Jan': 0,
+      '31-Jan': 35,
+      'Total KM/M': 17203
+    }],
+    'March- 2026': [{
+      'Truck Plate#': 'K R A 7501',
+      '2026-03-01 00:00:00': 34,
+      '2026-03-02 00:00:00': 0,
+      '2026-03-17 00:00:00': -418000,
+      'Total KM/M': 15593,
+      'Unnamed: 0': 0
+    }]
+  }), '2026-10', resolvePlate, 2026);
+
+  assert.equal(parsed.records.length, 5);
+  assert.deepEqual(parsed.months, ['2026-01', '2026-03']);
+  assert.equal(parsed.records[0].date, '2026-01-01');
+  assert.equal(parsed.records[0].km, 946);
+  assert.equal(parsed.records[1].date, '2026-01-02');
+  assert.equal(parsed.records[1].km, 0);
+  assert.equal(parsed.records[2].date, '2026-01-31');
+  assert.equal(parsed.records[3].date, '2026-03-01');
+  assert.equal(parsed.records[3].km, 34);
+  assert.equal(parsed.records[3].odometer, null);
+  assert.equal(parsed.skippedRows, 1);
+});
+
 test('invalid plate, negative KM, and impossible ISO date rows are skipped', () => {
   const parsed = parseMonthlyKmUpload(JSON.stringify({
     '2026-08': [
