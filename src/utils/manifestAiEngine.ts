@@ -39,12 +39,13 @@ export function trainManifestAiModel(
   const tripKeys = new Set<string>();
   const datesSet = new Set<string>();
   const rulesMap = new Map<string, LearnedRule>();
+  const previousRules = new Map<string, LearnedRule>();
 
-  // Ingest existing rules
-  existingRules.forEach(r => {
-    const driverId = r.driverId || drivers[r.driverIndex]?.id;
-    const key = `${driverId || r.driverIndex}__${r.result}`;
-    rulesMap.set(key, { ...r, ...(driverId ? { driverId } : {}) });
+  // Keep existing learned knowledge without starting fresh hit counts from previous runs.
+  existingRules.forEach(rule => {
+    const driverId = rule.driverId || drivers[rule.driverIndex]?.id;
+    const key = `${driverId || rule.driverIndex}__${rule.result}`;
+    previousRules.set(key, { ...rule, ...(driverId ? { driverId } : {}) });
   });
 
   // 1. Ingest driver historical logs across the dates actually available.
@@ -111,7 +112,8 @@ export function trainManifestAiModel(
       if (drvIdx < 0 || !drivers[drvIdx]) return;
       const drv = drivers[drvIdx];
       const tripKey = `${drv.id}__${dt}__${tag}`;
-      if (!tripKeys.has(tripKey)) { tripKeys.add(tripKey); tripsCount++; }
+      const isNewObservation = !tripKeys.has(tripKey);
+      if (isNewObservation) { tripKeys.add(tripKey); tripsCount++; }
       // Check if driver was dispatched in timetable for this date
       const matchedRow = schedRows.find(r => {
         const dNorm = normText(drv.name);
@@ -131,9 +133,10 @@ export function trainManifestAiModel(
         const ruleKey = `${drv.id}__${tag}`;
         const existing = rulesMap.get(ruleKey);
         if (existing) {
-          existing.hits += 2;
+          // A driver's status may exist in both history and the manifest collection.
+          if (isNewObservation) existing.hits += 1;
           if (!existing.keys.includes(key)) existing.keys.push(key);
-          existing.lastSeen = dt;
+          if (dt > existing.lastSeen) existing.lastSeen = dt;
         } else {
           rulesMap.set(ruleKey, {
             driverId: drv.id,
@@ -141,12 +144,23 @@ export function trainManifestAiModel(
             driverName: drv.name,
             keys: [key],
             result: tag,
-            hits: 2,
+            hits: isNewObservation ? 1 : 0,
             lastSeen: dt
           });
         }
       }
     });
+  });
+
+  // Merge prior route features into freshly computed counts, preserving rules no longer
+  // represented by current source data. Repeating training cannot inflate the hit count.
+  previousRules.forEach((previous, key) => {
+    const observed = rulesMap.get(key);
+    if (!observed) {
+      rulesMap.set(key, previous);
+      return;
+    }
+    observed.keys = Array.from(new Set([...(previous.keys || []), ...(observed.keys || [])]));
   });
 
   const updatedRules = Array.from(rulesMap.values()).sort((a, b) => b.hits - a.hits);
