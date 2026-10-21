@@ -136,7 +136,7 @@ export const KmFuelView: React.FC = () => {
   const [fuelLitersVal, setFuelLitersVal] = useState('');
   const [fuelCostVal, setFuelCostVal] = useState('');
   const [fuelRouteVal, setFuelRouteVal] = useState('');
-  const [fuelDate, setFuelDate] = useState(() => new Date().toISOString().substring(0, 10));
+  const [fuelDate, setFuelDate] = useState(() => ksaDateISO());
 
   const [isWhatsRemindersModalOpen, setIsWhatsRemindersModalOpen] = useState(false);
   const [whatsReminderLang, setWhatsReminderLang] = useState<'arabic' | 'urdu' | 'hindi'>('arabic');
@@ -692,7 +692,7 @@ TLS Fleet Management`;
       console.warn("Chart image snapshot issue:", e);
     }
 
-    doc.save(`TLS_Fleet_Utilization_${selectedMonth}_${new Date().toISOString().substring(0, 10)}.pdf`);
+    doc.save(`TLS_Fleet_Utilization_${selectedMonth}_${ksaDateISO()}.pdf`);
     alert("PDF report downloaded successfully!");
   };
 
@@ -939,7 +939,7 @@ TLS Fleet Management`;
               const ws = XLSX.utils.json_to_sheet(kmRecords);
               const wb = XLSX.utils.book_new();
               XLSX.utils.book_append_sheet(wb, ws, 'KM_History');
-              XLSX.writeFile(wb, `KM_History_${new Date().toISOString().substring(0, 10)}.xlsx`);
+              XLSX.writeFile(wb, `KM_History_${ksaDateISO()}.xlsx`);
             }}
             className="bg-slate-700 hover:bg-slate-600 text-white px-3.5 py-2 rounded-xl text-xs font-semibold shadow-sm transition flex items-center gap-1.5"
           >
@@ -1255,7 +1255,7 @@ TLS Fleet Management`;
                     const ws = XLSX.utils.json_to_sheet(exportRows);
                     const wb = XLSX.utils.book_new();
                     XLSX.utils.book_append_sheet(wb, ws, 'Master_Fleet_Balancing');
-                    XLSX.writeFile(wb, `Master_Fleet_Balancing_${selectedMonth}_${new Date().toISOString().substring(0, 10)}.xlsx`);
+                    XLSX.writeFile(wb, `Master_Fleet_Balancing_${selectedMonth}_${ksaDateISO()}.xlsx`);
                   }}
                   className="bg-slate-700 hover:bg-slate-600 text-slate-200 px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1 transition"
                   title="Export this master table to Excel"
@@ -1559,7 +1559,7 @@ TLS Fleet Management`;
                 const ws = XLSX.utils.json_to_sheet(reconData);
                 const wb = XLSX.utils.book_new();
                 XLSX.utils.book_append_sheet(wb, ws, 'Fuel_Reconciliation');
-                XLSX.writeFile(wb, `Fuel_Reconciliation_${new Date().toISOString().substring(0, 10)}.xlsx`);
+                XLSX.writeFile(wb, `Fuel_Reconciliation_${ksaDateISO()}.xlsx`);
               }}
               className="bg-white text-slate-900 px-4 py-2 rounded-xl text-xs font-bold shadow-md hover:bg-slate-100 transition"
             >
@@ -1698,7 +1698,7 @@ TLS Fleet Management`;
                                 const l = parseFloat(lStr);
                                 if (isNaN(l) || l <= 0) return alert("Invalid liters");
                                 addDieselLog({
-                                  date: `${new Date().toISOString().substring(0, 7)}-15`,
+                                  date: `${ksaDateISO().substring(0, 7)}-15`,
                                   veh: r.plate,
                                   drv: r.driverName,
                                   liters: l,
@@ -1845,7 +1845,7 @@ TLS Fleet Management`;
                   Oct 1 (Month Start)
                 </button>
                 <button
-                  onClick={() => setReadingDate(new Date().toISOString().substring(0, 10))}
+                  onClick={() => setReadingDate(ksaDateISO())}
                   className="text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-2.5 py-1.5 rounded-lg font-bold border border-slate-700 transition"
                 >
                   Today
