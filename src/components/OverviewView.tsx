@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { useLms } from '../context/LmsContext';
 import { useAuth } from '../context/AuthContext';
 import { ksaDateISO, shiftISODate, shiftISOMonth } from '../utils/dateUtils';
+import { transactionCashImpact } from '../utils/cashbookUtils';
 import {
   Truck, Users, Fuel, DollarSign, AlertCircle, ArrowUpRight,
   TrendingUp, CheckCircle2, Clock, AlertTriangle, ShieldCheck,
@@ -52,19 +53,9 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
   let cashInflow = 0;
   let cashOutflow = 0;
   cashTransactions.forEach(t => {
-    if (t.status === 'Reversed') return;
-    if (t.type === 'Reversal') {
-      const originalType = t.reversedType || cashTransactions.find(original => original.id === t.reversalOf)?.type;
-      const amount = Math.abs(Number(t.amount) || 0);
-      if (originalType && ['Cash In', 'Income', 'Transfer In', 'Advance Returned'].includes(originalType)) cashOutflow += amount;
-      else if (originalType && ['Advance Given', 'Transfer Out', 'Cash Out', 'Expense Settlement'].includes(originalType)) cashInflow += amount;
-      else if (Number(t.amount) < 0) cashOutflow += Math.abs(t.amount);
-      else cashInflow += Math.abs(t.amount);
-      return;
-    }
-    const amount = Number(t.amount) || 0;
-    if (['Cash In', 'Income', 'Transfer In', 'Advance Returned'].includes(t.type)) cashInflow += amount;
-    if (['Advance Given', 'Transfer Out', 'Cash Out', 'Expense Settlement'].includes(t.type)) cashOutflow += amount;
+    const impact = transactionCashImpact(t, cashTransactions);
+    if (impact > 0) cashInflow += impact;
+    if (impact < 0) cashOutflow += Math.abs(impact);
   });
 
   const openConflicts = conflicts.filter(c => c.status === 'open');
