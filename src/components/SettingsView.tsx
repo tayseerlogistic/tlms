@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { useLms } from '../context/LmsContext';
@@ -29,6 +29,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [activeTab, setActiveTab] = useState<'mood' | 'master' | 'driver-portal' | 'users' | 'backup'>(initialTab);
   const [isRestoring, setIsRestoring] = useState(false);
   const [restoreFeedback, setRestoreFeedback] = useState<string | null>(null);
+  const [brandName, setBrandName] = useState(() => localStorage.getItem('tlms.brandName') || 'TLS Logistics LMS');
+  const [brandSubtitle, setBrandSubtitle] = useState(() => localStorage.getItem('tlms.brandSubtitle') || 'Tayseer Group Central Fleet Operating System');
+  const [brandLogoUrl, setBrandLogoUrl] = useState(() => localStorage.getItem('tlms.brandLogoUrl') || '');
+  const [brandSaved, setBrandSaved] = useState(false);
+
+  const saveBranding = () => {
+    localStorage.setItem('tlms.brandName', brandName.trim() || 'TLS Logistics LMS');
+    localStorage.setItem('tlms.brandSubtitle', brandSubtitle.trim() || 'Tayseer Group Central Fleet Operating System');
+    localStorage.setItem('tlms.brandLogoUrl', brandLogoUrl.trim());
+    window.dispatchEvent(new CustomEvent('tlms-branding-updated'));
+    setBrandSaved(true);
+  };
 
   const openConflictsCount = conflicts.filter(c => c.status === 'open').length;
 
@@ -137,6 +149,29 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <p className="text-xs text-slate-400 mt-1">
                 Customize the visual look of TLS Logistics LMS. Changes apply instantly across all modules with high-contrast text and border tuning.
               </p>
+            </div>
+
+            <div className="rounded-xl border border-slate-700 bg-slate-900/70 p-4 space-y-3">
+              <h4 className="text-sm font-bold text-white">Website Name &amp; Logo</h4>
+              <p className="text-xs text-slate-400">Change the title shown in the navigation header. Logo must be an image URL; leave blank to use the default lightning icon. This setting is saved in this browser.</p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <label className="text-xs font-semibold text-slate-300 space-y-1 block">
+                  <span>Website name</span>
+                  <input value={brandName} onChange={e => { setBrandName(e.target.value); setBrandSaved(false); }} className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white" placeholder="TLS Logistics LMS" />
+                </label>
+                <label className="text-xs font-semibold text-slate-300 space-y-1 block">
+                  <span>Header subtitle</span>
+                  <input value={brandSubtitle} onChange={e => { setBrandSubtitle(e.target.value); setBrandSaved(false); }} className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white" placeholder="Tayseer Group Central Fleet Operating System" />
+                </label>
+              </div>
+              <label className="text-xs font-semibold text-slate-300 space-y-1 block">
+                <span>Logo image URL (optional)</span>
+                <input value={brandLogoUrl} onChange={e => { setBrandLogoUrl(e.target.value); setBrandSaved(false); }} className="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white" placeholder="https://example.com/logo.png" />
+              </label>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-xs text-slate-400">{brandSaved ? 'Branding saved for this browser.' : 'Save to apply the branding to the header.'}</span>
+                <button type="button" onClick={saveBranding} className="rounded-lg bg-blue-600 hover:bg-blue-500 px-4 py-2 text-xs font-bold text-white">Save Branding</button>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
