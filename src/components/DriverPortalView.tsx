@@ -14,11 +14,12 @@ export const DriverPortalView: React.FC = () => {
 
   // Find current driver profile
   // If user has a linked driverId, use it; otherwise allow selection
-  const currentDriver = drivers.find(d =>
-    (selectedDriverId && d.id === selectedDriverId) ||
-    (profile?.driverId && d.id === profile.driverId) ||
-    (user?.email && d.name.toLowerCase().includes(user.email.split('@')[0].toLowerCase()))
-  ) || drivers[0];
+  const activeDrivers = drivers.filter(driver => driver.active);
+  const currentDriver = activeDrivers.find(driver =>
+    (selectedDriverId && driver.id === selectedDriverId) ||
+    (profile?.driverId && driver.id === profile.driverId) ||
+    (user?.email && driver.name.toLowerCase().includes(user.email.split('@')[0].toLowerCase()))
+  ) || activeDrivers[0];
 
   if (!currentDriver) {
     return (
@@ -32,7 +33,7 @@ export const DriverPortalView: React.FC = () => {
 
   const today = ksaDateISO();
   const driverIdx = drivers.findIndex(d => d.id === currentDriver.id);
-  const currentTag = manifests[today]?.[currentDriver.id] || manifests[today]?.[String(driverIdx)] || 'At Yanbu Base';
+  const currentTag = manifests[today]?.[currentDriver.id] || manifests[today]?.[String(driverIdx)] || 'No manifest status recorded for today';
 
   // Find assigned truck
   const assignedTruck = trucks.find(t => t.assignedDriverId === currentDriver.id || t.plate === currentDriver.assignedVehiclePlate);
@@ -96,7 +97,7 @@ export const DriverPortalView: React.FC = () => {
             onChange={(e) => setSelectedDriverId(e.target.value)}
             className="bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white font-semibold focus:outline-none focus:border-blue-500"
           >
-            {drivers.map(d => (
+            {activeDrivers.map(d => (
               <option key={d.id} value={d.id}>{d.name} ({d.empNo})</option>
             ))}
           </select>
@@ -113,7 +114,7 @@ export const DriverPortalView: React.FC = () => {
             <h2 className="text-xl sm:text-2xl font-black text-white mt-2">{currentDriver.name}</h2>
             <div className="flex items-center gap-3 text-xs text-slate-300 font-mono mt-1">
               <span>Emp: <strong className="text-blue-400">{currentDriver.empNo}</strong></span>
-              <span>Iqama: <strong className="text-slate-200">{currentDriver.iqama || 'Active'}</strong></span>
+              <span>Iqama: <strong className="text-slate-200">{currentDriver.iqama || 'Not recorded'}</strong></span>
               <span>Nat: <strong className="text-slate-200">{currentDriver.nationality}</strong></span>
             </div>
           </div>
@@ -133,7 +134,7 @@ export const DriverPortalView: React.FC = () => {
           <div className="p-3 bg-slate-950/60 rounded-xl border border-slate-800">
             <span className="text-[10px] font-mono uppercase text-slate-400">Attached Trailer / Tanker</span>
             <div className="text-base font-bold text-sky-400 font-mono mt-0.5">
-              {assignedEquip?.equipNo || '214SLF19'}
+              {assignedEquip?.equipNo || 'Not assigned'}
             </div>
           </div>
         </div>
