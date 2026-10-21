@@ -39,6 +39,8 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, setCurrentTab, onOpe
       if (typeof data.brandName === 'string') { setBrandName(data.brandName); localStorage.setItem('tlms.brandName', data.brandName); }
       if (typeof data.brandSubtitle === 'string') { setBrandSubtitle(data.brandSubtitle); localStorage.setItem('tlms.brandSubtitle', data.brandSubtitle); }
       if (typeof data.brandLogoUrl === 'string') { setBrandLogoUrl(data.brandLogoUrl); localStorage.setItem('tlms.brandLogoUrl', data.brandLogoUrl); }
+      document.title = typeof data.brandName === 'string' ? data.brandName : 'TLS Logistics LMS';
+      window.dispatchEvent(new CustomEvent('tlms-branding-updated'));
     }, error => console.warn('Shared branding listener notice:', error.message)) : undefined;
     return () => {
       window.removeEventListener('tlms-branding-updated', syncBranding);
