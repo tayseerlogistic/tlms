@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import {
   Shield, Lock, LogIn, AlertCircle, Sparkles,
@@ -12,6 +12,28 @@ interface LoginViewProps {
 
 export const LoginView: React.FC<LoginViewProps> = ({ onSuccess, onExploreGuest }) => {
   const { loginWithEmail, loginWithGoogle } = useAuth();
+  const [brandName, setBrandName] = useState(() => localStorage.getItem('tlms.brandName') || 'TLS LOGISTICS HUB');
+  const [brandSubtitle, setBrandSubtitle] = useState(() => localStorage.getItem('tlms.brandSubtitle') || 'Tayseer Group Central Fleet Operating System');
+  const [brandLogoUrl, setBrandLogoUrl] = useState(() => localStorage.getItem('tlms.brandLogoUrl') || '');
+
+  useEffect(() => {
+    const syncBranding = () => {
+      const name = localStorage.getItem('tlms.brandName') || 'TLS LOGISTICS HUB';
+      const subtitle = localStorage.getItem('tlms.brandSubtitle') || 'Tayseer Group Central Fleet Operating System';
+      const logo = localStorage.getItem('tlms.brandLogoUrl') || '';
+      setBrandName(name);
+      setBrandSubtitle(subtitle);
+      setBrandLogoUrl(logo);
+      document.title = name;
+    };
+    syncBranding();
+    window.addEventListener('tlms-branding-updated', syncBranding);
+    window.addEventListener('storage', syncBranding);
+    return () => {
+      window.removeEventListener('tlms-branding-updated', syncBranding);
+      window.removeEventListener('storage', syncBranding);
+    };
+  }, []);
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -66,14 +88,14 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess, onExploreGuest 
 
         {/* Brand Header */}
         <div className="text-center mb-6 relative">
-          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-sky-500 text-white shadow-xl shadow-blue-500/25 mb-3 text-2xl font-bold font-mono">
-            ⚡
+          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-sky-500 text-white shadow-xl shadow-blue-500/25 mb-3 text-2xl font-bold font-mono overflow-hidden">
+            {brandLogoUrl ? <img src={brandLogoUrl} alt="Company logo" className="w-full h-full object-contain bg-white" /> : '⚡'}
           </div>
           <h2 className="text-xl sm:text-2xl font-extrabold text-white font-mono tracking-tight">
-            TLS LOGISTICS HUB
+            {brandName}
           </h2>
           <p className="text-xs text-slate-400 mt-1 font-sans">
-            Tayseer Group Central Fleet Operating System
+            {brandSubtitle}
           </p>
         </div>
 
