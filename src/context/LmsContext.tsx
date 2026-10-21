@@ -685,7 +685,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!records.length) return;
 
     const keyFor = (record: Pick<KmRecord, 'date' | 'veh'>) =>
-      `${record.date}__${record.veh.toUpperCase().replace(/\\s+/g, '')}`;
+      `${record.date}__${record.veh.toUpperCase().replace(/\s+/g, '')}`;
     const existingByKey = new Map<string, KmRecord>();
     kmRecords.forEach(record => existingByKey.set(keyFor(record), record));
 
@@ -693,7 +693,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // This is important for multi-month imports with thousands of dated readings.
     const preparedByKey = new Map<string, KmRecord>();
     records.forEach(rec => {
-      const normalizedVehicle = rec.veh.toUpperCase().replace(/\\s+/g, '');
+      const normalizedVehicle = rec.veh.toUpperCase().replace(/\s+/g, '');
       const key = `${rec.date}__${normalizedVehicle}`;
       const existing = existingByKey.get(key);
       const stableVehicleKey = encodeURIComponent(normalizedVehicle).replace(/%/g, '_');
