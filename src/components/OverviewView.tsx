@@ -40,7 +40,10 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
   const today = ksaDateISO();
   const todayManifest = manifests[today] || {};
   const activeTripsCount = Object.values(todayManifest).filter(t => t.includes('Under Loading') || t.includes('On the way')).length;
-  const maintenanceCount = Object.values(todayManifest).filter(t => t.toLowerCase().includes('maintenance')).length;
+  const maintenanceCount = Object.values(todayManifest).filter(t => String(t).toLowerCase().includes('maintenance')).length;
+  const observedFuelLiters = dieselLogs.reduce((sum, entry) => sum + Math.max(0, Number(entry.liters) || 0), 0);
+  const observedFuelCost = dieselLogs.reduce((sum, entry) => sum + Math.max(0, Number(entry.cost) || 0), 0);
+  const observedDieselPrice = observedFuelLiters > 0 ? observedFuelCost / observedFuelLiters : null;
   
   // Total fleet distance
   const totalKm = kmRecords.reduce((acc, r) => acc + (r.km || 0), 0);
@@ -50,8 +53,18 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
   let cashOutflow = 0;
   cashTransactions.forEach(t => {
     if (t.status === 'Reversed') return;
-    if (['Cash In', 'Income', 'Transfer In', 'Advance Returned'].includes(t.type)) cashInflow += t.amount;
-    if (['Advance Given', 'Transfer Out', 'Cash Out', 'Expense Settlement'].includes(t.type)) cashOutflow += t.amount;
+    if (t.type === 'Reversal') {
+      const originalType = t.reversedType || cashTransactions.find(original => original.id === t.reversalOf)?.type;
+      const amount = Math.abs(Number(t.amount) || 0);
+      if (originalType && ['Cash In', 'Income', 'Transfer In', 'Advance Returned'].includes(originalType)) cashOutflow += amount;
+      else if (originalType && ['Advance Given', 'Transfer Out', 'Cash Out', 'Expense Settlement'].includes(originalType)) cashInflow += amount;
+      else if (Number(t.amount) < 0) cashOutflow += Math.abs(t.amount);
+      else cashInflow += Math.abs(t.amount);
+      return;
+    }
+    const amount = Number(t.amount) || 0;
+    if (['Cash In', 'Income', 'Transfer In', 'Advance Returned'].includes(t.type)) cashInflow += amount;
+    if (['Advance Given', 'Transfer Out', 'Cash Out', 'Expense Settlement'].includes(t.type)) cashOutflow += amount;
   });
 
   const openConflicts = conflicts.filter(c => c.status === 'open');
@@ -63,7 +76,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
     const quotaTarget = 3.0;
     const todayISO = ksaDateISO();
     const points: Array<{
-      period: string; fullDate: string; efficiency: number; quota: number;
+      period: string; fullDate: string; efficiency: number | null; quota: number;
       distanceKm: number; litersConsumed: number; fuelCostSar: number; variance: number; hasData: boolean
     }> = [];
 
@@ -79,12 +92,12 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
       return {
         period: label,
         fullDate: periodKey,
-        efficiency,
+        efficiency: hasData ? efficiency : null,
         quota: quotaTarget,
-        distanceKm: Math.round(monthly ? distance / 1000 : distance),
-        litersConsumed: Math.round(monthly ? liters / 1000 : liters),
+        distanceKm: monthly ? Number((distance / 1000).toFixed(1)) : Math.round(distance),
+        litersConsumed: monthly ? Number((liters / 1000).toFixed(1)) : Math.round(liters),
         fuelCostSar: Math.round(cost),
-        variance: efficiency > 0 ? Number((((efficiency - quotaTarget) / quotaTarget) * 100).toFixed(1)) : 0,
+        variance: hasData && efficiency > 0 ? Number((((efficiency - quotaTarget) / quotaTarget) * 100).toFixed(1)) : 0,
         hasData
       };
     };
@@ -141,7 +154,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
       return {
         period: label,
         fullDate: periodKey,
-        completionRate,
+        completionRate: scheduledTrips > 0 ? completionRate : null,
         targetSla: 95.0,
         completedTrips: completed,
         inTransitTrips: inTransit,
@@ -177,14 +190,14 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
   const avgEfficiency = useMemo(() => {
     const measured = fuelTrendData.filter(d => d.hasData);
     if (!measured.length) return 0;
-    const sum = measured.reduce((acc, d) => acc + d.efficiency, 0);
+    const sum = measured.reduce((acc, d) => acc + (d.efficiency || 0), 0);
     return parseFloat((sum / measured.length).toFixed(2));
   }, [fuelTrendData]);
 
   const avgCompletionRate = useMemo(() => {
     const measured = manifestTrendData.filter(d => d.hasData);
     if (!measured.length) return 0;
-    const sum = measured.reduce((acc, d) => acc + d.completionRate, 0);
+    const sum = measured.reduce((acc, d) => acc + (d.completionRate || 0), 0);
     return parseFloat((sum / measured.length).toFixed(1));
   }, [manifestTrendData]);
 
@@ -289,7 +302,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
             </div>
           </div>
           <div className="mt-4 pt-3 border-t border-slate-700/60 flex justify-between text-xs text-slate-400">
-            <span>Standby: <strong className="text-slate-200">{drivers.length - activeTripsCount - maintenanceCount}</strong></span>
+            <span>Standby: <strong className="text-slate-200">{Math.max(0, drivers.filter(d => d.active).length - activeTripsCount - maintenanceCount)}</strong></span>
             <button onClick={() => onNavigate('manifest')} className="text-blue-400 hover:underline">View Live Manifest →</button>
           </div>
         </div>
@@ -351,7 +364,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
                 Operations &amp; Efficiency Analytics Suite
               </h2>
               <span className="hidden sm:inline-block px-2 py-0.5 rounded-full text-[11px] font-mono font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                Live Dynamic Telemetry
+                Recorded Operations Data
               </span>
             </div>
             <p className="text-xs text-slate-400 mt-1">
@@ -412,7 +425,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
                   timeRange === 'monthly' ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-white'
                 }`}
               >
-                Monthly 2026
+                12 Months
               </button>
             </div>
           </div>
@@ -424,12 +437,12 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
             <div>
               <span className="text-[11px] font-mono text-slate-400 uppercase">Period Fuel Avg</span>
               <div className="flex items-baseline gap-1.5 mt-0.5">
-                <span className="text-lg font-black text-cyan-400 font-mono">{avgEfficiency}</span>
+                <span className="text-lg font-black text-cyan-400 font-mono">{fuelTrendData.some(d => d.hasData) ? avgEfficiency : '—'}</span>
                 <span className="text-xs text-slate-400">KM/L</span>
               </div>
             </div>
             <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-              +{parseFloat((((avgEfficiency - 3.0) / 3.0) * 100).toFixed(1))}% vs Quota
+              {fuelTrendData.some(d => d.hasData) ? (avgEfficiency >= 3 ? '+' : '') + parseFloat((((avgEfficiency - 3.0) / 3.0) * 100).toFixed(1)) + '% vs Quota' : 'No readings'}
             </span>
           </div>
 
@@ -437,7 +450,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
             <div>
               <span className="text-[11px] font-mono text-slate-400 uppercase">Manifest Fulfillment</span>
               <div className="flex items-baseline gap-1.5 mt-0.5">
-                <span className="text-lg font-black text-purple-400 font-mono">{avgCompletionRate}%</span>
+                <span className="text-lg font-black text-purple-400 font-mono">{manifestTrendData.some(d => d.hasData) ? avgCompletionRate + '%' : '—'}</span>
                 <span className="text-xs text-slate-400">SLA</span>
               </div>
             </div>
@@ -450,11 +463,11 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
             <div>
               <span className="text-[11px] font-mono text-slate-400 uppercase">Diesel Tariff</span>
               <div className="flex items-baseline gap-1.5 mt-0.5">
-                <span className="text-lg font-black text-emerald-400 font-mono">1.79</span>
+                <span className="text-lg font-black text-emerald-400 font-mono">{observedDieselPrice !== null ? observedDieselPrice.toFixed(2) : "—"}</span>
                 <span className="text-xs text-slate-400">SAR / L</span>
               </div>
             </div>
-            <span className="text-[10px] font-mono text-slate-400">Fixed KSA Index</span>
+            <span className="text-[10px] font-mono text-slate-400">{observedDieselPrice !== null ? "Observed data" : "No fuel records"}</span>
           </div>
 
           <div className="bg-slate-950/70 border border-slate-800/80 p-3 rounded-xl flex items-center justify-between">
@@ -516,8 +529,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
                     />
                     <YAxis
                       yAxisId="left"
-                      domain={[2.4, 3.4]}
-                      ticks={[2.6, 2.8, 3.0, 3.2, 3.4]}
+                      domain={['auto', 'auto']}
                       stroke="#06b6d4"
                       fontSize={11}
                       tickLine={false}
@@ -551,7 +563,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
                       content={({ active, payload, label }) => {
                         if (!active || !payload || !payload.length) return null;
                         const data = payload[0].payload;
-                        const isOptimal = data.efficiency >= 3.0;
+                        const isOptimal = data.efficiency !== null && data.efficiency >= 3.0;
 
                         return (
                           <div className="bg-slate-900 border border-slate-700 rounded-xl p-3 shadow-2xl text-xs font-mono space-y-1.5 z-50">
@@ -565,7 +577,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
                             </div>
                             <div className="flex justify-between gap-4">
                               <span className="text-slate-400">Fleet Efficiency:</span>
-                              <span className="text-cyan-400 font-bold">{data.efficiency} KM/L</span>
+                              <span className="text-cyan-400 font-bold">{data.efficiency === null ? '—' : data.efficiency} KM/L</span>
                             </div>
                             <div className="flex justify-between gap-4">
                               <span className="text-slate-400">Target Benchmark:</span>
@@ -665,8 +677,8 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
                     />
                     <YAxis
                       yAxisId="left"
-                      domain={[80, 100]}
-                      ticks={[85, 90, 95, 100]}
+                      domain={[0, 100]}
+                      ticks={[0, 25, 50, 75, 100]}
                       stroke="#a855f7"
                       fontSize={11}
                       tickLine={false}
@@ -699,7 +711,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
                       content={({ active, payload, label }) => {
                         if (!active || !payload || !payload.length) return null;
                         const data = payload[0].payload;
-                        const satisfiesSla = data.completionRate >= 95.0;
+                        const satisfiesSla = data.completionRate !== null && data.completionRate >= 95.0;
 
                         return (
                           <div className="bg-slate-900 border border-slate-700 rounded-xl p-3 shadow-2xl text-xs font-mono space-y-1.5 z-50">
@@ -713,7 +725,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
                             </div>
                             <div className="flex justify-between gap-4">
                               <span className="text-slate-400">Completion Rate:</span>
-                              <span className="text-purple-400 font-bold">{data.completionRate}%</span>
+                              <span className="text-purple-400 font-bold">{data.completionRate === null ? '—' : data.completionRate + '%'}</span>
                             </div>
                             <div className="flex justify-between gap-4">
                               <span className="text-slate-400">Completed Dispatches:</span>
@@ -823,7 +835,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
             <h2 className="text-base font-bold text-white flex items-center gap-2">
               <span>🚛</span> Prime Mover &amp; Driver Deployment Board
             </h2>
-            <p className="text-xs text-slate-400 mt-0.5">Live status and assignment overview across all 46 prime movers</p>
+            <p className="text-xs text-slate-400 mt-0.5">Live status and assignment overview across {trucks.length} prime movers</p>
           </div>
           <span className="text-xs font-mono bg-slate-900 px-3 py-1 rounded-lg border border-slate-700 text-slate-300">
             Today: {today}
@@ -847,7 +859,8 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
               {trucks.slice(0, 20).map((t, idx) => {
                 const assignedDriver = drivers.find(d => d.id === t.assignedDriverId || d.assignedTruckId === t.id);
                 const assignedEquip = equipment.find(e => e.assignedTruckId === t.id);
-                const tag = todayManifest[idx] || (assignedDriver?.history && assignedDriver.history[today]) || 'At Yanbu Base';
+                const assignedDriverIndex = assignedDriver ? drivers.findIndex(driver => driver.id === assignedDriver.id) : -1;
+                const tag = (assignedDriver ? todayManifest[assignedDriver.id] : undefined) || (assignedDriverIndex >= 0 ? todayManifest[String(assignedDriverIndex)] : undefined) || assignedDriver?.history?.[today] || 'At Yanbu Base';
 
                 return (
                   <tr key={t.id} className="hover:bg-slate-800/60 transition">
