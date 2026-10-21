@@ -51,7 +51,7 @@ export const MasterDataView: React.FC = () => {
     const plate = (formData.get('plate') as string).trim().toUpperCase();
     if (!plate) { alert('Truck plate is required.'); return; }
     const plateNorm = plate.replace(/\s+/g, '');
-    if (trucks.some(truck => truck.id !== editingTruck?.id && truck.plateNorm === plateNorm)) { alert('A truck with this normalized plate already exists.'); return; }
+    if (trucks.some(truck => truck.id !== editingTruck?.id && String(truck.plateNorm || truck.plate || '').replace(/\s+/g, '').toUpperCase() === plateNorm)) { alert('A truck with this normalized plate already exists.'); return; }
     const assignedDriverId = formData.get('driverId') as string;
     const selectedDriver = drivers.find(d => d.id === assignedDriverId);
 
@@ -63,17 +63,21 @@ export const MasterDataView: React.FC = () => {
       type: 'Truck',
       description: (formData.get('description') as string) || 'Fleet Truck',
       status: (formData.get('status') as any) || 'ACTIVE',
-      istemaraExp: (formData.get('istemaraExp') as string) || '2026-12-31',
-      insuranceExp: (formData.get('insuranceExp') as string) || '2026-12-31',
-      fahasExp: (formData.get('fahasExp') as string) || '2026-12-31',
+      istemaraExp: (formData.get('istemaraExp') as string) || '',
+      insuranceExp: (formData.get('insuranceExp') as string) || '',
+      fahasExp: (formData.get('fahasExp') as string) || '',
       assignedDriverId: assignedDriverId || null,
       assignedDriverName: selectedDriver ? selectedDriver.name : null,
       notes: (formData.get('notes') as string) || ''
     };
 
-    await saveTruck(truckToSave);
-    setIsTruckModalOpen(false);
-    setEditingTruck(null);
+    try {
+      await saveTruck(truckToSave);
+      setIsTruckModalOpen(false);
+      setEditingTruck(null);
+    } catch (error) {
+      alert(error instanceof Error ? 'Truck was not saved: ' + error.message : 'Truck was not saved. Check your connection and permissions.');
+    }
   };
 
   const handleSaveDriver = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -81,10 +85,11 @@ export const MasterDataView: React.FC = () => {
     const form = e.currentTarget;
     const formData = new FormData(form);
 
-    const name = (formData.get('name') as string).trim().toUpperCase();
-    const empNo = (formData.get('empNo') as string).trim();
-    const iqama = (formData.get('iqama') as string).trim();
-    const mobile = (formData.get('mobile') as string).trim();
+    const name = String(formData.get('name') || '').trim().toUpperCase();
+    const empNo = String(formData.get('empNo') || '').trim();
+    const iqama = String(formData.get('iqama') || '').trim();
+    const mobile = String(formData.get('mobile') || '').trim();
+    if (!name) { alert('Driver name is required.'); return; }
     const duplicateDriver = drivers.find(driver => driver.id !== editingDriver?.id && (
       Boolean(empNo && String(driver.empNo || '').trim().toLowerCase() === empNo.toLowerCase()) ||
       Boolean(iqama && String(driver.iqama || '').replace(/\D/g, '') === iqama.replace(/\D/g, '')) ||
@@ -115,9 +120,13 @@ export const MasterDataView: React.FC = () => {
       notes: (formData.get('notes') as string) || ''
     };
 
-    await saveDriver(driverToSave);
-    setIsDriverModalOpen(false);
-    setEditingDriver(null);
+    try {
+      await saveDriver(driverToSave);
+      setIsDriverModalOpen(false);
+      setEditingDriver(null);
+    } catch (error) {
+      alert(error instanceof Error ? 'Driver was not saved: ' + error.message : 'Driver was not saved. Check your connection and permissions.');
+    }
   };
 
   const handleSaveEquip = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -141,9 +150,13 @@ export const MasterDataView: React.FC = () => {
       active: true
     };
 
-    await saveEquipment(equipToSave);
-    setIsEquipModalOpen(false);
-    setEditingEquip(null);
+    try {
+      await saveEquipment(equipToSave);
+      setIsEquipModalOpen(false);
+      setEditingEquip(null);
+    } catch (error) {
+      alert(error instanceof Error ? 'Equipment was not saved: ' + error.message : 'Equipment was not saved. Check your connection and permissions.');
+    }
   };
 
   return (
