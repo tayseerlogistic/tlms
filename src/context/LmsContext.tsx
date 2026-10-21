@@ -268,6 +268,18 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       console.warn("Drivers Firestore listener notice:", err.message);
     });
 
+    const unsubCommodities = onSnapshot(collection(db, 'commodities'), snapshot => {
+      setCommodities(snapshot.docs.map(item => ({ id: item.id, ...item.data() } as Commodity)));
+    }, error => console.warn('Commodities Firestore listener notice:', error.message));
+
+    const unsubStores = onSnapshot(collection(db, 'stores'), snapshot => {
+      setStores(snapshot.docs.map(item => ({ id: item.id, ...item.data() } as StoreMapItem)));
+    }, error => console.warn('Stores Firestore listener notice:', error.message));
+
+    const unsubConflicts = onSnapshot(collection(db, 'data_quality'), snapshot => {
+      setConflicts(snapshot.docs.map(item => ({ id: item.id, ...item.data() } as DataConflict)));
+    }, error => console.warn('Data-quality Firestore listener notice:', error.message));
+
     // Listen to manifests
     const unsubManifests = onSnapshot(collection(db, 'manifests'), (snapshot) => {
       const remote: Record<string, Record<string, string>> = {};
@@ -341,6 +353,9 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       unsubTrucks();
       unsubEquipment();
       unsubDrivers();
+      unsubCommodities();
+      unsubStores();
+      unsubConflicts();
       unsubManifests();
       unsubSchedules();
       unsubCash();
