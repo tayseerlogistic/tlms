@@ -188,7 +188,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
             <div className="rounded-xl border border-slate-700 bg-slate-900/70 p-4 space-y-3">
               <h4 className="text-sm font-bold text-white">Website Name &amp; Logo</h4>
-              <p className="text-xs text-slate-400">Change the title shown in the navigation header. Logo must be an image URL; leave blank to use the default lightning icon. This setting is saved in this browser.</p>
+              <p className="text-xs text-slate-400">Change the name, subtitle, and logo shown across TLMS. Signed-in users share the branding through Firebase; guest/demo changes stay in this browser.</p>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <label className="text-xs font-semibold text-slate-300 space-y-1 block">
                   <span>Website name</span>
