@@ -11,12 +11,12 @@ export interface ModelTrainingStats {
 
 // Global in-memory cache of trained AI model
 let globalModelStats: ModelTrainingStats = {
-  totalTripsIngested: 742,
-  distinctDates: 38,
-  driversTrained: 64,
-  patternsExtracted: 64,
-  accuracyRate: 97.4,
-  lastTrainedAt: new Date().toISOString()
+  totalTripsIngested: 0,
+  distinctDates: 0,
+  driversTrained: 0,
+  patternsExtracted: 0,
+  accuracyRate: 0,
+  lastTrainedAt: ''
 };
 
 /**
@@ -148,7 +148,8 @@ export function trainManifestAiModel(
     distinctDates: datesSet.size,
     driversTrained: drivers.length,
     patternsExtracted: updatedRules.length,
-    accuracyRate: parseFloat((95.5 + Math.min(3.5, updatedRules.length * 0.04)).toFixed(1)),
+    // No independent holdout evaluation is run here; do not fabricate an accuracy percentage.
+    accuracyRate: 0,
     lastTrainedAt: new Date().toISOString()
   };
 
