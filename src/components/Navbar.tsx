@@ -28,7 +28,6 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, setCurrentTab, onOpe
     { id: 'manifest', label: 'Daily Manifest', icon: ClipboardList },
     { id: 'km-fuel', label: 'KM & Fuel Balancing', icon: Truck },
     { id: 'cashbook', label: 'Cashbook Pro', icon: Wallet },
-    { id: 'settings', label: 'Settings', icon: Settings, badge: openConflictsCount > 0 ? openConflictsCount : undefined },
   ];
 
   const roleColors: Record<UserRole, { bg: string; text: string; border: string }> = {
