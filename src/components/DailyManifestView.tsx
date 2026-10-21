@@ -515,7 +515,7 @@ export const DailyManifestView: React.FC = () => {
             </div>
           </div>
           <span className="text-xs bg-purple-900/80 border border-purple-600 px-3 py-1 rounded-xl text-purple-200 font-mono font-bold">
-            Ingesting 984+ Historical Trips
+            Historical manifest learning
           </span>
         </div>
       )}
@@ -530,12 +530,12 @@ export const DailyManifestView: React.FC = () => {
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="text-base font-extrabold text-white">AI Manifest Prediction &amp; Training Engine</h3>
-                <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] font-mono font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
-                  <Sparkles className="w-3 h-3 text-emerald-400" /> {modelStats.accuracyRate}% Accuracy
+                <span className="bg-slate-700/70 text-slate-300 border border-slate-600 text-[10px] font-mono font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
+                  <Sparkles className="w-3 h-3 text-slate-400" /> Accuracy not measured
                 </span>
               </div>
               <p className="text-xs text-slate-300 mt-0.5">
-                Trained on historical August &amp; September daily manifests &bull; Auto-syncs timetable dispatches &bull; Heuristic cycle progression
+                Learns patterns from available manifest history &bull; Auto-syncs timetable dispatches &bull; Heuristic cycle progression
               </p>
             </div>
           </div>
