@@ -657,6 +657,17 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
     const prepared = Array.from(preparedByKey.values());
 
+    if (user || profile) {
+      try {
+        for (const record of prepared) {
+          await setDoc(doc(db, 'km_records', record.id), record);
+        }
+      } catch (e) {
+        console.error("Error saving batch KM records in Firestore:", e);
+        throw new Error('KM records could not be fully saved to Firestore. The local view was left unchanged, though some remote records may have been written before the error; reload and verify before retrying.');
+      }
+    }
+
     setKmRecords(prev => {
       const copy = [...prev];
       prepared.forEach(fullRec => {
@@ -671,17 +682,6 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
       return copy;
     });
-
-    if (user || profile) {
-      try {
-        for (const record of prepared) {
-          await setDoc(doc(db, 'km_records', record.id), record);
-        }
-      } catch (e) {
-        console.error("Error saving batch KM records in Firestore:", e);
-        throw new Error('KM records were added to the local view but could not be fully synced to Firestore. Check your connection, Firebase Authentication, and Firestore rules.');
-      }
-    }
   };
 
   const deleteKmRecord = async (id: string) => {
