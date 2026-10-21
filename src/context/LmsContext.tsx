@@ -769,47 +769,6 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const restoreFullBackup = async (data: any): Promise<{ success: boolean; message: string }> => {
-    try {
-      if (!data) return { success: false, message: "No data payload provided" };
-
-      if (Array.isArray(data.trucks) && data.trucks.length > 0) {
-        setTrucks(data.trucks);
-      }
-      if (Array.isArray(data.equipment) && data.equipment.length > 0) {
-        setEquipment(data.equipment);
-      }
-      if (Array.isArray(data.drivers) && data.drivers.length > 0) {
-        setDrivers(data.drivers);
-      }
-      if (data.manifests && typeof data.manifests === 'object') {
-        setManifests(data.manifests);
-      }
-      if (data.schedules && typeof data.schedules === 'object') {
-        setSchedules(data.schedules);
-      }
-      if (data.cashbook?.transactions && Array.isArray(data.cashbook.transactions)) {
-        setCashTransactions(data.cashbook.transactions);
-      }
-      if (Array.isArray(data.km) || Array.isArray(data.kmRecords)) {
-        setKmRecords(data.km || data.kmRecords);
-      }
-      if (Array.isArray(data.diesel) || Array.isArray(data.dieselLogs)) {
-        setDieselLogs(data.diesel || data.dieselLogs);
-      }
-      if (Array.isArray(data.dataQuality)) {
-        setConflicts(data.dataQuality);
-      }
-
-      return {
-        success: true,
-        message: `Restored successfully: ${data.trucks?.length || 0} Trucks, ${data.drivers?.length || 0} Drivers, ${data.equipment?.length || 0} Equipment records!`
-      };
-    } catch (err: any) {
-      return { success: false, message: `Restore error: ${err.message}` };
-    }
-  };
-
   const exportFullBackup = () => {
     const payload = {
       meta: {
