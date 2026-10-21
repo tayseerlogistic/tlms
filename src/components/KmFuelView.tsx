@@ -137,8 +137,7 @@ export const KmFuelView: React.FC = () => {
   const [fuelTruck, setFuelTruck] = useState<Truck | null>(null);
   const [fuelLitersVal, setFuelLitersVal] = useState('');
   const [fuelCostVal, setFuelCostVal] = useState('');
-  const [fuelStationVal, setFuelStationVal] = useState('Yanbu Aramco Depot');
-  const [fuelReceiptVal, setFuelReceiptVal] = useState('');
+  const [fuelRouteVal, setFuelRouteVal] = useState('');
   const [fuelDate, setFuelDate] = useState(() => new Date().toISOString().substring(0, 10));
 
   const [isWhatsRemindersModalOpen, setIsWhatsRemindersModalOpen] = useState(false);
@@ -2962,18 +2961,64 @@ TLS Logistics Fleet Management`;
                   alert("Please enter a valid fuel liter amount.");
                   return;
                 }
-                const cost = fuelCostVal ? parseFloat(fuelCostVal) : parseFloat((liters * KSA_DIESEL_PRICE).toFixed(2));
-
+                const cost = parseFloat((liters * KSA_DIESEL_PRICE).toFixed(2));
+                const assignedDriver = drivers.find(d => d.name === fuelTruck.assignedDriverName);
+                const normalizePhone = (value: string) => {
+                  const digits = value.replace(/\\D/g, '');
+                  if (!digits) return '';
+                  if (digits.startsWith('00966')) return digits.slice(2);
+                  if (digits.startsWith('966')) return digits;
+                  if (digits.startsWith('05')) return `966${digits.slice(1)}`;
+                  if (digits.startsWith('5') && digits.length === 9) return `966${digits}`;
+                  return digits;
+                };
+                const phone = normalizePhone(assignedDriver?.mobile || '');
+                const whatsappWindow = window.open('about:blank', '_blank');
                 await addDieselLog({
                   date: fuelDate,
                   veh: fuelTruck.plate,
                   drv: fuelTruck.assignedDriverName || 'Driver',
                   liters,
                   cost,
-                  route: fuelStationVal ? `${fuelStationVal} (Receipt #${fuelReceiptVal || 'N/A'})` : 'Station Fill-up'
+                  route: fuelRouteVal.trim() || '—'
                 });
 
-                alert(`Successfully logged ${liters} Liters (${cost} SAR) for ${fuelTruck.plate}!`);
+                // Render a portable 80 mm receipt as a PNG for download/share.
+                const canvas = document.createElement('canvas');
+                canvas.width = 944;
+                const lines = [
+                  'TAYSEER LOGISTICS', 'DIESEL FILL-UP RECEIPT',
+                  '--------------------------------',
+                  `Date: ${fuelDate}`, `Vehicle: ${fuelTruck.plate}`,
+                  `Driver: ${fuelTruck.assignedDriverName || 'Unassigned'}`,
+                  `Route: ${fuelRouteVal.trim() || '—'}`,
+                  `Liters: ${liters.toLocaleString()}`,
+                  `Rate: ${KSA_DIESEL_PRICE.toFixed(2)} SAR/L`,
+                  `Amount: ${cost.toFixed(2)} SAR`,
+                  '--------------------------------', 'Thank you'
+                ];
+                canvas.height = 100 + lines.length * 48;
+                const ctx = canvas.getContext('2d');
+                if (ctx) {
+                  ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+                  ctx.fillStyle = '#111827'; ctx.textAlign = 'center';
+                  ctx.font = 'bold 36px Arial'; ctx.fillText(lines[0], canvas.width / 2, 55);
+                  ctx.font = 'bold 30px Arial'; ctx.fillText(lines[1], canvas.width / 2, 100);
+                  ctx.textAlign = 'left'; ctx.font = '28px Arial';
+                  lines.slice(2).forEach((line, index) => ctx.fillText(line, 42, 150 + index * 48));
+                  const imageUrl = canvas.toDataURL('image/png');
+                  const link = document.createElement('a');
+                  link.href = imageUrl;
+                  link.download = `Diesel-Receipt-${fuelTruck.plate.replace(/\\s+/g, '-')}-${fuelDate}.png`;
+                  link.click();
+                }
+                const message = `*TAYSEER LOGISTICS - DIESEL RECEIPT*\\nVehicle: ${fuelTruck.plate}\\nDriver: ${fuelTruck.assignedDriverName || 'Unassigned'}\\nDate: ${fuelDate}\\nRoute: ${fuelRouteVal.trim() || '—'}\\nLiters: ${liters}\\nAmount: ${cost.toFixed(2)} SAR\\nReceipt image downloaded as PNG.`;
+                if (phone && whatsappWindow) {
+                  whatsappWindow.location.href = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+                } else {
+                  whatsappWindow?.close();
+                  alert(phone ? 'Receipt saved, but WhatsApp could not be opened. Please open WhatsApp manually.' : 'Receipt saved and downloaded. No mobile number is assigned to this driver, so WhatsApp was not opened.');
+                }
                 setIsQuickFuelModalOpen(false);
               }}
               className="space-y-3"
@@ -3025,44 +3070,15 @@ TLS Logistics Fleet Management`;
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-slate-400 uppercase font-mono mb-1">Cost (SAR @ 1.79)</label>
-                  <input
-                    type="number"
-                    step="any"
-                    value={fuelCostVal}
-                    onChange={(e) => setFuelCostVal(e.target.value)}
-                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-amber-300 font-mono font-bold focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-400 uppercase font-mono mb-1">Receipt / Card #</label>
-                  <input
-                    type="text"
-                    placeholder="e.g. REC-9481"
-                    value={fuelReceiptVal}
-                    onChange={(e) => setFuelReceiptVal(e.target.value)}
-                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none"
-                  />
-                </div>
-              </div>
-
               <div>
-                <label className="block text-xs font-bold text-slate-400 uppercase font-mono mb-1">Fuel Station</label>
-                <select
-                  value={fuelStationVal}
-                  onChange={(e) => setFuelStationVal(e.target.value)}
-                  className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none"
-                >
-                  <option value="Yanbu Aramco Depot">Yanbu Aramco Depot</option>
-                  <option value="Naft Station Yanbu">Naft Station Yanbu</option>
-                  <option value="Petromin Expressway">Petromin Expressway</option>
-                  <option value="SASCO Highway Station">SASCO Highway Station</option>
-                  <option value="Aldrees Diesel Center">Aldrees Diesel Center</option>
-                  <option value="Jeddah Central Hub">Jeddah Central Hub</option>
-                  <option value="Riyadh Main Terminal">Riyadh Main Terminal</option>
-                </select>
+                <label className="block text-xs font-bold text-slate-400 uppercase font-mono mb-1">Route</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Yanbu → Riyadh"
+                  value={fuelRouteVal}
+                  onChange={(e) => setFuelRouteVal(e.target.value)}
+                  className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
+                />
               </div>
 
               <div className="flex justify-end gap-2 pt-2 border-t border-slate-800">
@@ -3077,7 +3093,7 @@ TLS Logistics Fleet Management`;
                   type="submit"
                   className="bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs px-5 py-2 rounded-xl shadow flex items-center gap-1.5"
                 >
-                  <Save className="w-3.5 h-3.5" /> Save Fuel Log
+                  <Send className="w-3.5 h-3.5" /> Save &amp; Send
                 </button>
               </div>
             </form>
