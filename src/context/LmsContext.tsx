@@ -671,11 +671,98 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const resolveConflict = async (conflictId: string, note?: string) => {
-    setConflicts(prev => prev.map(c => c.id === conflictId ? { ...c, status: 'resolved' as const, issue: note ? `${c.issue} (Resolved: ${note})` : c.issue } : c));
+    const existing = conflicts.find(item => item.id === conflictId);
+    if (!existing) return;
+    const resolved = { ...existing, status: 'resolved' as const, issue: note ? existing.issue + ' (Resolved: ' + note + ')' : existing.issue };
+    if (user || profile) await setDoc(doc(db, 'data_quality', conflictId), resolved);
+    setConflicts(prev => prev.map(item => item.id === conflictId ? resolved : item));
   };
 
-  const learnHistoricalRules = (rules: LearnedRule[]) => {
-    setLearnedRules(prev => [...prev, ...rules]);
+  const learnHistoricalRules = async (rules: LearnedRule[]) => {
+    const unique = new Map<string, LearnedRule>();
+    [...learnedRules, ...rules].forEach(rule => unique.set(String(rule.driverIndex) + '__' + rule.result, rule));
+    const nextRules = Array.from(unique.values()).sort((a, b) => b.hits - a.hits);
+    if (user || profile) await setDoc(doc(db, 'app_state', 'learnedRules'), { rules: nextRules, updatedAt: new Date().toISOString() });
+    setLearnedRules(nextRules);
+  };
+
+  const restoreFullBackup = async (data: any): Promise<{ success: boolean; message: string }> => {
+    try {
+      if (!data || typeof data !== 'object' || Array.isArray(data)) return { success: false, message: 'Backup must be a JSON object.' };
+      if (data.meta?.schema && data.meta.schema !== 'tls-lms') return { success: false, message: 'This file is not a recognized TLMS backup.' };
+      const recognized = ['trucks', 'equipment', 'drivers', 'commodities', 'stores', 'schedules', 'manifests', 'kmRecords', 'km', 'dieselLogs', 'diesel', 'dataQuality', 'learnedRules', 'cashEmployees'];
+      const found = recognized.some(key => Object.prototype.hasOwnProperty.call(data, key)) || Array.isArray(data.cashbook?.transactions) || Array.isArray(data.cashbook?.accounts);
+      if (!found) return { success: false, message: 'No recognized TLMS backup fields were found. Nothing was restored.' };
+
+      const arrayFields: Array<[string, unknown]> = [
+        ['trucks', data.trucks], ['equipment', data.equipment], ['drivers', data.drivers], ['commodities', data.commodities],
+        ['stores', data.stores], ['kmRecords', data.kmRecords ?? data.km], ['dieselLogs', data.dieselLogs ?? data.diesel],
+        ['dataQuality', data.dataQuality], ['learnedRules', data.learnedRules], ['cashEmployees', data.cashEmployees],
+        ['cashbook.accounts', data.cashbook?.accounts], ['cashbook.transactions', data.cashbook?.transactions]
+      ];
+      for (const [name, value] of arrayFields) {
+        if (value !== undefined && !Array.isArray(value)) return { success: false, message: 'Invalid backup: ' + name + ' must be an array.' };
+        if (Array.isArray(value) && value.some(record => !record || typeof record !== 'object' || !String(record.id || '').trim())) {
+          return { success: false, message: 'Invalid backup: every record in ' + name + ' must have an ID.' };
+        }
+      }
+      for (const name of ['schedules', 'manifests']) {
+        if (data[name] !== undefined && (!data[name] || typeof data[name] !== 'object' || Array.isArray(data[name]))) {
+          return { success: false, message: 'Invalid backup: ' + name + ' must be an object keyed by date.' };
+        }
+      }
+      if (data.cashbook !== undefined && (!data.cashbook || typeof data.cashbook !== 'object' || Array.isArray(data.cashbook))) {
+        return { success: false, message: 'Invalid backup: cashbook must be an object.' };
+      }
+      exportFullBackup();
+
+      const replaceCollection = async (name: string, records: Array<Record<string, any>>) => {
+        const incoming = new Map(records.map(record => [String(record.id), record]));
+        const snapshot = await getDocs(collection(db, name));
+        for (const existing of snapshot.docs) if (!incoming.has(existing.id)) await deleteDoc(doc(db, name, existing.id));
+        for (const [id, record] of incoming) await setDoc(doc(db, name, id), record);
+      };
+      const signedIn = Boolean(user || profile);
+      if (signedIn) {
+        if (Array.isArray(data.trucks)) await replaceCollection('trucks', data.trucks);
+        if (Array.isArray(data.equipment)) await replaceCollection('equipment', data.equipment);
+        if (Array.isArray(data.drivers)) await replaceCollection('drivers', data.drivers);
+        if (Array.isArray(data.commodities)) await replaceCollection('commodities', data.commodities);
+        if (Array.isArray(data.stores)) await replaceCollection('stores', data.stores);
+        if (Array.isArray(data.cashbook?.accounts)) await replaceCollection('cash_accounts', data.cashbook.accounts);
+        if (Array.isArray(data.cashbook?.transactions)) await replaceCollection('cashbook', data.cashbook.transactions);
+        if (Array.isArray(data.cashEmployees)) await replaceCollection('cash_employees', data.cashEmployees);
+        if (Array.isArray(data.kmRecords ?? data.km)) await replaceCollection('km_records', data.kmRecords ?? data.km);
+        if (Array.isArray(data.dieselLogs ?? data.diesel)) await replaceCollection('diesel_logs', data.dieselLogs ?? data.diesel);
+        if (data.schedules) await replaceCollection('schedules', Object.entries(data.schedules).map(([date, item]) => ({ ...(item as object), id: date, date })));
+        if (data.manifests) await replaceCollection('manifests', Object.entries(data.manifests).map(([date, tags]) => ({ id: date, date, tags })));
+        if (Array.isArray(data.dataQuality)) await replaceCollection('data_quality', data.dataQuality);
+        if (Array.isArray(data.learnedRules)) await setDoc(doc(db, 'app_state', 'learnedRules'), { rules: data.learnedRules, updatedAt: new Date().toISOString() });
+      }
+
+      if (Array.isArray(data.trucks)) setTrucks(data.trucks as Truck[]);
+      if (Array.isArray(data.equipment)) setEquipment(data.equipment as Equipment[]);
+      if (Array.isArray(data.drivers)) setDrivers((data.drivers as Driver[]).sort((a, b) => (a.seq || 0) - (b.seq || 0)));
+      if (Array.isArray(data.commodities)) setCommodities(data.commodities as Commodity[]);
+      if (Array.isArray(data.stores)) setStores(data.stores as StoreMapItem[]);
+      if (data.schedules) setSchedules(data.schedules as Record<string, DailySchedule>);
+      if (data.manifests) setManifests(data.manifests as Record<string, Record<string, string>>);
+      if (Array.isArray(data.cashbook?.accounts)) setCashAccounts(data.cashbook.accounts as CashAccount[]);
+      if (Array.isArray(data.cashbook?.transactions)) setCashTransactions(data.cashbook.transactions as CashTransaction[]);
+      if (Array.isArray(data.kmRecords ?? data.km)) setKmRecords((data.kmRecords ?? data.km) as KmRecord[]);
+      if (Array.isArray(data.dieselLogs ?? data.diesel)) setDieselLogs((data.dieselLogs ?? data.diesel) as DieselLog[]);
+      if (Array.isArray(data.dataQuality)) setConflicts(data.dataQuality as DataConflict[]);
+      if (Array.isArray(data.learnedRules)) setLearnedRules(data.learnedRules as LearnedRule[]);
+      if (Array.isArray(data.cashEmployees)) setCashEmployees(data.cashEmployees as { id: string; name: string }[]);
+
+      const syncNote = signedIn ? ' Firestore collections were synced.' : ' Restored locally only; sign in to sync to Firestore.';
+      return {
+        success: true,
+        message: 'Backup restored: ' + (data.trucks?.length ?? 0) + ' trucks, ' + (data.drivers?.length ?? 0) + ' drivers, ' + (data.equipment?.length ?? 0) + ' equipment, ' + (data.cashbook?.transactions?.length ?? 0) + ' cash transactions, ' + ((data.kmRecords ?? data.km)?.length ?? 0) + ' KM records, and ' + ((data.dieselLogs ?? data.diesel)?.length ?? 0) + ' diesel logs.' + syncNote
+      };
+    } catch (err: any) {
+      return { success: false, message: 'Restore failed: ' + (err?.message || String(err)) + '. If signed in, Firestore may have received part of the update; review the database before retrying.' };
+    }
   };
 
   const restoreFullBackup = async (data: any): Promise<{ success: boolean; message: string }> => {
@@ -732,7 +819,12 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           drivers: drivers.length,
           cashTransactions: cashTransactions.length,
           kmRecords: kmRecords.length,
-          dieselLogs: dieselLogs.length
+          dieselLogs: dieselLogs.length,
+          commodities: commodities.length,
+          stores: stores.length,
+          cashAccounts: cashAccounts.length,
+          cashEmployees: cashEmployees.length,
+          learnedRules: learnedRules.length
         }
       },
       trucks,
@@ -746,6 +838,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         accounts: cashAccounts,
         transactions: cashTransactions
       },
+      cashEmployees,
       kmRecords,
       dieselLogs,
       dataQuality: conflicts,
