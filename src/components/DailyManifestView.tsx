@@ -284,7 +284,7 @@ export const DailyManifestView: React.FC = () => {
     let detectedDates = 0;
     let totalRows = 0;
     let rulesAdded = 0;
-    const newRules: LearnedRule[] = [];
+    const stagedRules = new Map<string, LearnedRule>();
 
     // Parse date blocks
     let currentDate = '';
@@ -327,31 +327,29 @@ export const DailyManifestView: React.FC = () => {
           const actualTag = manifestForDate[drivers[driverIdx].id] || manifestForDate[String(driverIdx)];
           if (actualTag) {
             const ruleKey = `${norm(r.source)}>${norm(r.destination)}|${norm(r.customer)}|${norm(r.commodity)}`;
-            const existing = learnedRules.find(lr => (lr.driverId ? lr.driverId === drivers[driverIdx].id : lr.driverIndex === driverIdx) && lr.result === actualTag);
-            if (existing) {
-              existing.hits += 1;
-              existing.lastSeen = dt;
-            } else {
-              newRules.push({
-                driverIndex: driverIdx,
-                driverName: drivers[driverIdx].name,
-                keys: [ruleKey],
-                result: actualTag,
-                hits: 1,
-                lastSeen: dt
-              });
-              rulesAdded++;
-            }
+            const driver = drivers[driverIdx];
+            const stableRuleKey = `${driver.id}__${actualTag}`;
+            const existing = stagedRules.get(stableRuleKey) ||
+              learnedRules.find(rule => (rule.driverId ? rule.driverId === driver.id : rule.driverIndex === driverIdx) && rule.result === actualTag);
+            stagedRules.set(stableRuleKey, {
+              driverId: driver.id,
+              driverIndex: driverIdx,
+              driverName: driver.name,
+              keys: Array.from(new Set([...(existing?.keys || []), ruleKey])),
+              result: actualTag,
+              hits: (existing?.hits || 0) + 1,
+              lastSeen: !existing || dt > existing.lastSeen ? dt : existing.lastSeen
+            });
+            if (!existing) rulesAdded++;
           }
         }
       });
     });
 
-    if (newRules.length > 0) {
-      await learnHistoricalRules(newRules);
-    }
+    const newRules = Array.from(stagedRules.values());
+    if (newRules.length > 0) await learnHistoricalRules(newRules);
 
-    setLearningResult(`Processed ${detectedDates} date blocks (${totalRows} schedule rows). Learned & updated ${rulesAdded} high-confidence progression patterns!`);
+    setLearningResult(`Processed ${detectedDates} date blocks (${totalRows} schedule rows). Persisted ${newRules.length} stable-driver route rules (${rulesAdded} new patterns).`);
   };
 
   // -------------------------------------------------------------
@@ -561,7 +559,7 @@ export const DailyManifestView: React.FC = () => {
           <div className="bg-slate-950/70 p-3 rounded-xl border border-slate-800">
             <span className="text-[10px] font-mono uppercase text-slate-400">INGESTED DISPATCHES</span>
             <div className="text-base font-black text-white font-mono mt-0.5">{modelStats.totalTripsIngested} Trips</div>
-            <div className="text-[10px] text-slate-500">August &bull; September historical data</div>
+            <div className="text-[10px] text-slate-500">Available historical records</div>
           </div>
 
           <div className="bg-slate-950/70 p-3 rounded-xl border border-slate-800">
@@ -912,7 +910,7 @@ export const DailyManifestView: React.FC = () => {
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
               <h3 className="font-bold text-white text-base">Driver Historical Timeline</h3>
-              <p className="text-xs text-slate-400 mt-0.5">August and September 1–7 verified day-by-day records</p>
+              <p className="text-xs text-slate-400 mt-0.5">Recorded day-by-day data available in this workspace</p>
             </div>
             <select
               value={selectedDriverIdx}
@@ -989,7 +987,7 @@ Date: 2026-09-06
                   <button
                     onClick={handleRetrainAiModel}
                     className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow-lg flex items-center gap-1.5 transition"
-                    title="Train directly on stored August & September dispatch schedules and manifests"
+                    title="Train on the available stored dispatch schedules and manifests"
                   >
                     <Sparkles className="w-3.5 h-3.5" /> ⚡ Auto-Train on Stored Data
                   </button>
