@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useLms } from '../context/LmsContext';
 import { useTheme } from '../context/ThemeContext';
@@ -19,6 +19,23 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, setCurrentTab, onOpe
   const { conflicts } = useLms();
   const { theme } = useTheme();
   const [showRoleMenu, setShowRoleMenu] = useState(false);
+  const [brandName, setBrandName] = useState(() => localStorage.getItem('tlms.brandName') || 'TLS Logistics LMS');
+  const [brandSubtitle, setBrandSubtitle] = useState(() => localStorage.getItem('tlms.brandSubtitle') || 'Tayseer Group Central Fleet Operating System');
+  const [brandLogoUrl, setBrandLogoUrl] = useState(() => localStorage.getItem('tlms.brandLogoUrl') || '');
+
+  useEffect(() => {
+    const syncBranding = () => {
+      setBrandName(localStorage.getItem('tlms.brandName') || 'TLS Logistics LMS');
+      setBrandSubtitle(localStorage.getItem('tlms.brandSubtitle') || 'Tayseer Group Central Fleet Operating System');
+      setBrandLogoUrl(localStorage.getItem('tlms.brandLogoUrl') || '');
+    };
+    window.addEventListener('tlms-branding-updated', syncBranding);
+    window.addEventListener('storage', syncBranding);
+    return () => {
+      window.removeEventListener('tlms-branding-updated', syncBranding);
+      window.removeEventListener('storage', syncBranding);
+    };
+  }, []);
 
   const openConflictsCount = conflicts.filter(c => c.status === 'open').length;
 
@@ -51,16 +68,15 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, setCurrentTab, onOpe
       <div className="max-w-7xl mx-auto px-3 sm:px-6 py-2.5 flex flex-wrap sm:flex-nowrap items-center justify-between gap-2 sm:gap-4">
         {/* Logo & Brand */}
         <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-          <div className="w-10 h-10 shrink-0 rounded-xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-sky-500 flex items-center justify-center text-white shadow-lg shadow-blue-500/20 font-bold text-lg">
-            ⚡
+          <div className="w-10 h-10 shrink-0 rounded-xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-sky-500 flex items-center justify-center text-white shadow-lg shadow-blue-500/20 font-bold text-lg overflow-hidden">
+            {brandLogoUrl ? <img src={brandLogoUrl} alt="Website logo" className="h-full w-full object-contain bg-white" onError={e => { e.currentTarget.style.display = 'none'; }} /> : '⚡'}
           </div>
-          <div>
+          <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <span className="font-extrabold text-lg sm:text-xl tracking-tight text-white font-mono">TLS</span>
-              <span className="bg-gradient-to-r from-blue-400 to-sky-300 bg-clip-text text-transparent font-bold text-[10px] sm:text-xs uppercase tracking-widest">LOGISTICS LMS</span>
-              <span className="bg-slate-800 text-slate-400 text-[10px] font-mono px-2 py-0.5 rounded border border-slate-700">v3.5</span>
+              <span className="font-extrabold text-base sm:text-lg tracking-tight text-white truncate">{brandName}</span>
+              <span className="bg-slate-800 text-slate-400 text-[10px] font-mono px-2 py-0.5 rounded border border-slate-700 shrink-0">v3.5</span>
             </div>
-            <p className="text-[11px] text-slate-400 hidden sm:block">Tayseer Group Central Fleet Operating System</p>
+            <p className="text-[11px] text-slate-400 hidden sm:block truncate max-w-[360px]">{brandSubtitle}</p>
           </div>
         </div>
 
