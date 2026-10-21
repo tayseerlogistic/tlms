@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useLms } from '../context/LmsContext';
 import { useAuth } from '../context/AuthContext';
 import { ManifestSuggestion, LearnedRule } from '../types';
+import { ksaDateISO, shiftISODate } from '../utils/dateUtils';
 import {
   trainManifestAiModel, getManifestModelStats, ModelTrainingStats,
   predictManifestForDriver
@@ -25,26 +26,13 @@ function norm(s: string): string {
 }
 
 function shiftDateStr(dateStr: string, deltaDays: number): string {
-  try {
-    const parts = (dateStr || '').split('-').map(Number);
-    if (parts.length === 3 && !isNaN(parts[0]) && !isNaN(parts[1]) && !isNaN(parts[2])) {
-      const dt = new Date(parts[0], parts[1] - 1, parts[2]);
-      dt.setDate(dt.getDate() + deltaDays);
-      const y = dt.getFullYear();
-      const m = String(dt.getMonth() + 1).padStart(2, '0');
-      const d = String(dt.getDate()).padStart(2, '0');
-      return `${y}-${m}-${d}`;
-    }
-  } catch (e) {
-    // fallback
-  }
-  return dateStr;
+  return shiftISODate(dateStr, deltaDays);
 }
 
 function localTodayISO(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  return ksaDateISO();
 }
+
 
 export const DailyManifestView: React.FC = () => {
   const {
@@ -100,11 +88,12 @@ export const DailyManifestView: React.FC = () => {
   const [manifestFilter, setManifestFilter] = useState<'all' | 'scheduled' | 'transit' | 'offloading' | 'returning'>('all');
 
   // Editable tags for currently selected date
-  const [localTags, setLocalTags] = useState<Record<number, string>>({});
+  const [localTags, setLocalTags] = useState<Record<string, string>>({});
   const [autoSyncedCount, setAutoSyncedCount] = useState<number>(0);
 
   const todayTags = manifests[selectedDate] || {};
   const currentSchedule = schedules[selectedDate]?.rows || [];
+  const getDriverTag = (tags: Record<string, string>, driverId: string, driverIdx: number) => tags[driverId] ?? tags[String(driverIdx)] ?? '';
 
   // Identify temporary / 1-day rental drivers in today's schedule who are NOT in the 64 master fleet sequence
   const temporaryRentScheduleDrivers = React.useMemo(() => {
@@ -142,24 +131,21 @@ export const DailyManifestView: React.FC = () => {
     setRetrainStepMsg('Analyzing multi-day cycle progressions (Loading → En-Route → Offloading → Return)...');
     await new Promise(r => setTimeout(r, 600));
 
-    setRetrainStepMsg('Extracting route transition models & calibrating accuracy weights...');
+    setRetrainStepMsg('Extracting route transition patterns; independent accuracy validation is not configured...');
     await new Promise(r => setTimeout(r, 500));
 
     const result = trainManifestAiModel(drivers, schedules, manifests, learnedRules);
-    learnHistoricalRules(result.rules);
+    await learnHistoricalRules(result.rules);
     setModelStats(result.stats);
 
     setIsRetraining(false);
     setRetrainStepMsg('');
-    showToast(`⚡ AI Manifest Model retrained! Analyzed ${result.stats.totalTripsIngested} dispatches across ${result.stats.distinctDates} dates. Accuracy evaluated at ${result.stats.accuracyRate}%.`, 'success');
+    showToast('AI Manifest model retrained from ' + result.stats.totalTripsIngested + ' recorded dispatches across ' + result.stats.distinctDates + ' dates. Accuracy is not reported because no independent validation set is configured.', 'success');
   };
 
   const handleAutoPredictAll = () => {
-    const updated: Record<number, string> = {};
-    drivers.forEach((d, idx) => {
-      const pred = predictManifestTag(idx, selectedDate);
-      updated[idx] = pred.text;
-    });
+    const updated: Record<string, string> = {};
+    drivers.forEach((d, idx) => { updated[d.id] = predictManifestTag(idx, selectedDate).text; });
     setLocalTags(updated);
     showToast(`🔮 Auto-applied high-confidence AI predictions for all ${drivers.length} drivers on ${selectedDate}!`, 'success');
   };
@@ -176,7 +162,7 @@ export const DailyManifestView: React.FC = () => {
     if (pastManifestDates.length) {
       const lastDate = pastManifestDates[pastManifestDates.length - 1];
       if (manifests[lastDate]) {
-        const tag = manifests[lastDate][driverIdx] || manifests[lastDate][String(driverIdx)];
+        const tag = getDriverTag(manifests[lastDate], d.id, driverIdx);
         if (tag) return tag;
       }
     }
@@ -199,7 +185,7 @@ export const DailyManifestView: React.FC = () => {
     const d = drivers[driverIdx];
     if (!d) return { text: 'At Yanbu', conf: 'low', reason: 'Driver record not found' };
 
-    const confirmed = manifests[date]?.[driverIdx] || manifests[date]?.[String(driverIdx)];
+    const confirmed = manifests[date]?.[d.id] || manifests[date]?.[String(driverIdx)];
     const prev = getPreviousTag(driverIdx, date);
     const daySchedule = schedules[date]?.rows || [];
 
@@ -242,7 +228,7 @@ export const DailyManifestView: React.FC = () => {
 
     // Retrain AI Model to assimilate the newly synced multi-day historical manifests
     const retrain = trainManifestAiModel(drivers, schedules, manifests, learnedRules);
-    learnHistoricalRules(retrain.rules);
+    await learnHistoricalRules(retrain.rules);
     setModelStats(retrain.stats);
 
     setIsSyncingMulti(false);
@@ -264,32 +250,24 @@ export const DailyManifestView: React.FC = () => {
     setAutoSyncedCount(schedRows.length);
 
     // Initialize localTags with predicted tags or confirmed tags
-    const initial: Record<number, string> = {};
+    const initial: Record<string, string> = {};
     drivers.forEach((d, idx) => {
-      const existing = todayTags[idx] || todayTags[String(idx)];
-      if (existing) {
-        initial[idx] = existing;
-      } else {
-        const pred = predictManifestTag(idx, selectedDate);
-        initial[idx] = pred.text;
-      }
+      const existing = getDriverTag(todayTags, d.id, idx);
+      initial[d.id] = existing || predictManifestTag(idx, selectedDate).text;
     });
     setLocalTags(initial);
   }, [selectedDate, schedules, manifests, drivers]);
 
-  const handleTagChange = (idx: number, val: string) => {
-    setLocalTags(prev => ({ ...prev, [idx]: val }));
+  const handleTagChange = (driverId: string, val: string) => {
+    setLocalTags(prev => ({ ...prev, [driverId]: val }));
   };
 
   // -------------------------------------------------------------
   // CONFIRM & SAVE
   // -------------------------------------------------------------
   const handleConfirmAndSave = async () => {
-    const finalTags: Record<number, string> = {};
-    drivers.forEach((d, idx) => {
-      const existing = localTags[idx] !== undefined ? localTags[idx] : (todayTags[idx] || todayTags[String(idx)] || predictManifestTag(idx, selectedDate).text);
-      finalTags[idx] = existing;
-    });
+    const finalTags: Record<string, string> = {};
+    drivers.forEach((d, idx) => { finalTags[d.id] = localTags[d.id] !== undefined ? localTags[d.id] : (getDriverTag(todayTags, d.id, idx) || predictManifestTag(idx, selectedDate).text); });
 
     await saveDailyManifest(selectedDate, finalTags);
     showToast(`✓ Confirmed and saved daily manifest for all ${drivers.length} drivers on ${selectedDate}!`, 'success');
@@ -348,7 +326,7 @@ export const DailyManifestView: React.FC = () => {
       rows.forEach(r => {
         const driverIdx = drivers.findIndex(d => norm(d.name).includes(norm(r.driver)) || norm(r.driver).includes(norm(d.name)));
         if (driverIdx >= 0) {
-          const actualTag = manifestForDate[driverIdx];
+          const actualTag = manifestForDate[drivers[driverIdx].id] || manifestForDate[String(driverIdx)];
           if (actualTag) {
             const ruleKey = `${norm(r.source)}>${norm(r.destination)}|${norm(r.customer)}|${norm(r.commodity)}`;
             const existing = learnedRules.find(lr => lr.driverIndex === driverIdx && lr.result === actualTag);
@@ -393,10 +371,8 @@ export const DailyManifestView: React.FC = () => {
       return;
     }
 
-    const bulkMap: Record<number, string> = {};
-    lines.forEach((tag, idx) => {
-      bulkMap[idx] = tag;
-    });
+    const bulkMap: Record<string, string> = {};
+    lines.forEach((tag, idx) => { if (drivers[idx]) bulkMap[drivers[idx].id] = tag; });
 
     await saveDailyManifest(selectedDate, bulkMap);
     showToast(`Saved ${lines.length} bulk tags in locked driver sequence for ${selectedDate}!`, 'success');
@@ -413,7 +389,7 @@ export const DailyManifestView: React.FC = () => {
       'Driver Name': d.name,
       'Employee No': d.empNo,
       'Vehicle Plate': d.assignedVehiclePlate || '—',
-      [selectedDate]: localTags[idx] !== undefined ? localTags[idx] : (todayTags[idx] || predictManifestTag(idx, selectedDate).text)
+      [selectedDate]: localTags[d.id] !== undefined ? localTags[d.id] : (getDriverTag(todayTags, d.id, idx) || predictManifestTag(idx, selectedDate).text)
     }));
 
     const ws = XLSX.utils.json_to_sheet(data);
@@ -651,10 +627,8 @@ export const DailyManifestView: React.FC = () => {
           <button
             onClick={() => {
               const schedRows = schedules[selectedDate]?.rows || [];
-              const updated: Record<number, string> = {};
-              drivers.forEach((d, idx) => {
-                updated[idx] = predictManifestTag(idx, selectedDate).text;
-              });
+              const updated: Record<string, string> = {};
+              drivers.forEach((d, idx) => { updated[d.id] = predictManifestTag(idx, selectedDate).text; });
               setLocalTags(updated);
               showToast("Re-synchronized manifest predictions with latest timetable schedule!", 'info');
             }}
@@ -788,7 +762,7 @@ export const DailyManifestView: React.FC = () => {
                   .map((d, idx) => {
                     const prev = getPreviousTag(idx, selectedDate);
                     const pred = predictManifestTag(idx, selectedDate);
-                    const currentVal = localTags[idx] !== undefined ? localTags[idx] : (todayTags[idx] || todayTags[String(idx)] || pred.text);
+                    const currentVal = localTags[d.id] !== undefined ? localTags[d.id] : (getDriverTag(todayTags, d.id, idx) || pred.text);
 
                     const matchedRow = currentSchedule.find(r => {
                       const rn = norm(r.driverName);
@@ -863,12 +837,12 @@ export const DailyManifestView: React.FC = () => {
                             <textarea
                               rows={2}
                               value={currentVal}
-                              onChange={(e) => handleTagChange(idx, e.target.value)}
+                              onChange={(e) => handleTagChange(d.id, e.target.value)}
                               className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-white text-xs font-mono focus:outline-none focus:border-blue-500 custom-scrollbar"
                             />
                             {differsFromPred && (
                               <button
-                                onClick={() => handleTagChange(idx, pred.text)}
+                                onClick={() => handleTagChange(d.id, pred.text)}
                                 className="absolute right-2 top-2 bg-purple-900/80 hover:bg-purple-800 text-purple-200 text-[10px] font-mono px-2 py-0.5 rounded border border-purple-700 shadow flex items-center gap-1 cursor-pointer"
                                 title="Reset to AI suggested prediction"
                               >
@@ -890,7 +864,7 @@ export const DailyManifestView: React.FC = () => {
                               <button
                                 key={preset}
                                 type="button"
-                                onClick={() => handleTagChange(idx, preset)}
+                                onClick={() => handleTagChange(d.id, preset)}
                                 className={`text-[9px] px-1.5 py-0.5 rounded font-mono transition border ${
                                   currentVal === preset
                                     ? 'bg-blue-600 text-white border-blue-400 font-bold'
