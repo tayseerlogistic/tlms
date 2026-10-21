@@ -86,14 +86,14 @@ export const MasterDataView: React.FC = () => {
     const iqama = (formData.get('iqama') as string).trim();
     const mobile = (formData.get('mobile') as string).trim();
     const duplicateDriver = drivers.find(driver => driver.id !== editingDriver?.id && (
-      Boolean(empNo && driver.empNo.trim().toLowerCase() === empNo.toLowerCase()) ||
-      Boolean(iqama && driver.iqama.replace(/\D/g, '') === iqama.replace(/\D/g, '')) ||
+      Boolean(empNo && String(driver.empNo || '').trim().toLowerCase() === empNo.toLowerCase()) ||
+      Boolean(iqama && String(driver.iqama || '').replace(/\D/g, '') === iqama.replace(/\D/g, '')) ||
       Boolean(name && driver.name.trim().toLowerCase() === name.toLowerCase() && driver.active)
     ));
     if (duplicateDriver) {
-      const reason = empNo && duplicateDriver.empNo.trim().toLowerCase() === empNo.toLowerCase()
+      const reason = empNo && String(duplicateDriver.empNo || '').trim().toLowerCase() === empNo.toLowerCase()
         ? 'employee number'
-        : iqama && duplicateDriver.iqama.replace(/\D/g, '') === iqama.replace(/\D/g, '')
+        : iqama && String(duplicateDriver.iqama || '').replace(/\D/g, '') === iqama.replace(/\D/g, '')
           ? 'Iqama number' : 'driver name';
       alert('Duplicate ' + reason + ' found for ' + duplicateDriver.name + '. Review the existing master record before saving.');
       return;
@@ -127,7 +127,7 @@ export const MasterDataView: React.FC = () => {
 
     const equipNo = (formData.get('equipNo') as string).trim().toUpperCase();
     if (!equipNo) { alert('Equipment number is required.'); return; }
-    if (equipment.some(item => item.id !== editingEquip?.id && item.equipNorm === equipNo.replace(/\s+/g, ''))) { alert('This equipment number already exists.'); return; }
+    if (equipment.some(item => item.id !== editingEquip?.id && String(item.equipNorm || item.equipNo || '').replace(/\s+/g, '') === equipNo.replace(/\s+/g, ''))) { alert('This equipment number already exists.'); return; }
     const type = (formData.get('type') as any) || 'Tanker';
 
     const equipToSave: Equipment = {
@@ -509,7 +509,7 @@ export const MasterDataView: React.FC = () => {
                   className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:border-blue-500"
                 >
                   <option value="">— Unassigned —</option>
-                  {drivers.map(d => (
+                  {drivers.filter(d => d.active).map(d => (
                     <option key={d.id} value={d.id}>{d.name} ({d.empNo})</option>
                   ))}
                 </select>
