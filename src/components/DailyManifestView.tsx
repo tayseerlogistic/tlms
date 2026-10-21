@@ -220,24 +220,23 @@ export const DailyManifestView: React.FC = () => {
 
   const handleApplyMultiSync = async () => {
     if (!parsedMultiResult || !parsedMultiResult.mappedDriversCount) return;
-
     setIsSyncingMulti(true);
-    await saveMultiDayManifests(parsedMultiResult.manifestByDate);
-
-    // Retrain AI Model to assimilate the newly synced multi-day historical manifests
-    const retrain = trainManifestAiModel(drivers, schedules, manifests, learnedRules);
-    await learnHistoricalRules(retrain.rules);
-    setModelStats(retrain.stats);
-
-    setIsSyncingMulti(false);
-    showToast(
-      `⚡ Successfully synchronized ${parsedMultiResult.totalEntriesCount} manifest tags across ${parsedMultiResult.detectedDates.length} dates (${parsedMultiResult.detectedDates.join(', ')})! Real-time suggestions updated for today.`,
-      'success'
-    );
-
-    // Switch to Oct 5 (today) and manifest view
-    setSelectedDate(localTodayISO());
-    setSubTab('manifest');
+    try {
+      await saveMultiDayManifests(parsedMultiResult.manifestByDate);
+      const retrain = trainManifestAiModel(drivers, schedules, manifests, learnedRules);
+      await learnHistoricalRules(retrain.rules);
+      setModelStats(retrain.stats);
+      showToast(
+        'Synchronized ' + parsedMultiResult.totalEntriesCount + ' manifest tags across ' + parsedMultiResult.detectedDates.length + ' dates. Accuracy remains unmeasured until an independent validation set is available.',
+        'success'
+      );
+      setSelectedDate(localTodayISO());
+      setSubTab('manifest');
+    } catch (error) {
+      showToast(error instanceof Error ? 'Multi-day manifest sync failed: ' + error.message : 'Multi-day manifest sync failed. Check the connection and retry after verifying the saved dates.', 'error');
+    } finally {
+      setIsSyncingMulti(false);
+    }
   };
 
   // -------------------------------------------------------------
@@ -265,10 +264,16 @@ export const DailyManifestView: React.FC = () => {
   // -------------------------------------------------------------
   const handleConfirmAndSave = async () => {
     const finalTags: Record<string, string> = {};
-    drivers.forEach((d, idx) => { finalTags[d.id] = localTags[d.id] !== undefined ? localTags[d.id] : (getDriverTag(todayTags, d.id, idx) || predictManifestTag(idx, selectedDate).text); });
-
-    await saveDailyManifest(selectedDate, finalTags);
-    showToast(`✓ Confirmed and saved daily manifest for all ${drivers.length} drivers on ${selectedDate}!`, 'success');
+    drivers.forEach((driver, idx) => {
+      finalTags[driver.id] = localTags[driver.id] !== undefined ? localTags[driver.id] :
+        (getDriverTag(todayTags, driver.id, idx) || predictManifestTag(idx, selectedDate).text);
+    });
+    try {
+      await saveDailyManifest(selectedDate, finalTags);
+      showToast('Confirmed and saved the manifest for ' + drivers.length + ' drivers on ' + selectedDate + '.', 'success');
+    } catch (error) {
+      showToast(error instanceof Error ? 'Manifest was not saved: ' + error.message : 'Manifest was not saved. Check the connection and permissions.', 'error');
+    }
   };
 
   // -------------------------------------------------------------
@@ -370,10 +375,14 @@ export const DailyManifestView: React.FC = () => {
     const bulkMap: Record<string, string> = {};
     lines.forEach((tag, idx) => { if (drivers[idx]) bulkMap[drivers[idx].id] = tag; });
 
-    await saveDailyManifest(selectedDate, bulkMap);
-    showToast(`Saved ${lines.length} bulk tags in locked driver sequence for ${selectedDate}!`, 'success');
-    setBulkTagsText('');
-    setBulkPreviewCount(null);
+    try {
+      await saveDailyManifest(selectedDate, bulkMap);
+      showToast('Saved ' + lines.length + ' bulk tags in locked driver sequence for ' + selectedDate + '.', 'success');
+      setBulkTagsText('');
+      setBulkPreviewCount(null);
+    } catch (error) {
+      showToast(error instanceof Error ? 'Bulk manifest was not saved: ' + error.message : 'Bulk manifest was not saved. Verify the data and retry.', 'error');
+    }
   };
 
   // -------------------------------------------------------------
