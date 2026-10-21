@@ -36,6 +36,7 @@ export function trainManifestAiModel(
   existingRules: LearnedRule[] = []
 ): { stats: ModelTrainingStats; rules: LearnedRule[] } {
   let tripsCount = 0;
+  const tripKeys = new Set<string>();
   const datesSet = new Set<string>();
   const rulesMap = new Map<string, LearnedRule>();
 
@@ -46,7 +47,7 @@ export function trainManifestAiModel(
     rulesMap.set(key, { ...r, ...(driverId ? { driverId } : {}) });
   });
 
-  // 1. Ingest all driver individual historical logs (August 1 to 31 & September 1 to 7)
+  // 1. Ingest driver historical logs across the dates actually available.
   drivers.forEach((drv, drvIdx) => {
     if (!drv.history) return;
 
@@ -55,7 +56,8 @@ export function trainManifestAiModel(
       datesSet.add(dt);
       const tag = drv.history![dt];
       if (!tag) return;
-      tripsCount++;
+      const tripKey = `${drv.id}__${dt}__${tag}`;
+      if (!tripKeys.has(tripKey)) { tripKeys.add(tripKey); tripsCount++; }
 
       // Extract core routing tokens from tag
       const normTag = normText(tag);
@@ -107,9 +109,9 @@ export function trainManifestAiModel(
       const hasLegacyIndex = idxStr.trim() !== '' && Number.isInteger(numericIndex) && String(numericIndex) === idxStr;
       const drvIdx = hasLegacyIndex ? numericIndex : drivers.findIndex(driver => driver.id === idxStr);
       if (drvIdx < 0 || !drivers[drvIdx]) return;
-      tripsCount++;
-
       const drv = drivers[drvIdx];
+      const tripKey = `${drv.id}__${dt}__${tag}`;
+      if (!tripKeys.has(tripKey)) { tripKeys.add(tripKey); tripsCount++; }
       // Check if driver was dispatched in timetable for this date
       const matchedRow = schedRows.find(r => {
         const dNorm = normText(drv.name);
@@ -152,7 +154,7 @@ export function trainManifestAiModel(
   globalModelStats = {
     totalTripsIngested: tripsCount,
     distinctDates: datesSet.size,
-    driversTrained: drivers.length,
+    driversTrained: new Set(updatedRules.map(rule => rule.driverId || drivers[rule.driverIndex]?.id || String(rule.driverIndex))).size,
     patternsExtracted: updatedRules.length,
     // No independent holdout evaluation is run here; do not fabricate an accuracy percentage.
     accuracyRate: 0,
