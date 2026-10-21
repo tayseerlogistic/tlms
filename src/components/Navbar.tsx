@@ -3,6 +3,8 @@ import { useAuth } from '../context/AuthContext';
 import { useLms } from '../context/LmsContext';
 import { useTheme } from '../context/ThemeContext';
 import { UserRole } from '../types';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { db } from '../firebase/config';
 import {
   Truck, FileSpreadsheet, ClipboardList, Wallet, Gauge,
   Shield, LogOut, LogIn, Settings, Sun, Moon
@@ -31,11 +33,19 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, setCurrentTab, onOpe
     };
     window.addEventListener('tlms-branding-updated', syncBranding);
     window.addEventListener('storage', syncBranding);
+    const unsubscribe = (user || profile) ? onSnapshot(doc(db, 'app_state', 'branding'), snapshot => {
+      if (!snapshot.exists()) return;
+      const data = snapshot.data();
+      if (typeof data.brandName === 'string') { setBrandName(data.brandName); localStorage.setItem('tlms.brandName', data.brandName); }
+      if (typeof data.brandSubtitle === 'string') { setBrandSubtitle(data.brandSubtitle); localStorage.setItem('tlms.brandSubtitle', data.brandSubtitle); }
+      if (typeof data.brandLogoUrl === 'string') { setBrandLogoUrl(data.brandLogoUrl); localStorage.setItem('tlms.brandLogoUrl', data.brandLogoUrl); }
+    }, error => console.warn('Shared branding listener notice:', error.message)) : undefined;
     return () => {
       window.removeEventListener('tlms-branding-updated', syncBranding);
       window.removeEventListener('storage', syncBranding);
+      unsubscribe?.();
     };
-  }, []);
+  }, [user, profile]);
 
   const openConflictsCount = conflicts.filter(c => c.status === 'open').length;
 
