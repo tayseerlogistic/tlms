@@ -350,85 +350,40 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Actions
   const saveTruck = async (truck: Truck) => {
+    if (user || profile) await setDoc(doc(db, 'trucks', truck.id), truck);
     setTrucks(prev => {
-      const idx = prev.findIndex(t => t.id === truck.id);
-      if (idx >= 0) {
-        const copy = [...prev];
-        copy[idx] = truck;
-        return copy;
-      }
-      return [...prev, truck];
+      const index = prev.findIndex(item => item.id === truck.id);
+      if (index >= 0) { const next = [...prev]; next[index] = truck; return next; }
+      return [...prev, truck].sort((a, b) => (a.seq || 0) - (b.seq || 0));
     });
-
-    if (user || profile) {
-      try {
-        await setDoc(doc(db, 'trucks', truck.id), truck);
-      } catch (e) {
-        console.warn("Error saving truck to Firestore (cached locally):", e);
-      }
-    }
   };
 
   const deleteTruck = async (id: string) => {
-    setTrucks(prev => prev.filter(t => t.id !== id));
-    if (user || profile) {
-      try {
-        await deleteDoc(doc(db, 'trucks', id));
-      } catch (e) {
-        console.warn("Error deleting truck from Firestore:", e);
-      }
-    }
+    if (user || profile) await deleteDoc(doc(db, 'trucks', id));
+    setTrucks(prev => prev.filter(item => item.id !== id));
   };
 
   const saveEquipment = async (equip: Equipment) => {
+    if (user || profile) await setDoc(doc(db, 'equipment', equip.id), equip);
     setEquipment(prev => {
-      const idx = prev.findIndex(e => e.id === equip.id);
-      if (idx >= 0) {
-        const copy = [...prev];
-        copy[idx] = equip;
-        return copy;
-      }
-      return [...prev, equip];
+      const index = prev.findIndex(item => item.id === equip.id);
+      if (index >= 0) { const next = [...prev]; next[index] = equip; return next; }
+      return [...prev, equip].sort((a, b) => (a.seq || 0) - (b.seq || 0));
     });
-
-    if (user || profile) {
-      try {
-        await setDoc(doc(db, 'equipment', equip.id), equip);
-      } catch (e) {
-        console.warn("Error saving equipment to Firestore:", e);
-      }
-    }
   };
 
   const deleteEquipment = async (id: string) => {
-    setEquipment(prev => prev.filter(e => e.id !== id));
-    if (user || profile) {
-      try {
-        await deleteDoc(doc(db, 'equipment', id));
-      } catch (e) {
-        console.warn("Error deleting equipment from Firestore:", e);
-      }
-    }
+    if (user || profile) await deleteDoc(doc(db, 'equipment', id));
+    setEquipment(prev => prev.filter(item => item.id !== id));
   };
 
   const saveDriver = async (driver: Driver) => {
+    if (user || profile) await setDoc(doc(db, 'drivers', driver.id), driver);
     setDrivers(prev => {
-      const idx = prev.findIndex(d => d.id === driver.id);
-      if (idx >= 0) {
-        const copy = [...prev];
-        copy[idx] = driver;
-        return copy;
-      }
-      return [...prev, driver];
+      const index = prev.findIndex(item => item.id === driver.id);
+      if (index >= 0) { const next = [...prev]; next[index] = driver; return next; }
+      return [...prev, driver].sort((a, b) => (a.seq || 0) - (b.seq || 0));
     });
-
-    if (user || profile) {
-      try {
-        await setDoc(doc(db, 'drivers', driver.id), driver);
-      } catch (e) {
-        console.warn("Error saving driver to Firestore:", e);
-      }
-    }
   };
 
   const deleteDriver = async (id: string) => {
