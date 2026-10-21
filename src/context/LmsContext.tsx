@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
-import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc, query, orderBy, getDocs } from 'firebase/firestore';
+import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc, query, orderBy, getDocs, writeBatch } from 'firebase/firestore';
 import { auth, db } from '../firebase/config';
 import { handleFirestoreError, OperationType } from '../firebase/errors';
 import { useAuth } from './AuthContext';
@@ -391,16 +391,38 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteDriver = async (id: string) => {
-    if (!auth.currentUser) {
-      throw new Error('A valid signed-in Firebase account is required to delete a driver.');
+    const existingDriver = drivers.find(driver => driver.id === id);
+    if (!existingDriver) return;
+    if (!auth.currentUser && (user || profile)) {
+      throw new Error('A valid signed-in Firebase account is required to archive a driver.');
     }
-    try {
-      await deleteDoc(doc(db, 'drivers', id));
-      setDrivers(prev => prev.filter(d => d.id !== id));
-    } catch (e) {
-      console.error("Error deleting driver from Firestore:", e);
-      throw new Error('Driver could not be deleted from the database. Check Firebase Authentication and Firestore rules, then try again.');
+
+    const archivedDriver: Driver = {
+      ...existingDriver,
+      active: false,
+      status: 'INCOMPLETE',
+      assignedTruckId: null,
+      assignedVehiclePlate: null,
+      notes: [existingDriver.notes, 'Archived ' + ksaDateISO()].filter(Boolean).join(' | ')
+    };
+    const affectedTrucks = trucks.filter(truck => truck.assignedDriverId === id);
+    if (user || profile) {
+      const batch = writeBatch(db);
+      affectedTrucks.forEach(truck => {
+        batch.set(doc(db, 'trucks', truck.id), {
+          ...truck,
+          assignedDriverId: null,
+          assignedDriverName: null
+        });
+      });
+      batch.set(doc(db, 'drivers', id), archivedDriver);
+      await batch.commit();
     }
+
+    setTrucks(prev => prev.map(truck => truck.assignedDriverId === id
+      ? { ...truck, assignedDriverId: null, assignedDriverName: null }
+      : truck));
+    setDrivers(prev => prev.map(driver => driver.id === id ? archivedDriver : driver));
   };
 
   const saveDailySchedule = async (date: string, rows: any[], syncToManifest = true) => {
