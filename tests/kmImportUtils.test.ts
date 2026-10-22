@@ -1,11 +1,23 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { monthKeyToISO, parseMonthlyKmUpload } from '../src/utils/kmImportUtils.ts';
+import { latestRecordedKmMonth, monthKeyToISO, parseMonthlyKmUpload } from '../src/utils/kmImportUtils.ts';
 
 const resolvePlate = (raw: string) => {
   const normalized = raw.trim().toUpperCase().replace(/\s+/g, '');
   return ({ 'DJA4827': 'D J A 4827', 'KRA7501': 'K R A 7501' } as Record<string, string>)[normalized] || '';
 };
+
+test('latest recorded KM month ignores invalid dates and selects the newest populated month', () => {
+  assert.equal(latestRecordedKmMonth([
+    { date: '2026-01-01' },
+    { date: '2026-08-31' },
+    { date: '2026-03-15' },
+    { date: '2026-09-31' },
+    { date: 'not-a-date' }
+  ]), '2026-08');
+  assert.equal(latestRecordedKmMonth([{ date: 'not-a-date' }]), null);
+  assert.equal(latestRecordedKmMonth([]), null);
+});
 
 test('month parser accepts year-month, month-year, full month names, and abbreviations', () => {
   assert.equal(monthKeyToISO('2026-08', 2026), '2026-08');
