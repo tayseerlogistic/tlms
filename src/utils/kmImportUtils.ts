@@ -23,6 +23,20 @@ export function monthKeyToISO(value: unknown, fallbackYear = new Date().getFullY
   return `${year}-${String(monthIndex + 1).padStart(2, '0')}`;
 }
 
+/**
+ * Returns the latest YYYY-MM month that has at least one valid, dated KM record.
+ * This is used for default UI filters; it does not fabricate or change readings.
+ */
+export function latestRecordedKmMonth(records: Array<Pick<KmRecord, 'date'>>): string | null {
+  const months = new Set<string>();
+  for (const record of records) {
+    const date = String(record.date ?? '');
+    if (!isValidISODate(date)) continue;
+    months.add(date.slice(0, 7));
+  }
+  return Array.from(months).sort().pop() ?? null;
+}
+
 export interface ParsedMonthlyKmImport {
   records: Array<Omit<KmRecord, 'id'>>;
   months: string[];
