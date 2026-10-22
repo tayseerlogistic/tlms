@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useLms } from '../context/LmsContext';
 import { useAuth } from '../context/AuthContext';
 import { ksaDateISO, shiftISODate } from '../utils/dateUtils';
-import { parseMonthlyKmUpload } from '../utils/kmImportUtils';
+import { latestRecordedKmMonth, parseMonthlyKmUpload } from '../utils/kmImportUtils';
 import { KSA_DIESEL_PRICE, COMPANY_KM_PER_LITER_QUOTA } from '../data/seedData';
 import { KmRecord, DieselLog, Truck, Driver } from '../types';
 import * as XLSX from 'xlsx';
@@ -27,6 +27,14 @@ import {
 
 function localISODate(): string { return ksaDateISO(); }
 
+function initialStoredMonth(key: string): string {
+  try {
+    return localStorage.getItem(key) || localISODate().slice(0, 7);
+  } catch {
+    return localISODate().slice(0, 7);
+  }
+}
+
 // Register Chart.js elements
 Chart.register(
   BarController,
@@ -47,7 +55,7 @@ export const KmFuelView: React.FC = () => {
     restoreFullBackup, exportFullBackup
   } = useLms();
 
-  const { isAdmin, isDispatcher, isCashier } = useAuth();
+  const { isAdmin, isDispatcher, isCashier, user } = useAuth();
 
   const monthOptions = (() => {
     const currentYear = Number(ksaDateISO().slice(0, 4));
@@ -69,7 +77,7 @@ export const KmFuelView: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'entry' | 'monthly-matrix' | 'reconciliation' | 'history'>('dashboard');
 
   // Filter states
-  const [selectedMonth, setSelectedMonth] = useState<string>(() => localISODate().slice(0, 7));
+  const [selectedMonth, setSelectedMonth] = useState<string>(() => initialStoredMonth('tlms.km.selectedMonth'));
   const [viewMode, setViewMode] = useState<'split' | 'all'>('split');
   const [searchAgg, setSearchAgg] = useState('');
   const [searchRecon, setSearchRecon] = useState('');
@@ -88,11 +96,45 @@ export const KmFuelView: React.FC = () => {
   const [feedbackToast, setFeedbackToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
 
   // Month & Specific Date Manager / Matrix state
-  const [matrixMonth, setMatrixMonth] = useState<string>(() => localISODate().slice(0, 7));
+  const [matrixMonth, setMatrixMonth] = useState<string>(() => initialStoredMonth('tlms.km.matrixMonth'));
   const [matrixSpecificDate, setMatrixSpecificDate] = useState<string>(() => localISODate());
   const [matrixViewMode, setMatrixViewMode] = useState<'month-grid' | 'single-date'>('month-grid');
   const [matrixSearch, setMatrixSearch] = useState<string>('');
-  const [matrixCellDrafts, setMatrixCellDrafts] = useState<Record<string, string>>({}); // "plateNorm__date" -> odoStr
+  const [matrixCellDrafts, setMatrixCellDrafts] = useState<Record<string, string>>({}); // "plateNorm__date" -> daily KM draft
+
+  // Persist UI preferences and move empty period selections to the latest month with records.
+  // This effect runs when data changes, not whenever a user selects a month, so users may
+  // intentionally inspect an empty period without the UI immediately switching away.
+  useEffect(() => {
+    try {
+      localStorage.setItem('tlms.km.selectedMonth', selectedMonth);
+    } catch (error) {
+      console.warn('Could not save KM timeframe preference:', error);
+    }
+  }, [selectedMonth]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('tlms.km.matrixMonth', matrixMonth);
+    } catch (error) {
+      console.warn('Could not save KM matrix month preference:', error);
+    }
+  }, [matrixMonth]);
+
+  useEffect(() => {
+    const latestMonth = latestRecordedKmMonth(kmRecords);
+    if (!latestMonth) return;
+
+    const monthHasRecords = (month: string) =>
+      kmRecords.some(record => String(record.date || '').startsWith(`${month}-`));
+
+    if (selectedMonth !== 'All' && !monthHasRecords(selectedMonth)) {
+      setSelectedMonth(latestMonth);
+    }
+    if (!monthHasRecords(matrixMonth)) {
+      setMatrixMonth(latestMonth);
+    }
+  }, [kmRecords]);
 
   // Tracker filter
   const [trackerFilter, setTrackerFilter] = useState<'remaining' | 'completed' | 'all'>('remaining');
@@ -456,35 +498,65 @@ TLS Fleet Management`;
     alert(`Marked ${missing.length} trucks as Idle for ${readingDate}`);
   };
 
-  // Recalculate All KM distances
-  const handleRecalculateAllKm = async () => {
-    if (!confirm("Recalculate all vehicle KM distances?\n\nFormula: Day N KM = Day N+1 Odometer - Day N Odometer")) return;
-
+  // Recalculate only records derived from actual odometer readings. Daily distance imports
+  // use odometer: null and must remain untouched by meter-based recalculation.
+  const getOdometerDistanceUpdates = (month?: string): KmRecord[] => {
     const byVehicle: Record<string, KmRecord[]> = {};
-    kmRecords.forEach(r => {
-      if (!r.veh || r.odometer == null || isNaN(r.odometer)) return;
-      const norm = r.veh.toUpperCase().replace(/\s+/g, '');
+    kmRecords.forEach(record => {
+      if (!record.veh || record.odometer == null || !Number.isFinite(Number(record.odometer)) || !record.date) return;
+      const norm = record.veh.toUpperCase().replace(/\s+/g, '');
       if (!byVehicle[norm]) byVehicle[norm] = [];
-      byVehicle[norm].push(r);
+      byVehicle[norm].push(record);
     });
 
-    let updatedCount = 0;
-    for (const norm in byVehicle) {
-      const logs = byVehicle[norm].sort((a, b) => a.date.localeCompare(b.date));
-      for (let i = 0; i < logs.length; i++) {
-        let target = 0;
-        if (i < logs.length - 1) {
-          const next = logs[i + 1].odometer!;
-          const curr = logs[i].odometer!;
-          if (next >= curr) target = parseFloat((next - curr).toFixed(1));
+    const updates: KmRecord[] = [];
+    Object.values(byVehicle).forEach(logs => {
+      logs.sort((a, b) => a.date.localeCompare(b.date));
+      let previousOdometer: number | null = null;
+      logs.forEach(record => {
+        const currentOdometer = Number(record.odometer);
+        if (!month || record.date.startsWith(`${month}-`)) {
+          const targetKm = previousOdometer !== null && currentOdometer >= previousOdometer
+            ? Number((currentOdometer - previousOdometer).toFixed(1))
+            : 0;
+          if (Number(record.km || 0) !== targetKm) updates.push({ ...record, km: targetKm });
         }
-        if (logs[i].km !== target) {
-          await addKmRecord({ ...logs[i], km: target });
-          updatedCount++;
-        }
-      }
+        previousOdometer = currentOdometer;
+      });
+    });
+    return updates;
+  };
+
+  const handleRecalculateAllKm = async () => {
+    if (!user) {
+      showToast('Sign in before recalculating shared KM records.', 'error');
+      return;
     }
-    alert(`Recalculated ${updatedCount} KM records successfully!`);
+    if (!confirm("Recalculate KM from recorded odometer readings?\n\nFormula: current odometer - previous odometer. Daily-distance imports without an odometer are preserved.")) return;
+
+    const updates = getOdometerDistanceUpdates();
+    try {
+      await batchSaveKmRecords(updates);
+      alert(`Recalculated ${updates.length} odometer-based KM records successfully. Imported daily-distance records were preserved.`);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Failed to recalculate KM records.', 'error');
+    }
+  };
+
+  const handleRecalculateMatrixMonth = async () => {
+    if (!user) {
+      showToast('Sign in before recalculating shared KM records.', 'error');
+      return;
+    }
+    if (!confirm(`Recalculate odometer-derived KM for ${matrixMonth}? Imported daily-distance readings will be left unchanged.`)) return;
+
+    const updates = getOdometerDistanceUpdates(matrixMonth);
+    try {
+      await batchSaveKmRecords(updates);
+      showToast(`Recalculated ${updates.length} odometer-based reading(s) for ${matrixMonth}; imported daily KM values were preserved.`, 'success');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Failed to recalculate this month.', 'error');
+    }
   };
 
   // -------------------------------------------------------------
@@ -687,6 +759,10 @@ TLS Fleet Management`;
   const handleMonthlyKmUpload = async () => {
     if (!uploadJsonText.trim()) {
       alert('Please paste JSON data or choose a .json file.');
+      return;
+    }
+    if (!user) {
+      alert('KM import was not started. Sign in with your Firebase account first. Guest/demo mode stores data only in this browser and does not save it to the shared database.');
       return;
     }
     try {
@@ -2164,9 +2240,7 @@ TLS Fleet Management`;
                 </div>
 
                 <button
-                  onClick={() => {
-                    showToast(`Recalculated full monthly matrix for ${matrixMonth}! All vehicle KM runs updated.`);
-                  }}
+                  onClick={handleRecalculateMatrixMonth}
                   className="bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs px-3.5 py-1.5 rounded-xl transition flex items-center gap-1.5"
                 >
                   <RefreshCw className="w-3.5 h-3.5" /> Recalculate Month
@@ -2215,21 +2289,36 @@ TLS Fleet Management`;
                               return (
                                 <td
                                   key={day}
-                                  onClick={() => {
-                                    const newOdoStr = prompt(`Change Meter Reading for ${t.plate} on ${dateKey}:`, rec?.odometer ? String(rec.odometer) : '');
-                                    if (newOdoStr !== null) {
-                                      const newOdo = parseFloat(newOdoStr);
-                                      const prev = getVehiclePreviousReading(t.plateNorm, dateKey);
-                                      const { kmRun } = calculateOdoKmRun(newOdoStr, prev?.odometer);
-                                      addKmRecord({
+                                  onClick={async () => {
+                                    const newKmStr = prompt(
+                                      `Change daily KM distance for ${t.plate} on ${dateKey} (enter 0 for a recorded zero-KM day):`,
+                                      rec ? String(rec.km) : ''
+                                    );
+                                    if (newKmStr === null) return;
+
+                                    const cleanedKm = newKmStr.replace(/,/g, '').trim();
+                                    if (!cleanedKm) {
+                                      alert('Daily KM distance cannot be blank. Enter 0 for a recorded zero-KM day, or cancel to leave the cell unchanged.');
+                                      return;
+                                    }
+                                    const dailyKm = Number(cleanedKm);
+                                    if (!Number.isFinite(dailyKm) || dailyKm < 0) {
+                                      alert('Enter a valid non-negative daily KM distance.');
+                                      return;
+                                    }
+
+                                    try {
+                                      await addKmRecord({
                                         date: dateKey,
                                         veh: t.plate,
-                                        odometer: !isNaN(newOdo) && newOdo > 0 ? newOdo : null,
-                                        km: kmRun,
-                                        driver: t.assignedDriverName || 'Driver',
-                                        notes: 'Changed via Monthly Matrix'
+                                        odometer: rec?.odometer ?? null,
+                                        km: dailyKm,
+                                        driver: rec?.driver || t.assignedDriverName || 'Driver',
+                                        notes: 'Edited daily KM via Fleet Matrix'
                                       });
-                                      showToast(`Updated reading for ${t.plate} on ${dateKey}: ${kmRun} KM Run.`);
+                                      showToast(`Updated daily distance for ${t.plate} on ${dateKey}: ${dailyKm.toLocaleString()} KM.`, 'success');
+                                    } catch (error) {
+                                      showToast(error instanceof Error ? error.message : 'Could not save this KM value.', 'error');
                                     }
                                   }}
                                   className={`p-2 text-center border-r border-slate-800 transition cursor-pointer select-none ${
