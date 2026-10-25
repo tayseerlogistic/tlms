@@ -9,6 +9,7 @@ export function SyncStatus() {
     historicalTrucks: trucks,
     loadingStates,
   } = useLms();
+  const registryReady = !loadingStates.trucks && !errorStates.trucks;
   const unmatched = kmRecords.filter(
     (r) => !resolveTruck(trucks, r.truckId, r.veh),
   );
@@ -27,12 +28,18 @@ export function SyncStatus() {
       className="mx-4 mt-3 rounded-lg border border-slate-600 px-3 py-2 text-xs text-slate-200 bg-slate-900"
     >
       <strong>{messages[syncStatus]}</strong>
+      {['commodities', 'stores', 'data_quality', 'app_state'].some(name => /permission|insufficient/i.test(errorStates[name] || '')) && (
+        <p className="text-amber-300 mt-1">Publish this version’s firestore.rules to project sonic-hawk-hsmzh, database ai-studio-8c81ea2f-4e0c-45e3-8fb8-22dded5a07f9. Deploying the website does not publish Firestore rules.</p>
+      )}
       {Object.entries(errorStates).map(([name, message]) => (
         <p key={name} className="text-rose-300 mt-1">
           {message}
         </p>
       ))}
-      {!loadingStates.trucks && unmatched.length > 0 && (
+      {registryReady && trucks.length === 0 && kmRecords.length > 0 && (
+        <p className="text-amber-300 mt-1">The Firestore truck registry is empty. {kmRecords.length} KM records are loaded, but fleet tables require saved master trucks. Restore or migrate the verified truck registry in Settings → Master Data before linking historical KM.</p>
+      )}
+      {registryReady && trucks.length > 0 && unmatched.length > 0 && (
         <p className="text-amber-300 mt-1">
           {unmatched.length} KM records have unmatched truck identities:{" "}
           {[...new Set(unmatched.map((r) => r.veh))].join(", ")}. Link them to
