@@ -71,6 +71,10 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, setCurrentTab, onOpe
     <header className="w-full min-w-0 bg-slate-900 border-b border-slate-800 sticky top-0 z-50 shadow-xl">
       <div className="w-full px-3 sm:px-5 lg:px-8 py-2.5 grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_auto] items-center gap-x-6 gap-y-2">
         <div className="min-w-0 flex flex-col gap-1.5">
+        <div className="flex flex-wrap gap-3 text-xs text-sky-300" aria-label="Quick links">
+          <a href="https://5436258.app.netsuite.com/" target="_blank" rel="noopener noreferrer" className="hover:underline">Waybill ↗</a>
+          <a href="https://logisti.sa/bayan/#/login" target="_blank" rel="noopener noreferrer" className="hover:underline">Bayan ↗</a>
+        </div>
         {/* Logo & Brand */}
         <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           <div className="w-10 h-10 shrink-0 rounded-xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-sky-500 flex items-center justify-center text-white shadow-lg shadow-blue-500/20 font-bold text-lg overflow-hidden">
