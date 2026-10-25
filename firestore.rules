@@ -79,11 +79,18 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    function activeDriverAssignment() {
+      let data = request.resource.data;
+      return !('assignedDriverId' in data) || data.assignedDriverId == null || data.assignedDriverId == ''
+        || (existsAfter(/databases/$(database)/documents/drivers/$(data.assignedDriverId))
+          && getAfter(/databases/$(database)/documents/drivers/$(data.assignedDriverId)).data.active != false);
+    }
+
     // Trucks collection
     match /trucks/{truckId} {
       allow read: if isSignedIn();
-      allow create: if isStaff() && isValidId(truckId) && request.resource.data.plate is string && request.resource.data.plate.size() <= 32;
-      allow update: if isStaff() && isValidId(truckId);
+      allow create: if isStaff() && isValidId(truckId) && request.resource.data.plate is string && request.resource.data.plate.size() <= 32 && activeDriverAssignment();
+      allow update: if isStaff() && isValidId(truckId) && activeDriverAssignment();
       allow delete: if isAdmin() && isValidId(truckId);
     }
 
@@ -156,12 +163,49 @@ service cloud.firestore {
       allow delete: if (isAdmin() || isCashier()) && isValidId(employeeId);
     }
 
-    // KM meter records
+    // Only one canonical distance/meter document per immutable truck ID and day.
+    function validKm(recordId) {
+      let r = request.resource.data;
+      return r.truckId is string && r.date is string
+        && r.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && recordId == r.truckId + '_' + r.date
+        && exists(/databases/$(database)/documents/trucks/$(r.truckId))
+        && r.distanceKm is number && r.distanceKm >= 0 && r.distanceKm < 1000000000
+        && (r.odometerKm == null || (r.odometerKm is number && r.odometerKm >= 0 && r.odometerKm < 1000000000000))
+        && r.km == r.distanceKm && r.odometer == r.odometerKm;
+    }
+    function canWriteKm() {
+      return isStaff() || (isSignedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && getUserRole() == 'driver'
+        && get(/databases/$(database)/documents/trucks/$(request.resource.data.truckId)).data.assignedDriverId
+          == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.driverId);
+    }
     match /km_records/{recordId} {
       allow read: if isSignedIn();
-      allow create: if isSignedIn() && isValidId(recordId) && request.resource.data.veh is string && request.resource.data.veh.size() <= 32;
-      allow update: if (isStaff() || (isSignedIn() && resource.data.loggedBy == request.auth.uid)) && isValidId(recordId);
+      allow create: if canWriteKm() && isValidId(recordId) && validKm(recordId);
+      allow update: if canWriteKm() && isValidId(recordId) && validKm(recordId)
+        && request.resource.data.truckId == resource.data.truckId
+        && request.resource.data.date == resource.data.date;
       allow delete: if isAdmin() && isValidId(recordId);
+    }
+    match /import_batches/{batchId} {
+      allow read: if isSignedIn();
+      allow create: if isStaff() && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.expectedRecordCount is int && request.resource.data.expectedRecordCount >= 0;
+      allow update: if isStaff() && resource.data.createdBy == request.auth.uid
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.expectedRecordCount == resource.data.expectedRecordCount
+        && request.resource.data.persistedRecordCount >= 0
+        && request.resource.data.persistedRecordCount <= resource.data.expectedRecordCount;
+      allow delete: if false;
+    }
+    match /commodities/{id} { allow read: if isSignedIn(); allow write: if isStaff(); }
+    match /stores/{id} { allow read: if isSignedIn(); allow write: if isStaff(); }
+    match /data_quality/{id} { allow read: if isSignedIn(); allow write: if isStaff(); }
+    match /app_state/{id} {
+      allow read: if isSignedIn();
+      allow write: if (id == 'branding' && isAdmin()) || (id == 'learnedRules' && isStaff());
     }
 
     // Diesel logs

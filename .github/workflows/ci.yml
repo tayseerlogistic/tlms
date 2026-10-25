@@ -23,7 +23,7 @@ jobs:
           node-version: 22
 
       - name: Install dependencies
-        run: npm install --legacy-peer-deps --force
+        run: npm ci --legacy-peer-deps
 
       - name: Type check
         run: npm run lint
@@ -33,3 +33,12 @@ jobs:
 
       - name: Production build
         run: npm run build
+
+      - name: Set up Java for Firestore emulator
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Firestore rules tests
+        run: npm run test:rules

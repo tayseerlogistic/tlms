@@ -1,6 +1,4 @@
 import React, { useEffect, useState } from 'react';
-import { doc, onSnapshot, setDoc } from 'firebase/firestore';
-import { db } from '../firebase/config';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { useLms } from '../context/LmsContext';
@@ -25,7 +23,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const { user, profile, role, isAdmin } = useAuth();
   const {
     trucks, drivers, equipment, schedules, manifests, kmRecords,
-    cashTransactions, conflicts, exportFullBackup, restoreFullBackup
+    cashTransactions, conflicts, exportFullBackup, restoreFullBackup, branding, saveBranding: persistBranding
   } = useLms();
 
   const [activeTab, setActiveTab] = useState<'mood' | 'master' | 'driver-portal' | 'users' | 'backup'>(initialTab);
@@ -38,22 +36,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [brandError, setBrandError] = useState('');
 
   useEffect(() => {
-    if (!user && !profile) return;
-    return onSnapshot(doc(db, 'app_state', 'branding'), snapshot => {
-      if (!snapshot.exists()) return;
-      const data = snapshot.data();
-      if (typeof data.brandName === 'string') setBrandName(data.brandName);
-      if (typeof data.brandSubtitle === 'string') setBrandSubtitle(data.brandSubtitle);
-      if (typeof data.brandLogoUrl === 'string') setBrandLogoUrl(data.brandLogoUrl);
-      localStorage.setItem('tlms.brandName', typeof data.brandName === 'string' ? data.brandName : 'TLS Logistics LMS');
-      localStorage.setItem('tlms.brandSubtitle', typeof data.brandSubtitle === 'string' ? data.brandSubtitle : 'Tayseer Group Central Fleet Operating System');
-      localStorage.setItem('tlms.brandLogoUrl', typeof data.brandLogoUrl === 'string' ? data.brandLogoUrl : '');
-      window.dispatchEvent(new CustomEvent('tlms-branding-updated'));
-    }, error => {
-      console.warn('Shared branding listener notice:', error.message);
-      setBrandError('Shared branding could not be loaded from Firebase. Local branding is still available in this browser.');
-    });
-  }, [user, profile]);
+    if (typeof branding.brandName === 'string') setBrandName(branding.brandName);
+    if (typeof branding.brandSubtitle === 'string') setBrandSubtitle(branding.brandSubtitle);
+    if (typeof branding.brandLogoUrl === 'string') setBrandLogoUrl(branding.brandLogoUrl);
+  }, [branding.brandName, branding.brandSubtitle, branding.brandLogoUrl]);
 
   const saveBranding = async () => {
     const next = {
@@ -65,7 +51,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     };
     setBrandError('');
     try {
-      if (user || profile) await setDoc(doc(db, 'app_state', 'branding'), next);
+      await persistBranding(next);
       localStorage.setItem('tlms.brandName', next.brandName);
       localStorage.setItem('tlms.brandSubtitle', next.brandSubtitle);
       localStorage.setItem('tlms.brandLogoUrl', next.brandLogoUrl);
