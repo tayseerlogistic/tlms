@@ -45,7 +45,7 @@ export class ErrorBoundary extends Component<Props, State> {
             </p>
           </div>
           <p className="text-xs text-slate-400">
-            The error has been isolated and your data is safe in localStorage/Firebase.
+            The screen encountered an error. Reload and check the sync status before retrying your last change.
           </p>
           <div className="flex items-center justify-center gap-3 pt-2">
             <button

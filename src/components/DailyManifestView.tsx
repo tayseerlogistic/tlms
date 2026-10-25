@@ -95,7 +95,7 @@ export const DailyManifestView: React.FC = () => {
 
   const todayTags = manifests[selectedDate] || {};
   const currentSchedule = schedules[selectedDate]?.rows || [];
-  const getDriverTag = (tags: Record<string, string>, driverId: string, driverIdx: number) => tags[driverId] ?? tags[String(driverIdx)] ?? '';
+  const getDriverTag = (tags: Record<string, string>, driverId: string, driverIdx: number) => tags[driverId] ?? '';
 
   // Identify temporary / 1-day rental drivers in today's schedule who are NOT in the 64 master fleet sequence
   const temporaryRentScheduleDrivers = React.useMemo(() => {

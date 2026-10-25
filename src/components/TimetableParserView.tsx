@@ -2,8 +2,6 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useLms } from '../context/LmsContext';
 import { useAuth } from '../context/AuthContext';
 import { TimetableRow } from '../types';
-import { doc, onSnapshot, setDoc } from 'firebase/firestore';
-import { db as firestoreDb } from '../firebase/config';
 import * as XLSX from 'xlsx';
 import {
   Calendar, FileSpreadsheet, Plus, Download, Copy, Trash2, Search,
@@ -33,213 +31,28 @@ import {
   TimetableStoreMap
 } from '../utils/timetableEngine';
 
-export const SAMPLE_READY_TEMPLATE = `Tayseer Group Factory\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t
-Monday, 5 October 2026\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t
-Driver Name\tIqama #\tDriver Mobile #\tEquipment#\tVehicle Plate No\tSource\tDestination\tCustomer\tSupplier\tStore\tEquipment Type\tCommodity\tWaybill#\tDN Number\tTransporter\tNotes\tBayan Expairy
-TLS Fleets\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t
-MUHAMMAD FAYYAZ AWAN\t2326626773\t595343932\tDT-01\tأ ح د D J A 4829\tYanbu\tYanbu\t\tLUBEREF\tTayseer Group Factory\tDumber\tSULPHUR / 25 MT\t51135\t\tTLS\t\t
-SARU IBRAHIM\t2598393839\t531330746\t135HCL19\tأ ر ك K R A 7503\tYanbu\tYanbu\t\tTRONOX\tTLS Warehouse\tTanker\tCS / 25 MT\t51140\t\tTLS\t\t
-SIBGHAT ULLAH ABDUL AMIN\t2596916359\t572718522\t217SLF19\tأ س س S S A 5046\tYanbu\tRabigh\tPetro Rabigh Cumene\t\t\tTanker\tSA / 24.5 MT\t51141\t\tTLS\t\t
-SHAFIQ AHMED MUHAMMAD\t2533446320\t554691685\t4004006\tأ ر ح J R A 5159\tTLS\tTPF\t\t\tTayseer Group Factory\tFlatbed\tKCL / 24 Jumbo Bags / 30 MT\t51142\t\tTLS\t\t
-IQBAL HOSSAIN\t2601876291\t571651516\t4004010\tأ س ح J S A 8752\tTLS\tTPF\t\t\tTLS Warehouse\tFlatbed\tSOP Granular Bulk / 24 Jumbo Bags / 30 MT\t51143\t\tTLS\t\t
-RAISUL HASAN ALEY HASAN\t2469328948\t581793947\t4004011\tأ س ح J S A 8753\tTLS\tTPF\t\t\tTayseer Group Factory\tFlatbed\tCalcium Carbonate / 16 Jumbo Bags / 32 MT\t51144\t\tTLS\t\t
-MUHAMMAD FAYYAZ AWAN\t2326626773\t595343932\tDT-01\tأ ح د D J A 4829\tYanbu\tYanbu\t\tLUBEREF\tTayseer Group Factory\tDumber\tSULPHUR / 25 MT\t51146\t\tTLS\t\t
-SHAFIQ AHMED MUHAMMAD\t2533446320\t554691685\t4004006\tأ ر ح J R A 5159\tTPF\tTLS\t\t\tTLS Warehouse\tFlatbed\tSOP Granular / 25 Kg Bags / 1000 Bags / 25 MT\t51150\t\tTLS\t\t
-RAISUL HASAN ALEY HASAN\t2469328948\t581793947\t4004011\tأ س ح J S A 8753\tTPF\tYanbu\tAgricultural & Machinary\t\t\tFlatbed\tSOP Granular / 25 Kg Bags / 1080 Bags / 27 MT\t51153\t\tTLS\t\t
-IQBAL HOSSAIN\t2601876291\t571651516\t4004010\tأ س ح J S A 8752\tTPF\tTLS\t\t\tTLS Warehouse\tFlatbed\tSOP Granular / 25 Kg Bags / 1000 Bags / 25 MT\t51154\t\tTLS\t\t
-AMAN TULLAH\t2582346751\t575630903\t126HCL19\tأ ر ك K R A 8477\tYanbu\tYanbu\tSWCC Yanbu\t\t\tTanker\tHCL / 21.5 MT\t51161\t\tTLS\t\t
-RAISUL HASAN ALEY HASAN\t2469328948\t581793947\t4004011\tأ س ح J S A 8753\tTPF\tTLS\t\t\tTLS Warehouse\tFlatbed\tSOP Powder / 25 Kg Bags / 100 Bags / 25 MT\t\t\tTLS\t\t
-SHAFIQ AHMED MUHAMMAD\t2533446320\t554691685\t4004006\tأ ر ح J R A 5159\tTPF\tTLS\t\t\tTLS Warehouse\tFlatbed\tSOP Powder / 25 Kg Bags / 100 Bags / 25 MT\t\t\tTLS\t\t
-RAISUL HASAN ALEY HASAN\t2469328948\t581793947\t4004011\tأ س ح J S A 8753\tTLS\tTPF\t\t\tTayseer Group Factory\tFlatbed\tKCL / 24 Jumbo Bags / 30 MT\t\t\tTLS\t\t
-MUHAMMAD FAYYAZ AWAN\t2326626773\t595343932\t4004003\tأ ح د D J A 4829\tTLS\tTPF\t\t\tTLS Warehouse\tFlatbed\tSOP Granular Bulk / 24 Jumbo Bags / 30 MT\t\t\tTLS\t\t
-MUHAMMAD FAYYAZ AWAN\t2326626773\t595343932\t4004003\tأ ح د D J A 4829\tTPF\tTLS\t\t\tTLS Warehouse\tFlatbed\tSOP Granular / 25 Kg Bags / 1000 Bags / 25 MT\t\t\t\t\t
-SHAFIQ AHMED MUHAMMAD\t2533446320\t554691685\t4004006\tأ ر ح J R A 5159\tTLS\tTPF\t\t\tTayseer Group Factory\tFlatbed\tKCL / 24 Jumbo Bags / 30 MT\t\t\tTLS\t\t
-IQBAL HOSSAIN\t2601876291\t571651516\t4004010\tأ س ح J S A 8752\tTLS\tTPF\t\t\tTLS Warehouse\tFlatbed\tSOP Granular Bulk / 24 Jumbo Bags / 30 MT\t\t\tTLS\t\t
-IQBAL HOSSAIN\t2601876291\t571651516\t4004010\tأ س ح J S A 8752\tTPF\tTLS\t\t\tTLS Warehouse\tFlatbed\tSOP Granular / 25 Kg Bags / 1000 Bags / 25 MT\t\t\tTLS\t\t
-GHULAM YASIN HAFIZ WAHID BAKHSH\t2589336318\t571440790\t4004009\tأ ر ك K R A 8471\tTLS\tTPF\t\t\tTayseer Group Factory\tFlatbed\tKCL / 24 Jumbo Bags / 30 MT\t\t\tTLS\t\t
-GHULAM YASIN HAFIZ WAHID BAKHSH\t2589336318\t571440790\t4004009\tأ ر ك K R A 8471\tTPF\tTLS\t\t\tTLS Warehouse\tFlatbed\tSOP Powder / 25 Kg Bags / 1000 Bags / 25 MT\t\t\tTLS\t\t
-GHULAM YASIN HAFIZ WAHID BAKHSH\t2589336318\t571440790\t4004009\tأ ر ك K R A 8471\tTPF\tTLS\t\t\tTLS Warehouse\tFlatbed\tSOP Granular / 25 Kg Bags / 1000 Bags / 25 MT\t\t\tTLS\t\t
-GHULAM YASIN HAFIZ WAHID BAKHSH\t2589336318\t571440790\t4004009\tأ ر ك K R A 8471\tTLS\tTPF\t\t\tTLS Warehouse\tFlatbed\tSOP Granular Bulk / 24 Jumbo Bags / 30 MT\t\t\tTLS\t\t
-GHULAM YASIN HAFIZ WAHID BAKHSH\t2589336318\t571440790\t4004009\tأ ر ك K R A 8471\tTPF\tTLS\t\t\tTLS Warehouse\tFlatbed\tSOP Granular / 25 Kg Bags / 1000 Bags / 25 MT\t\t\tTLS\t\t
-MUHAMMAD FAYYAZ AWAN\t2326626773\t595343932\t4004003\tأ ح د D J A 4829\tTLS\tTPF\t\t\tTLS Warehouse\tFlatbed\tSOP Granular Bulk / 24 Jumbo Bags / 30 MT\t\t\tTLS\t\t
-MUHAMMAD FAYYAZ AWAN\t2326626773\t595343932\t4004003\tأ ح د D J A 4829\tTPF\tTLS\t\t\tTLS Warehouse\tFlatbed\tSOP Granular / 25 Kg Bags / 1000 Bags / 25 MT\t\t\tTLS\t\t
-MUHAMMAD FAYYAZ AWAN\t2326626773\t595343932\t4004003\tأ ح د D J A 4829\tTPF\tTLS\t\t\tTLS Warehouse\tFlatbed\tSOP Granular / 25 Kg Bags / 100 Bags / 25 MT\t\t\tTLS\t\t
-SARU IBRAHIM\t2598393839\t531330746\t135HCL19\tأ ر ك K R A 7503\tYanbu\tShuhaiba\tSaudi Water Authority\t\t\tTanker\tCS / 21.5 MT\t\t\tTLS\t\t
-JAVID KHAN\t2635431444\t570140037\t301CSD15\tأ س س S S A 1198\tYanbu\tJeddah\tRawabi Industrial Nature Company\t\t\tTanker\tCS / 24.5 MT\t\t\tTLS\t\t
-SHAFIQ AHMED MUHAMMAD\t2533446320\t554691685\t4004006\tأ ر ح J R A 5159\tYanbu\tYanbu\tWang Kang Ceramic Company\t\t\tFlatbed\tCaustic Soda flakes / 25 Kg Bags / 1080 Bags / 27 MT\t\t\tTLS\t\t
-GHULAM YASIN HAFIZ WAHID BAKHSH\t2589336318\t571440790\t102HCL15\tأ ر ك K R A 8471\tYanbu\tAl Khobar\tSWCC\t\t\tTanker\tFC / 21.5 MT\t\t\tTLS\t\t
-FAISAL HAMMAD MUKHTAR AHMED\t2557293632\t571466910\t4004011\tأ س س S S A 1199\tDammam\tJubail\tNOMAC\t\tTayseer Group WH (3rd Industrial Area)\tFlatbed\tSMSBS / 25 Kg Bags / 1000 Bags / 25 MT\t\t\tTLS\t\t
-MUHAMMAD FAYYAZ AWAN\t2326626773\t595343932\t4004003\tأ ح د D J A 4829\tYanbu\tYanbu\tMARAFIQ \t\t\tFlatbed\tHCL / 8 Drums / 18.4 MT & 6 IBCs / 6.9 MT \t\t\tTLS\t\t
-AMAN TULLAH\t2582346751\t575630903\t107HCL18\tأ ر ك K R A 8477\tYanbu\tYanbu\tSWCC Yanbu\t\t\tTanker\tHCL / 21.5 MT\t\t\tTLS\t\t
-ABDUL WALI HAKEEM WALI KHAN\t2596916599\t553734337\t133HCL19\tأ ر ح J R A 5158\tYanbu\tTuraif\tSaudi Arabian Mining Company\t\t\tTanker\tHCL / 21.5 MT\t\t\tTLS\t\t
-TALHA FAZLAY RUB\t2324352547\t599595250\t144HCL19\tأ ر ح J R A 5160\tYanbu\tKhafji\tDROPS\t\t\tTanker\tHCL / 21.5 MT\t\t\tTLS\t\t
-SHAHZAD AHMAD SIRAJ AHMAD KHAN\t2634188631\t573685786\t205SLF18\tأ س س S S A 1193\tYanbu\tYanbu\tTRONOX\t\t\tTanker\tSA / 25 MT\t\t\tTLS\t\t
-SHAHZAD AHMAD SIRAJ AHMAD KHAN\t2634188631\t573685786\t205SLF18\tأ س س S S A 1193\tYanbu\tYanbu\tTRONOX\t\t\tTanker\tSA / 25 MT\t\t\tTLS\t\t
-MUHAMMAD ASHRAF SAED AHMED\t2349470464\t593304841\t116HCL18\tأ ر ك K R A 8479\tYanbu\tRas Al Khair\tSaudi Arabian Mining Company\t\t\tTanker\tSBS / 21.5 MT\t\t\t\t\t`;
+export const SAMPLE_READY_TEMPLATE = `Driver Name\tIqama #\tDriver Mobile #\tEquipment #\tVehicle Plate No\tSource\tDestination\tCustomer\tSupplier\tStore\tEquipment Type\tCommodity\tWaybill #\tDN Number\tTransporter\tNotes\tBayan Expiry`;
 
 export const TimetableParserView: React.FC = () => {
-  const { drivers: masterDrivers, schedules: contextSchedules, saveDailySchedule, deleteDailySchedule, saveDailyManifest } = useLms();
+  const { drivers: masterDrivers, trucks: masterTrucks, equipment: masterEquipment, commodities: masterCommodities, stores: masterStores, schedules: contextSchedules, saveDailySchedule, deleteDailySchedule, saveDailyManifest, saveTimetableRegistry } = useLms();
   const { user, profile, isDispatcher, isAdmin } = useAuth();
 
-  // Load database from localStorage (seed if first time)
-  const [db, setDb] = useState<TimetableDatabase>(() => {
-    const loaded = loadTimetableDatabase();
-    // Also merge in any schedules from context if not already present
-    if (contextSchedules) {
-      Object.entries(contextSchedules).forEach(([dt, sched]) => {
-        if (!loaded.schedules[dt] && sched.rows && sched.rows.length) {
-          loaded.schedules[dt] = {
-            date: dt,
-            rows: sched.rows,
-            createdAt: sched.updatedAt || new Date().toISOString(),
-            updatedAt: sched.updatedAt || new Date().toISOString()
-          };
-        }
-      });
-    }
-    return loaded;
-  });
-
-  const timetableDbRef = useRef(db);
-  timetableDbRef.current = db;
-
-  const [registryHydrated, setRegistryHydrated] = useState(false);
-  const cloudRegistryExistsRef = useRef(false);
-  const registrySnapshotErrorRef = useRef(false);
-  const expectedCloudRegistrySignatureRef = useRef<string | null>(null);
-  const lastPersistedRegistrySignatureRef = useRef<string | null>(null);
-  const registrySignature = (value: Pick<TimetableDatabase, 'drivers' | 'vehicles' | 'commodities' | 'storeMap'>) =>
-    JSON.stringify({ drivers: value.drivers, vehicles: value.vehicles, commodities: value.commodities, storeMap: value.storeMap });
-
-  useEffect(() => {
-    if (!user && !profile) {
-      setRegistryHydrated(false);
-      cloudRegistryExistsRef.current = false;
-      expectedCloudRegistrySignatureRef.current = null;
-      lastPersistedRegistrySignatureRef.current = null;
-      return;
-    }
-    return onSnapshot(doc(firestoreDb, 'app_state', 'timetableRegistry'), snapshot => {
-      registrySnapshotErrorRef.current = false;
-      cloudRegistryExistsRef.current = snapshot.exists();
-      if (!snapshot.exists()) {
-        // No shared registry exists yet; after hydration the local demo registry may seed it.
-        expectedCloudRegistrySignatureRef.current = null;
-        setRegistryHydrated(true);
-        return;
-      }
-      const data = snapshot.data();
-      const current = timetableDbRef.current;
-      const next = {
-        ...current,
-        drivers: Array.isArray(data.drivers) ? data.drivers as TimetableDriver[] : current.drivers,
-        vehicles: Array.isArray(data.vehicles) ? data.vehicles as TimetableVehicle[] : current.vehicles,
-        commodities: Array.isArray(data.commodities) ? data.commodities as TimetableCommodity[] : current.commodities,
-        storeMap: data.storeMap && typeof data.storeMap === 'object' && !Array.isArray(data.storeMap)
-          ? data.storeMap as TimetableStoreMap : current.storeMap
-      };
-      const incomingSignature = registrySignature(next);
-      const currentSignature = registrySignature(current);
-      if (incomingSignature === currentSignature) {
-        expectedCloudRegistrySignatureRef.current = null;
-        lastPersistedRegistrySignatureRef.current = incomingSignature;
-        setRegistryHydrated(true);
-        return;
-      }
-      // The persistence effect ignores the pre-hydration render until this cloud snapshot is applied.
-      expectedCloudRegistrySignatureRef.current = incomingSignature;
-      setDb(prev => {
-        const updated = {
-          ...prev,
-          drivers: Array.isArray(data.drivers) ? data.drivers as TimetableDriver[] : prev.drivers,
-          vehicles: Array.isArray(data.vehicles) ? data.vehicles as TimetableVehicle[] : prev.vehicles,
-          commodities: Array.isArray(data.commodities) ? data.commodities as TimetableCommodity[] : prev.commodities,
-          storeMap: data.storeMap && typeof data.storeMap === 'object' && !Array.isArray(data.storeMap)
-            ? data.storeMap as TimetableStoreMap : prev.storeMap
-        };
-        saveTimetableDatabase(updated);
-        return updated;
-      });
-      setRegistryHydrated(true);
-    }, error => {
-      registrySnapshotErrorRef.current = true;
-      setRegistryHydrated(true);
-      showToast('Shared timetable registry unavailable: ' + error.message);
-    });
-  }, [user, profile]);
-
-  useEffect(() => {
-    if ((!user && !profile) || !registryHydrated || registrySnapshotErrorRef.current) return;
-    const signature = registrySignature(db);
-    const expectedCloudSignature = expectedCloudRegistrySignatureRef.current;
-    if (expectedCloudSignature !== null) {
-      if (signature !== expectedCloudSignature) return;
-      expectedCloudRegistrySignatureRef.current = null;
-      lastPersistedRegistrySignatureRef.current = signature;
-      return;
-    }
-    if (lastPersistedRegistrySignatureRef.current === signature) return;
-    const registry = {
-      drivers: db.drivers,
-      vehicles: db.vehicles,
-      commodities: db.commodities,
-      storeMap: db.storeMap,
-      updatedAt: new Date().toISOString(),
-      updatedBy: profile?.email || user?.email || 'Dispatcher'
-    };
-    // Record the intended signature before writing to avoid duplicate writes on snapshot echoes.
-    lastPersistedRegistrySignatureRef.current = signature;
-    cloudRegistryExistsRef.current = true;
-    setDoc(doc(firestoreDb, 'app_state', 'timetableRegistry'), registry).catch(error => {
-      if (lastPersistedRegistrySignatureRef.current === signature) lastPersistedRegistrySignatureRef.current = null;
-      showToast('Shared timetable registry save failed: ' + (error instanceof Error ? error.message : String(error)));
-    });
-  }, [db.drivers, db.vehicles, db.commodities, db.storeMap, registryHydrated, user, profile]);
-
-  // Keep the editor aligned with the shared schedule repository after realtime updates.
-  useEffect(() => {
-    if (!user && !profile) return;
-    const sharedSchedules = Object.fromEntries(Object.entries(contextSchedules).map(([date, schedule]) => [date, {
-      date,
-      rows: schedule.rows || [],
-      createdAt: schedule.updatedAt || new Date().toISOString(),
-      updatedAt: schedule.updatedAt || new Date().toISOString()
-    }]));
-    setDb(prev => {
-      if (JSON.stringify(prev.schedules) === JSON.stringify(sharedSchedules)) return prev;
-      const next = { ...prev, schedules: sharedSchedules };
-      saveTimetableDatabase(next);
-      return next;
-    });
-  }, [contextSchedules, user, profile]);
-
-  // A driver archived in the master repository must no longer be available for new timetable assignments.
-  // Match the legacy timetable registry by Iqama when available, otherwise by exact normalized name.
-  useEffect(() => {
-    if (!masterDrivers.length) return;
-    setDb(prev => {
-      const isArchivedMasterDriver = (item: TimetableDriver) => masterDrivers.some(master => {
-        if (master.active !== false) return false;
-        const timetableIqama = String(item.iqama || '').replace(/\\D/g, '');
-        const masterIqama = String(master.iqama || '').replace(/\\D/g, '');
-        if (timetableIqama && masterIqama) return timetableIqama === masterIqama;
-        const timetableName = String(item.name || '').toUpperCase().replace(/\\s+/g, ' ').trim();
-        const masterName = String(master.name || '').toUpperCase().replace(/\\s+/g, ' ').trim();
-        return Boolean(timetableName && masterName && timetableName === masterName);
-      });
-      const archivedIds = new Set(prev.drivers.filter(isArchivedMasterDriver).map(item => item.id));
-      if (!archivedIds.size) return prev;
-      const next: TimetableDatabase = {
-        ...prev,
-        drivers: prev.drivers.filter(item => !archivedIds.has(item.id)),
-        vehicles: prev.vehicles.map(vehicle => archivedIds.has(vehicle.defaultDriverId)
-          ? { ...vehicle, defaultDriverId: '' }
-          : vehicle)
-      };
-      saveTimetableDatabase(next);
-      return next;
-    });
-  }, [masterDrivers]);
+  const [uiPrefs, setUiPrefs] = useState(() => loadTimetableDatabase().uiPrefs);
+  // These are adapters over the central collections, never another business database.
+  const db: TimetableDatabase = {
+    drivers: masterDrivers.filter(d => d.active !== false).map(d => ({id:d.id,name:d.name,iqama:d.iqama,mobile:d.mobile})),
+    vehicles: [
+      ...masterEquipment.filter(e=>e.active!==false).map(e=>{
+        const t=masterTrucks.find(t=>t.id===e.assignedTruckId || t.assignedEquipmentId===e.id);
+        return {id:e.id,truckId:t?.id || null,plateNo:t?.plate || '',equipmentNo:e.equipNo,type:e.type,defaultDriverId:masterDrivers.some(d=>d.id===t?.assignedDriverId && d.active!==false) ? t?.assignedDriverId || '' : '',isThirdParty:false};
+      }),
+      ...masterTrucks.filter(t=>!masterEquipment.some(e=>e.active!==false && (e.assignedTruckId===t.id || e.id===t.assignedEquipmentId))).map(t=>({id:t.id,truckId:t.id,plateNo:t.plate,equipmentNo:t.equipmentNo || '',type:deriveEquipmentType(t.equipmentNo || t.type),defaultDriverId:t.assignedDriverId || '',isThirdParty:t.isThirdParty || false}))
+    ],
+    commodities: masterCommodities.map(c=>({...c,jumboBagMT:c.jumboBagMT ?? 0})),
+    storeMap: Object.fromEntries(masterStores.map(s=>[s.destination,s.storeName])),
+    schedules: Object.fromEntries(Object.entries(contextSchedules).map(([date,s])=>[date,{date,rows:s.rows,createdAt:s.updatedAt || '',updatedAt:s.updatedAt || ''}])),
+    uiPrefs
+  };
 
   // App navigation state
   const [page, setPage] = useState<'new' | 'schedule' | 'drivers' | 'vehicles' | 'settings'>('new');
@@ -309,13 +122,11 @@ export const TimetableParserView: React.FC = () => {
     return () => document.removeEventListener('click', handleOutsideClick);
   }, []);
 
-  // Save DB helper
-  const updateDb = (updater: (prev: TimetableDatabase) => TimetableDatabase) => {
-    setDb(prev => {
-      const next = updater(prev);
-      saveTimetableDatabase(next);
-      return next;
-    });
+  const updateDb = async (updater: (prev: TimetableDatabase) => TimetableDatabase) => {
+    const next = updater(db);
+    setUiPrefs(next.uiPrefs);
+    saveTimetableDatabase(next); // Writes UI preferences only.
+    await saveTimetableRegistry(next, db);
   };
 
   // Auto-focus inline edit input
@@ -355,7 +166,7 @@ export const TimetableParserView: React.FC = () => {
     return COLUMNS.map(c => c.key);
   }, []);
 
-  const toggleColumn = (key: keyof TimetableRow) => {
+  const toggleColumn = async (key: keyof TimetableRow) => {
     const prefKey = view === 'daily' ? 'visibleColumnsDaily' : 'visibleColumnsList';
     const current = visibleColumns.slice();
     let next: (keyof TimetableRow)[];
@@ -367,7 +178,7 @@ export const TimetableParserView: React.FC = () => {
     // Maintain official ordering
     next = COLUMNS.filter(c => next.includes(c.key)).map(c => c.key);
 
-    updateDb(prev => ({
+    await updateDb(prev => ({
       ...prev,
       uiPrefs: {
         ...prev.uiPrefs,
@@ -480,7 +291,7 @@ export const TimetableParserView: React.FC = () => {
     setEditingValue(String(row[colKey] || ''));
   };
 
-  const commitEditCell = () => {
+  const commitEditCell = async () => {
     if (!editingCell) return;
     const { rowId, colKey } = editingCell;
     const val = editingValue.trim();
@@ -493,8 +304,10 @@ export const TimetableParserView: React.FC = () => {
         // Driver Name autocomplete
         if (colKey === 'driverName') {
           const d = db.drivers.find(x => x.name.toLowerCase() === val.toLowerCase());
+          updated.driverId = d?.id || null;
           if (d) {
-            updated.driverName = d.name;
+            updated.driverId = d.id;
+                updated.driverName = d.name;
             updated.iqama = d.iqama;
             updated.mobile = d.mobile;
           }
@@ -506,6 +319,7 @@ export const TimetableParserView: React.FC = () => {
           const v = db.vehicles.find(x => x.equipmentNo.toLowerCase() === val.toLowerCase());
           if (v) {
             updated.equipmentNo = v.equipmentNo;
+            updated.truckId = v.truckId || null;
             updated.plateNo = v.plateNo;
             if (!updated.equipmentType) {
               updated.equipmentType = v.type || deriveEquipmentType(v.equipmentNo);
@@ -514,6 +328,7 @@ export const TimetableParserView: React.FC = () => {
             if (v.defaultDriverId && !updated.driverName) {
               const d = db.drivers.find(x => x.id === v.defaultDriverId);
               if (d) {
+                updated.driverId = d.id;
                 updated.driverName = d.name;
                 updated.iqama = d.iqama;
                 updated.mobile = d.mobile;
@@ -532,7 +347,9 @@ export const TimetableParserView: React.FC = () => {
         // Plate No autocomplete
         if (colKey === 'plateNo') {
           const v = db.vehicles.find(x => x.plateNo.toLowerCase() === val.toLowerCase());
+          updated.truckId = v?.truckId || null;
           if (v) {
+            updated.truckId = v.truckId || null;
             updated.plateNo = v.plateNo;
             updated.equipmentNo = v.equipmentNo;
             updated.equipmentType = deriveEquipmentType(v.equipmentNo);
@@ -540,6 +357,7 @@ export const TimetableParserView: React.FC = () => {
             if (v.defaultDriverId && !updated.driverName) {
               const d = db.drivers.find(x => x.id === v.defaultDriverId);
               if (d) {
+                updated.driverId = d.id;
                 updated.driverName = d.name;
                 updated.iqama = d.iqama;
                 updated.mobile = d.mobile;
@@ -557,7 +375,7 @@ export const TimetableParserView: React.FC = () => {
       setNewRows(applyUpdate(newRows));
     } else if (currentSchedule) {
       const updatedRows = applyUpdate(currentSchedule.rows);
-      updateDb(prev => ({
+      await updateDb(prev => ({
         ...prev,
         schedules: {
           ...prev.schedules,
@@ -569,7 +387,7 @@ export const TimetableParserView: React.FC = () => {
         }
       }));
       // Keep LMS Context in sync
-      saveDailySchedule(currentDate, updatedRows, false);
+      await saveDailySchedule(currentDate, updatedRows, false);
     }
 
     setEditingCell(null);
@@ -666,7 +484,7 @@ export const TimetableParserView: React.FC = () => {
     setDragOverRowId(null);
   };
 
-  const handleRowDrop = (e: React.DragEvent, targetRowId: string, isPreview: boolean = false) => {
+  const handleRowDrop = async (e: React.DragEvent, targetRowId: string, isPreview: boolean = false) => {
     e.preventDefault();
     const sourceId = draggedRowId || e.dataTransfer.getData('text/plain');
     if (!sourceId || sourceId === targetRowId) {
@@ -691,7 +509,7 @@ export const TimetableParserView: React.FC = () => {
       showToast('Row moved to new sequence in preview');
     } else if (currentSchedule) {
       const updated = reorder(currentSchedule.rows);
-      updateDb(prev => ({
+      await updateDb(prev => ({
         ...prev,
         schedules: {
           ...prev.schedules,
@@ -707,7 +525,7 @@ export const TimetableParserView: React.FC = () => {
         }
       }));
       setEnableSort(false);
-      saveDailySchedule(currentDate, updated, false);
+      await saveDailySchedule(currentDate, updated, false);
       showToast('Manual row sequence saved');
     }
 
@@ -720,7 +538,7 @@ export const TimetableParserView: React.FC = () => {
     setDragOverRowId(null);
   };
 
-  const moveRowStep = (rowId: string, direction: 'up' | 'down', isPreview: boolean = false) => {
+  const moveRowStep = async (rowId: string, direction: 'up' | 'down', isPreview: boolean = false) => {
     const reorder = (list: TimetableRow[]): TimetableRow[] => {
       const index = list.findIndex(r => r.id === rowId);
       if (index < 0) return list;
@@ -738,7 +556,7 @@ export const TimetableParserView: React.FC = () => {
       showToast(`Moved row ${direction}`);
     } else if (currentSchedule) {
       const updated = reorder(currentSchedule.rows);
-      updateDb(prev => ({
+      await updateDb(prev => ({
         ...prev,
         schedules: {
           ...prev.schedules,
@@ -754,7 +572,7 @@ export const TimetableParserView: React.FC = () => {
         }
       }));
       setEnableSort(false);
-      saveDailySchedule(currentDate, updated, false);
+      await saveDailySchedule(currentDate, updated, false);
       showToast(`Moved row ${direction}`);
     }
   };
@@ -768,7 +586,7 @@ export const TimetableParserView: React.FC = () => {
     setParseInfo('');
   };
 
-  const handleSaveNew = () => {
+  const handleSaveNew = async () => {
     if (!newRows || !newRows.length || !newDate) return;
     const date = newDate;
     const existing = db.schedules[date];
@@ -783,7 +601,7 @@ export const TimetableParserView: React.FC = () => {
       updatedAt: new Date().toISOString()
     };
 
-    updateDb(prev => ({
+    await updateDb(prev => ({
       ...prev,
       schedules: {
         ...prev.schedules,
@@ -796,7 +614,7 @@ export const TimetableParserView: React.FC = () => {
     }));
 
     // Sync to LMS Context and Daily Manifest
-    saveDailySchedule(date, newRows, true);
+    await saveDailySchedule(date, newRows, true);
 
     setCurrentDate(date);
     setPage('schedule');
@@ -807,7 +625,7 @@ export const TimetableParserView: React.FC = () => {
     showToast(`Schedule saved for ${fmtDate(date)}`);
   };
 
-  const handleAddRow = () => {
+  const handleAddRow = async () => {
     if (!currentSchedule) return;
     const newRow: TimetableRow = {
       id: uid(),
@@ -831,7 +649,7 @@ export const TimetableParserView: React.FC = () => {
       priority: 999
     };
     const updatedRows = [...currentSchedule.rows, newRow];
-    updateDb(prev => ({
+    await updateDb(prev => ({
       ...prev,
       schedules: {
         ...prev.schedules,
@@ -842,7 +660,7 @@ export const TimetableParserView: React.FC = () => {
         }
       }
     }));
-    saveDailySchedule(currentDate, updatedRows, false);
+    await saveDailySchedule(currentDate, updatedRows, false);
     showToast('Added new blank row');
   };
 
@@ -852,7 +670,7 @@ export const TimetableParserView: React.FC = () => {
 
     try {
       await deleteDailySchedule(currentDate);
-      updateDb(prev => {
+      await updateDb(prev => {
         const copy = { ...prev.schedules };
         delete copy[currentDate];
         const remainingDates = Object.keys(copy).sort();
@@ -910,33 +728,33 @@ export const TimetableParserView: React.FC = () => {
   // -------------------------------------------------------------------
   // DRIVERS REGISTRY HANDLERS
   // -------------------------------------------------------------------
-  const handleAddDriver = () => {
+  const handleAddDriver = async () => {
     const newD: TimetableDriver = { id: uid(), name: '', iqama: '', mobile: '' };
-    updateDb(prev => ({ ...prev, drivers: [newD, ...prev.drivers] }));
+    await updateDb(prev => ({ ...prev, drivers: [newD, ...prev.drivers] }));
     showToast('Added driver row');
   };
 
-  const handleUpdateDriver = (id: string, field: keyof TimetableDriver, val: string) => {
-    updateDb(prev => ({
+  const handleUpdateDriver = async (id: string, field: keyof TimetableDriver, val: string) => {
+    await updateDb(prev => ({
       ...prev,
       drivers: prev.drivers.map(d => (d.id === id ? { ...d, [field]: val } : d))
     }));
   };
 
-  const handleDeleteDriver = (id: string) => {
+  const handleDeleteDriver = async (id: string) => {
     if (!confirm('Delete this driver?')) return;
-    updateDb(prev => ({
+    await updateDb(prev => ({
       ...prev,
       drivers: prev.drivers.filter(d => d.id !== id),
       vehicles: prev.vehicles.map(v => (v.defaultDriverId === id ? { ...v, defaultDriverId: '' } : v))
     }));
-    showToast('Driver deleted');
+    showToast('Driver archive requested; check sync status');
   };
 
   // -------------------------------------------------------------------
   // VEHICLES REGISTRY HANDLERS
   // -------------------------------------------------------------------
-  const handleAddVehicle = () => {
+  const handleAddVehicle = async () => {
     const newV: TimetableVehicle = {
       id: uid(),
       equipmentNo: '',
@@ -945,12 +763,12 @@ export const TimetableParserView: React.FC = () => {
       defaultDriverId: '',
       isThirdParty: false
     };
-    updateDb(prev => ({ ...prev, vehicles: [newV, ...prev.vehicles] }));
+    await updateDb(prev => ({ ...prev, vehicles: [newV, ...prev.vehicles] }));
     showToast('Added vehicle row');
   };
 
-  const handleUpdateVehicle = (id: string, field: keyof TimetableVehicle, val: any) => {
-    updateDb(prev => ({
+  const handleUpdateVehicle = async (id: string, field: keyof TimetableVehicle, val: any) => {
+    await updateDb(prev => ({
       ...prev,
       vehicles: prev.vehicles.map(v => {
         if (v.id !== id) return v;
@@ -963,39 +781,39 @@ export const TimetableParserView: React.FC = () => {
     }));
   };
 
-  const handleDeleteVehicle = (id: string) => {
+  const handleDeleteVehicle = async (id: string) => {
     if (!confirm('Delete this vehicle?')) return;
-    updateDb(prev => ({
+    await updateDb(prev => ({
       ...prev,
       vehicles: prev.vehicles.filter(v => v.id !== id)
     }));
-    showToast('Vehicle deleted');
+    showToast('Vehicle archive requested; check sync status');
   };
 
   // -------------------------------------------------------------------
   // SETTINGS HANDLERS
   // -------------------------------------------------------------------
-  const handleAddCommodity = () => {
+  const handleAddCommodity = async () => {
     const newC: TimetableCommodity = {
       canonical: 'New Commodity',
       shortForm: 'NEW',
       aliases: [],
       jumboBagMT: 1.25
     };
-    updateDb(prev => ({ ...prev, commodities: [newC, ...prev.commodities] }));
+    await updateDb(prev => ({ ...prev, commodities: [newC, ...prev.commodities] }));
     showToast('Added commodity');
   };
 
-  const handleUpdateCommodity = (idx: number, field: keyof TimetableCommodity, val: any) => {
-    updateDb(prev => {
+  const handleUpdateCommodity = async (idx: number, field: keyof TimetableCommodity, val: any) => {
+    await updateDb(prev => {
       const copy = [...prev.commodities];
       copy[idx] = { ...copy[idx], [field]: val };
       return { ...prev, commodities: copy };
     });
   };
 
-  const handleDeleteCommodity = (idx: number) => {
-    updateDb(prev => {
+  const handleDeleteCommodity = async (idx: number) => {
+    await updateDb(prev => {
       const copy = [...prev.commodities];
       copy.splice(idx, 1);
       return { ...prev, commodities: copy };
@@ -1003,16 +821,16 @@ export const TimetableParserView: React.FC = () => {
     showToast('Deleted commodity');
   };
 
-  const handleAddStore = () => {
-    updateDb(prev => ({
+  const handleAddStore = async () => {
+    await updateDb(prev => ({
       ...prev,
       storeMap: { ...prev.storeMap, ['NewDest_' + Math.floor(Math.random() * 900)]: 'New Store' }
     }));
     showToast('Added store mapping');
   };
 
-  const handleUpdateStore = (oldKey: string, newKey: string, val: string) => {
-    updateDb(prev => {
+  const handleUpdateStore = async (oldKey: string, newKey: string, val: string) => {
+    await updateDb(prev => {
       const copy = { ...prev.storeMap };
       if (oldKey !== newKey) {
         delete copy[oldKey];
@@ -1022,9 +840,9 @@ export const TimetableParserView: React.FC = () => {
     });
   };
 
-  const handleDeleteStore = (key: string) => {
+  const handleDeleteStore = async (key: string) => {
     if (!confirm('Delete this store mapping?')) return;
-    updateDb(prev => {
+    await updateDb(prev => {
       const copy = { ...prev.storeMap };
       delete copy[key];
       return { ...prev, storeMap: copy };
@@ -1381,10 +1199,10 @@ export const TimetableParserView: React.FC = () => {
                     allSavedDates.map(dt => (
                       <button
                         key={dt}
-                        onClick={() => {
+                        onClick={async () => {
                           setCurrentDate(dt);
                           setPage('schedule');
-                          updateDb(prev => ({
+                          await updateDb(prev => ({
                             ...prev,
                             uiPrefs: { ...prev.uiPrefs, lastDate: dt }
                           }));
@@ -1789,10 +1607,10 @@ export const TimetableParserView: React.FC = () => {
                 <input
                   type="date"
                   value={currentDate}
-                  onChange={e => {
+                  onChange={async e => {
                     if (e.target.value) {
                       setCurrentDate(e.target.value);
-                      updateDb(prev => ({
+                      await updateDb(prev => ({
                         ...prev,
                         uiPrefs: { ...prev.uiPrefs, lastDate: e.target.value }
                       }));
@@ -1847,10 +1665,10 @@ export const TimetableParserView: React.FC = () => {
                 </button>
 
                 <button
-                  onClick={() => {
+                  onClick={async () => {
                     const next = !enableSort;
                     setEnableSort(next);
-                    updateDb(prev => ({
+                    await updateDb(prev => ({
                       ...prev,
                       uiPrefs: { ...prev.uiPrefs, enableSort: next }
                     }));
@@ -1866,10 +1684,10 @@ export const TimetableParserView: React.FC = () => {
                 </button>
 
                 <button
-                  onClick={() => {
+                  onClick={async () => {
                     const next = !showPriority;
                     setShowPriority(next);
-                    updateDb(prev => ({
+                    await updateDb(prev => ({
                       ...prev,
                       uiPrefs: { ...prev.uiPrefs, showPriority: next }
                     }));

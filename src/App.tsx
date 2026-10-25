@@ -2,6 +2,7 @@ import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { ThemeProvider } from './context/ThemeContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { LmsProvider } from './context/LmsContext';
+import { SyncStatus } from './components/SyncStatus';
 import { Navbar } from './components/Navbar';
 const OverviewView = lazy(() => import('./components/OverviewView').then(module => ({ default: module.OverviewView })));
 const TimetableParserView = lazy(() => import('./components/TimetableParserView').then(module => ({ default: module.TimetableParserView })));
@@ -75,6 +76,7 @@ const MainAppContent: React.FC = () => {
         onOpenLogin={() => setIsLoginModalOpen(true)}
       />
 
+      <SyncStatus />
       {/* Main Body */}
       <main className="flex-1 w-full min-w-0 max-w-none mx-auto px-[clamp(0.75rem,2vw,2rem)] py-6">
         {/* If user is browsing in guest mode, show notice that self-registration is locked and account login is required for modifications */}

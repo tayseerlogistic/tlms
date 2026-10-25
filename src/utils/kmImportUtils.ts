@@ -126,6 +126,7 @@ export function parseMonthlyKmUpload(
             veh: plate,
             odometer: null,
             km: kmVal,
+            source: 'import-distance',
             notes: `Imported daily KM (${item.date.slice(0, 7)})`
           });
         }
@@ -133,23 +134,24 @@ export function parseMonthlyKmUpload(
       }
 
       // Backward-compatible fallback for summary-style rows with no daily columns.
-      const rawKm = row['Total KM/M'] ?? row['Total KM'] ?? row.totalKm ?? row.km ?? row.KM ?? row.distance;
+      const rawKm = row['Total KM/M'] ?? row['Total KM'] ?? row.totalKm ?? row.distanceKm ?? row.km ?? row.KM ?? row.distance;
       const kmText = String(rawKm ?? '').replace(/,/g, '').trim();
       const kmVal = Number(kmText);
-      if (!Number.isFinite(kmVal) || kmVal < 0) { skippedRows++; continue; }
+      if (!kmText || !Number.isFinite(kmVal) || kmVal < 0) { skippedRows++; continue; }
       const rowMonth = monthKeyToISO(row.month ?? row.Month ?? row.period ?? row.Period, fallbackYear);
       const rawDate = String(row.date ?? row.Date ?? '').trim();
       const parsedDate = /^(\d{4}-\d{2}-\d{2})(?:[ T].*)?$/.exec(rawDate)?.[1] ?? '';
       if (parsedDate && !isValidISODate(parsedDate)) { skippedRows++; continue; }
       const date = parsedDate && isValidISODate(parsedDate) ? parsedDate : `${rowMonth || group.month}-15`;
-      const rawOdometerText = String(row.odometer ?? row.Odometer ?? '').replace(/,/g, '').trim();
+      const rawOdometerText = String(row.odometerKm ?? row.odometer ?? row.Odometer ?? '').replace(/,/g, '').trim();
       const rawOdometer = rawOdometerText ? Number(rawOdometerText) : Number.NaN;
       records.push({
         date,
         veh: plate,
         // A monthly distance summary is not an odometer measurement.
-        odometer: Number.isFinite(rawOdometer) && rawOdometer > 0 ? rawOdometer : null,
+        odometer: Number.isFinite(rawOdometer) && rawOdometer >= 0 ? rawOdometer : null,
         km: kmVal,
+        source: parsedDate ? 'import-distance' : 'legacy-monthly-summary',
         notes: `Uploaded monthly KM summary (${rowMonth || group.month})`
       });
     }

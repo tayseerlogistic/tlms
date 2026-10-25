@@ -3,7 +3,8 @@ import { useLms } from '../context/LmsContext';
 import { useAuth } from '../context/AuthContext';
 import { ksaDateISO, shiftISODate } from '../utils/dateUtils';
 import { latestRecordedKmMonth, parseMonthlyKmUpload } from '../utils/kmImportUtils';
-import { KSA_DIESEL_PRICE, COMPANY_KM_PER_LITER_QUOTA } from '../data/seedData';
+import { KSA_DIESEL_PRICE, COMPANY_KM_PER_LITER_QUOTA } from '../utils/fleetPolicy';
+import { fleetMetrics, monthlyKmTotal, distanceKm, normalizePlate } from '../utils/fleetAnalytics';
 import { KmRecord, DieselLog, Truck, Driver } from '../types';
 import * as XLSX from 'xlsx';
 import { jsPDF } from 'jspdf';
@@ -49,10 +50,10 @@ Chart.register(
 
 export const KmFuelView: React.FC = () => {
   const {
-    trucks, drivers, kmRecords, dieselLogs, cashTransactions,
-    addKmRecord, batchSaveKmRecords, deleteKmRecord, addDieselLog,
+    trucks, historicalTrucks, drivers, kmRecords, dieselLogs, cashTransactions,
+    updateDailyKm, updateOdometer, addKmRecord, batchSaveKmRecords, deleteKmRecord, addDieselLog,
     saveTruck, deleteTruck, saveDriver, deleteDriver,
-    restoreFullBackup, exportFullBackup
+    restoreFullBackup, exportFullBackup, selectedKmMonth, setSelectedKmMonth
   } = useLms();
 
   const { isAdmin, isDispatcher, isCashier, user } = useAuth();
@@ -77,7 +78,8 @@ export const KmFuelView: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'entry' | 'monthly-matrix' | 'reconciliation' | 'history'>('dashboard');
 
   // Filter states
-  const [selectedMonth, setSelectedMonth] = useState<string>(() => initialStoredMonth('tlms.km.selectedMonth'));
+  const selectedMonth = selectedKmMonth;
+  const setSelectedMonth = setSelectedKmMonth;
   const [viewMode, setViewMode] = useState<'split' | 'all'>('split');
   const [searchAgg, setSearchAgg] = useState('');
   const [searchRecon, setSearchRecon] = useState('');
@@ -96,45 +98,12 @@ export const KmFuelView: React.FC = () => {
   const [feedbackToast, setFeedbackToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
 
   // Month & Specific Date Manager / Matrix state
-  const [matrixMonth, setMatrixMonth] = useState<string>(() => initialStoredMonth('tlms.km.matrixMonth'));
+  const matrixMonth = selectedKmMonth === 'All' ? latestRecordedKmMonth(kmRecords) || localISODate().slice(0,7) : selectedKmMonth;
+  const setMatrixMonth = setSelectedKmMonth;
   const [matrixSpecificDate, setMatrixSpecificDate] = useState<string>(() => localISODate());
   const [matrixViewMode, setMatrixViewMode] = useState<'month-grid' | 'single-date'>('month-grid');
   const [matrixSearch, setMatrixSearch] = useState<string>('');
   const [matrixCellDrafts, setMatrixCellDrafts] = useState<Record<string, string>>({}); // "plateNorm__date" -> daily KM draft
-
-  // Persist UI preferences and move empty period selections to the latest month with records.
-  // This effect runs when data changes, not whenever a user selects a month, so users may
-  // intentionally inspect an empty period without the UI immediately switching away.
-  useEffect(() => {
-    try {
-      localStorage.setItem('tlms.km.selectedMonth', selectedMonth);
-    } catch (error) {
-      console.warn('Could not save KM timeframe preference:', error);
-    }
-  }, [selectedMonth]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('tlms.km.matrixMonth', matrixMonth);
-    } catch (error) {
-      console.warn('Could not save KM matrix month preference:', error);
-    }
-  }, [matrixMonth]);
-
-  useEffect(() => {
-    const latestMonth = latestRecordedKmMonth(kmRecords);
-    if (!latestMonth) return;
-
-    const monthHasRecords = (month: string) =>
-      kmRecords.some(record => String(record.date || '').startsWith(`${month}-`));
-
-    if (selectedMonth !== 'All' && !monthHasRecords(selectedMonth)) {
-      setSelectedMonth(latestMonth);
-    }
-    if (!monthHasRecords(matrixMonth)) {
-      setMatrixMonth(latestMonth);
-    }
-  }, [kmRecords]);
 
   // Tracker filter
   const [trackerFilter, setTrackerFilter] = useState<'remaining' | 'completed' | 'all'>('remaining');
@@ -199,13 +168,11 @@ export const KmFuelView: React.FC = () => {
   // -------------------------------------------------------------
   const resolvePlate = (query: string): string => {
     if (!query) return '';
-    const q = query.trim().toUpperCase().replace(/\s+/g, '');
+    const q = normalizePlate(query);
     const exact = trucks.find(t => t.plateNorm === q);
     if (exact) return exact.plate;
-    const suffix = trucks.find(t => t.plateNorm.endsWith(q));
-    if (suffix) return suffix.plate;
-    const sub = trucks.find(t => t.plateNorm.includes(q));
-    if (sub) return sub.plate;
+    const partial = trucks.filter(t => t.plateNorm.includes(q));
+    if(partial.length === 1) return partial[0].plate;
     return query.trim().toUpperCase();
   };
 
@@ -311,39 +278,18 @@ export const KmFuelView: React.FC = () => {
 
   // Confirm and Save entire fleet readings for selected readingDate
   const handleConfirmAndSaveDailyFleet = async () => {
-    const recordsToSave: (Omit<KmRecord, 'id'> | KmRecord)[] = [];
-    let totalSavedKm = 0;
-    let loggedCount = 0;
-
-    trucks.forEach(t => {
-      const rawInput = dailyDraftOdo[t.plateNorm];
-      const existingRec = kmRecords.find(
-        r => r.veh.toUpperCase().replace(/\s+/g, '') === t.plateNorm && r.date === readingDate
-      );
-
-      const odoValStr = rawInput !== undefined ? rawInput : (existingRec?.odometer != null ? String(existingRec.odometer) : '');
-      const prevInfo = getVehiclePreviousReading(t.plateNorm, readingDate);
-      const { kmRun } = calculateOdoKmRun(odoValStr, prevInfo?.odometer);
-      const odoNum = odoValStr.trim() !== '' && !isNaN(parseFloat(odoValStr)) ? parseFloat(odoValStr) : null;
-
-      if (odoNum !== null && odoNum > 0) {
-        loggedCount++;
-        totalSavedKm += kmRun;
+    try {
+      const drafts = trucks.filter(t=>dailyDraftOdo[t.plateNorm] !== undefined);
+      for (const t of drafts) {
+        const raw=dailyDraftOdo[t.plateNorm].trim();
+        const value=raw==='' ? null : Number(raw);
+        if(value!==null && (!Number.isFinite(value) || value<0)) throw new Error(`Invalid odometer for ${t.plate}`);
+        await updateOdometer(t.id,readingDate,value);
       }
+      setDailyDraftOdo({});
+      showToast(`Saved ${drafts.length} meter readings. Daily KM values were preserved.`, 'success');
+    } catch(error) { showToast(String(error),'error'); }
 
-      recordsToSave.push({
-        id: existingRec?.id || ('KM-' + Date.now().toString(36) + '-' + Math.random().toString(36).substring(2, 6)),
-        date: readingDate,
-        veh: t.plate,
-        odometer: odoNum,
-        km: kmRun,
-        driver: t.assignedDriverName || 'Driver',
-        notes: odoNum ? `Fleet Meter Entry (Prev: ${prevInfo?.odometer || 0} KM on ${prevInfo?.date || 'baseline'})` : '0 KM Run (Idle)'
-      });
-    });
-
-    await batchSaveKmRecords(recordsToSave);
-    showToast(`✓ Confirmed and saved KM Fleet for all ${trucks.length} trucks on ${readingDate}! Total Day Run: ${totalSavedKm.toLocaleString()} KM (${loggedCount} active readings). Data updated in Dashboard.`, 'success');
   };
 
   // -------------------------------------------------------------
@@ -383,28 +329,9 @@ export const KmFuelView: React.FC = () => {
       return;
     }
 
-    const currentDistance = nextLog ? parseFloat((nextLog.odometer! - odo).toFixed(1)) : 0;
-    const truck = trucks.find(t => t.plateNorm === norm);
-
-    await addKmRecord({
-      date: readingDate,
-      veh: resolved,
-      odometer: odo,
-      km: currentDistance,
-      driver: truck?.assignedDriverName || 'Driver',
-      notes: 'Logged via Fast Meter Logger'
-    });
-
-    // Update previous day's distance
-    if (prevLog) {
-      const prevComputed = parseFloat((odo - prevLog.odometer!).toFixed(1));
-      if (prevComputed >= 0) {
-        await addKmRecord({
-          ...prevLog,
-          km: prevComputed
-        });
-      }
-    }
+    const truck = trucks.find(t=>t.plateNorm===norm);
+    if(!truck) { showToast('Select a saved truck.','error'); return; }
+    await updateOdometer(truck.id,readingDate,odo);
 
     setPlateInput('');
     setOdometerInput('');
@@ -482,18 +409,7 @@ TLS Fleet Management`;
     if (!confirm(`Mark ${missing.length} missing trucks as Idle (0 KM) for ${readingDate}?`)) return;
 
     for (const t of missing) {
-      const past = kmRecords
-        .filter(r => r.veh.toUpperCase().replace(/\s+/g, '') === t.plateNorm && r.date < readingDate && r.odometer != null)
-        .sort((a, b) => a.date.localeCompare(b.date));
-      const prevLog = past.length ? past[past.length - 1] : null;
-
-      await addKmRecord({
-        date: readingDate,
-        veh: t.plate,
-        odometer: prevLog ? prevLog.odometer : null,
-        km: 0,
-        notes: 'Marked Idle / 0 KM'
-      });
+      await updateDailyKm(t.id,readingDate,0);
     }
     alert(`Marked ${missing.length} trucks as Idle for ${readingDate}`);
   };
@@ -503,7 +419,7 @@ TLS Fleet Management`;
   const getOdometerDistanceUpdates = (month?: string): KmRecord[] => {
     const byVehicle: Record<string, KmRecord[]> = {};
     kmRecords.forEach(record => {
-      if (!record.veh || record.odometer == null || !Number.isFinite(Number(record.odometer)) || !record.date) return;
+      if (record.source !== 'meter' || !record.veh || record.odometer == null || !Number.isFinite(Number(record.odometer)) || !record.date) return;
       const norm = record.veh.toUpperCase().replace(/\s+/g, '');
       if (!byVehicle[norm]) byVehicle[norm] = [];
       byVehicle[norm].push(record);
@@ -519,7 +435,7 @@ TLS Fleet Management`;
           const targetKm = previousOdometer !== null && currentOdometer >= previousOdometer
             ? Number((currentOdometer - previousOdometer).toFixed(1))
             : 0;
-          if (Number(record.km || 0) !== targetKm) updates.push({ ...record, km: targetKm });
+          if (Number(record.km || 0) !== targetKm) updates.push({ ...record, km: targetKm, distanceKm: targetKm });
         }
         previousOdometer = currentOdometer;
       });
@@ -567,14 +483,13 @@ TLS Fleet Management`;
   const highLimit = isAllMonth ? 60000 : 5000;
 
   const vehDistanceMap: Record<string, number> = {};
-  trucks.forEach(t => { vehDistanceMap[t.plate] = 0; });
+  historicalTrucks.forEach(t => { vehDistanceMap[t.plate] = 0; });
 
   kmRecords.forEach(r => {
     if (selectedMonth !== 'All' && r.date && !r.date.startsWith(selectedMonth)) return;
-    if (r.km > 35000 || r.km < 0) return;
     const match = trucks.find(t => t.plateNorm === r.veh.toUpperCase().replace(/\s+/g, ''));
     const key = match ? match.plate : r.veh;
-    vehDistanceMap[key] = (vehDistanceMap[key] || 0) + (r.km || 0);
+    vehDistanceMap[key] = (vehDistanceMap[key] || 0) + distanceKm(r);
   });
 
   const aggList = Object.entries(vehDistanceMap).map(([veh, km]) => ({ veh, km }));
@@ -762,13 +677,13 @@ TLS Fleet Management`;
       return;
     }
     if (!user) {
-      alert('KM import was not started. Sign in with your Firebase account first. Guest/demo mode stores data only in this browser and does not save it to the shared database.');
+      alert('KM import was not started. Sign in with your Firebase account first. Production imports require an authenticated Firebase session.');
       return;
     }
     try {
       const fallbackMonth = uploadMonthSelect !== 'auto' ? uploadMonthSelect : localISODate().slice(0, 7);
-      const parsed = parseMonthlyKmUpload(uploadJsonText, fallbackMonth, resolvePlate, Number(localISODate().slice(0, 4)));
-      await batchSaveKmRecords(parsed.records);
+      const parsed = parseMonthlyKmUpload(uploadJsonText, fallbackMonth, plate => plate.trim(), Number(localISODate().slice(0, 4)));
+      const result = await batchSaveKmRecords(parsed.records);
       const monthLabel = parsed.months.map(month => {
         const [year, monthNumber] = month.split('-').map(Number);
         return new Intl.DateTimeFormat('en', { month: 'short', year: 'numeric', timeZone: 'UTC' }).format(new Date(Date.UTC(year, monthNumber - 1, 1)));
@@ -783,7 +698,7 @@ TLS Fleet Management`;
         setActiveTab('monthly-matrix');
       }
       const skippedNote = parsed.skippedRows ? ` ${parsed.skippedRows} invalid row(s) or daily reading(s) were skipped.` : '';
-      alert(`Successfully imported ${parsed.records.length} KM readings across ${parsed.months.length} month(s): ${monthLabel}. The latest imported month is now selected in the daily KM matrix.${skippedNote}`);
+      alert(`${result.persistedRecordCount} of ${result.expectedRecordCount} KM records saved to Firestore across ${parsed.months.length} month(s): ${monthLabel}. The latest imported month is now selected in the daily KM matrix.${skippedNote}`);
       setIsUploadModalOpen(false);
       setUploadJsonText('');
     } catch (error) {
@@ -851,18 +766,14 @@ TLS Fleet Management`;
   // -------------------------------------------------------------
   // RECONCILIATION DATA
   // -------------------------------------------------------------
-  const reconData = trucks.map((t, idx) => {
-    const truckKm = kmRecords
-      .filter(r => r.veh.toUpperCase().replace(/\s+/g, '') === t.plateNorm)
-      .reduce((a, b) => a + (b.km || 0), 0);
-
-    const truckLiters = dieselLogs
-      .filter(d => d.veh.toUpperCase().replace(/\s+/g, '') === t.plateNorm)
-      .reduce((a, b) => a + (b.liters || 0), 0);
+  const reconData = historicalTrucks.map((t, idx) => {
+    const metrics = fleetMetrics(kmRecords,dieselLogs,selectedMonth,t.id);
+    const truckKm = metrics.km;
+    const truckLiters = metrics.liters;
 
     const allowedLiters = parseFloat((truckKm / COMPANY_KM_PER_LITER_QUOTA).toFixed(2));
     const actualEconomy = truckLiters > 0 ? parseFloat((truckKm / truckLiters).toFixed(2)) : 0;
-    const fuelCost = parseFloat((truckLiters * KSA_DIESEL_PRICE).toFixed(2));
+    const fuelCost = metrics.cost;
     const varianceLiters = parseFloat((truckLiters - allowedLiters).toFixed(2));
     const varianceSAR = parseFloat((varianceLiters * KSA_DIESEL_PRICE).toFixed(2));
 
@@ -1249,28 +1160,20 @@ TLS Fleet Management`;
 
                 <button
                   onClick={() => {
-                    const exportRows = trucks.map((t, i) => {
-                      const tLogs = kmRecords
-                        .filter(r => r.veh.toUpperCase().replace(/\s+/g, '') === t.plateNorm)
-                        .filter(r => isAllMonth || (r.date && r.date.startsWith(selectedMonth)))
-                        .sort((a, b) => a.date.localeCompare(b.date));
-                      const tDiesel = dieselLogs
-                        .filter(d => d.veh.toUpperCase().replace(/\s+/g, '') === t.plateNorm)
-                        .filter(d => isAllMonth || (d.date && d.date.startsWith(selectedMonth)));
-                      const km = tLogs.reduce((acc, r) => acc + (r.km || 0), 0);
-                      const liters = tDiesel.reduce((acc, d) => acc + (d.liters || 0), 0);
-                      const odoLogs = tLogs.filter(r => r.odometer != null && !isNaN(r.odometer));
+                    const exportRows = historicalTrucks.map((t, i) => {
+                      const metrics = fleetMetrics(kmRecords, dieselLogs, selectedMonth, t.id);
+                      const {km,liters} = metrics;
                       return {
                         'SL#': i + 1,
                         'Plate': t.plate,
                         'Description': t.description || 'Fleet Truck',
                         'Assigned Driver': t.assignedDriverName || 'Unassigned',
-                        'Opening Odo': odoLogs.length > 0 ? odoLogs[0].odometer : '—',
-                        'Closing Odo': odoLogs.length > 0 ? odoLogs[odoLogs.length - 1].odometer : '—',
+                        'Opening Odo': metrics.opening ?? 'No odometer reading',
+                        'Closing Odo': metrics.closing ?? 'No odometer reading',
                         'Net Distance (KM)': km,
                         'Fuel Liters': liters,
                         'KM / Liter': liters > 0 && km > 0 ? (km / liters).toFixed(2) : '—',
-                        'Fuel Cost (SAR)': (liters * KSA_DIESEL_PRICE).toFixed(2),
+                        'Fuel Cost (SAR)': metrics.cost.toFixed(2),
                         'Recommended Action': km < lowLimit ? 'Assign Long Haul' : km > highLimit ? 'Rest Vehicle' : 'Standard'
                       };
                     });
@@ -1307,31 +1210,21 @@ TLS Fleet Management`;
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800">
-                  {trucks
+                  {historicalTrucks
                     .map((t, index) => {
-                      const tLogs = kmRecords
-                        .filter(r => r.veh.toUpperCase().replace(/\s+/g, '') === t.plateNorm)
-                        .filter(r => isAllMonth || (r.date && r.date.startsWith(selectedMonth)))
-                        .sort((a, b) => a.date.localeCompare(b.date));
-
-                      const tDiesel = dieselLogs
-                        .filter(d => d.veh.toUpperCase().replace(/\s+/g, '') === t.plateNorm)
-                        .filter(d => isAllMonth || (d.date && d.date.startsWith(selectedMonth)));
-
-                      const netKm = tLogs.reduce((acc, r) => acc + (r.km || 0), 0);
-                      const totalLiters = tDiesel.reduce((acc, d) => acc + (d.liters || 0), 0);
-                      const actualEconomy = totalLiters > 0 && netKm > 0 ? parseFloat((netKm / totalLiters).toFixed(2)) : 0;
-                      const fuelCost = parseFloat((totalLiters * KSA_DIESEL_PRICE).toFixed(2));
-
-                      const odoLogs = tLogs.filter(r => r.odometer != null && !isNaN(r.odometer));
-                      const openingOdo = odoLogs.length > 0 ? odoLogs[0].odometer : null;
-                      const closingOdo = odoLogs.length > 0 ? odoLogs[odoLogs.length - 1].odometer : null;
+                      const metrics = fleetMetrics(kmRecords, dieselLogs, selectedMonth, t.id);
+                      const netKm = metrics.km;
+                      const totalLiters = metrics.liters;
+                      const actualEconomy = metrics.kmPerLiter ?? 0;
+                      const fuelCost = metrics.cost;
+                      const openingOdo = metrics.opening;
+                      const closingOdo = metrics.closing;
 
                       // PM Interval calculation (every 15,000 km)
-                      const currentOdo = closingOdo || (openingOdo || 100000);
-                      const kmSinceService = currentOdo % 15000;
-                      const kmToNextService = 15000 - kmSinceService;
-                      const serviceDue = kmToNextService < 1500;
+                      const currentOdo = closingOdo ?? openingOdo;
+                      const kmSinceService = currentOdo == null ? null : currentOdo % 15000;
+                      const kmToNextService = kmSinceService == null ? null : 15000 - kmSinceService;
+                      const serviceDue = kmToNextService != null && kmToNextService < 1500;
 
                       const isLow = netKm < lowLimit;
                       const isHigh = netKm > highLimit;
@@ -1409,14 +1302,14 @@ TLS Fleet Management`;
 
                           {/* Opening Odo */}
                           <td className="p-3 text-right font-mono text-slate-400">
-                            {openingOdo != null ? openingOdo.toLocaleString() : '—'}
+                            {openingOdo != null ? openingOdo.toLocaleString() : 'No odometer reading'}
                           </td>
 
                           {/* Closing Odo */}
                           <td className="p-3 text-right">
                             <div className="flex items-center justify-end gap-1.5">
                               <span className="font-mono font-bold text-white">
-                                {closingOdo != null ? closingOdo.toLocaleString() : '—'}
+                                {closingOdo != null ? closingOdo.toLocaleString() : 'No odometer reading'}
                               </span>
                               <button
                                 onClick={() => {
@@ -1481,7 +1374,7 @@ TLS Fleet Management`;
                                 ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40 animate-pulse'
                                 : 'bg-slate-900 text-slate-300 border border-slate-700'
                             }`}>
-                              {serviceDue ? '⚠️ PM Due Soon' : `OK (${kmToNextService.toLocaleString()} km)`}
+                              {kmToNextService == null ? 'No odometer reading' : serviceDue ? '⚠️ PM Due Soon' : `OK (${kmToNextService.toLocaleString()} km)`}
                             </span>
                           </td>
 
@@ -1935,7 +1828,7 @@ TLS Fleet Management`;
                       .filter(t => !trackerSearch || t.plate.toLowerCase().includes(trackerSearch.toLowerCase()) || (t.assignedDriverName || '').toLowerCase().includes(trackerSearch.toLowerCase()))
                       .map((t, idx) => {
                         const existingRec = kmRecords.find(
-                          r => r.veh.toUpperCase().replace(/\s+/g, '') === t.plateNorm && r.date === readingDate
+                          r => r.truckId === t.id && r.date === readingDate
                         );
                         const prevInfo = getVehiclePreviousReading(t.plateNorm, readingDate);
 
@@ -2254,7 +2147,7 @@ TLS Fleet Management`;
                     <tr>
                       <th className="p-2.5 sticky left-0 z-30 bg-slate-900 w-36 border-r border-slate-700">Vehicle</th>
                       <th className="p-2.5 w-24 text-center font-bold text-sky-400 bg-slate-900 border-r border-slate-700">Total Run</th>
-                      {Array.from({ length: 31 }, (_, i) => i + 1).map(day => {
+                      {Array.from({ length: new Date(Number(matrixMonth.slice(0,4)), Number(matrixMonth.slice(5,7)), 0).getDate() }, (_, i) => i + 1).map(day => {
                         const dayStr = day < 10 ? `0${day}` : `${day}`;
                         return (
                           <th key={day} className="p-2 text-center min-w-[50px] border-r border-slate-800">
@@ -2265,11 +2158,11 @@ TLS Fleet Management`;
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800 bg-slate-900/60 font-mono">
-                    {trucks
+                    {historicalTrucks
                       .filter(t => !matrixSearch || t.plate.toLowerCase().includes(matrixSearch.toLowerCase()))
                       .map(t => {
-                        const monthRecs = kmRecords.filter(r => r.veh.toUpperCase().replace(/\s+/g, '') === t.plateNorm && r.date.startsWith(matrixMonth));
-                        const totalTruckMonthKm = monthRecs.reduce((a, b) => a + (b.km || 0), 0);
+                        const monthRecs = kmRecords.filter(r => r.truckId === t.id && r.date.startsWith(matrixMonth));
+                        const totalTruckMonthKm = monthlyKmTotal(monthRecs);
 
                         return (
                           <tr key={t.id} className="hover:bg-slate-800/80 transition">
@@ -2279,11 +2172,11 @@ TLS Fleet Management`;
                             <td className="p-2 text-center font-bold text-emerald-400 bg-slate-900/90 border-r border-slate-700">
                               {totalTruckMonthKm.toLocaleString()} KM
                             </td>
-                            {Array.from({ length: 31 }, (_, i) => i + 1).map(day => {
+                            {Array.from({ length: new Date(Number(matrixMonth.slice(0,4)), Number(matrixMonth.slice(5,7)), 0).getDate() }, (_, i) => i + 1).map(day => {
                               const dayStr = day < 10 ? `0${day}` : `${day}`;
                               const dateKey = `${matrixMonth}-${dayStr}`;
                               const rec = kmRecords.find(
-                                r => r.veh.toUpperCase().replace(/\s+/g, '') === t.plateNorm && r.date === dateKey
+                                r => r.truckId === t.id && r.date === dateKey
                               );
 
                               return (
@@ -2308,14 +2201,7 @@ TLS Fleet Management`;
                                     }
 
                                     try {
-                                      await addKmRecord({
-                                        date: dateKey,
-                                        veh: t.plate,
-                                        odometer: rec?.odometer ?? null,
-                                        km: dailyKm,
-                                        driver: rec?.driver || t.assignedDriverName || 'Driver',
-                                        notes: 'Edited daily KM via Fleet Matrix'
-                                      });
+                                      await updateDailyKm(t.id,dateKey,dailyKm);
                                       showToast(`Updated daily distance for ${t.plate} on ${dateKey}: ${dailyKm.toLocaleString()} KM.`, 'success');
                                     } catch (error) {
                                       showToast(error instanceof Error ? error.message : 'Could not save this KM value.', 'error');
@@ -2372,7 +2258,7 @@ TLS Fleet Management`;
                   <tbody className="divide-y divide-slate-800 bg-slate-900/60 font-mono">
                     {trucks.map((t, idx) => {
                       const rec = kmRecords.find(
-                        r => r.veh.toUpperCase().replace(/\s+/g, '') === t.plateNorm && r.date === matrixSpecificDate
+                        r => r.truckId === t.id && r.date === matrixSpecificDate
                       );
                       const prev = getVehiclePreviousReading(t.plateNorm, matrixSpecificDate);
 
@@ -2382,7 +2268,7 @@ TLS Fleet Management`;
                           <td className="p-3 font-bold text-white">{t.plate}</td>
                           <td className="p-3 font-sans text-slate-300">{t.assignedDriverName || 'Driver'}</td>
                           <td className="p-3 text-sky-400 font-bold">
-                            {rec?.odometer ? `${rec.odometer.toLocaleString()} KM` : <span className="text-slate-500 italic">Empty (0 KM)</span>}
+                            {rec?.odometer != null ? `${rec.odometer.toLocaleString()} KM` : <span className="text-slate-500 italic">No odometer reading</span>}
                           </td>
                           <td className="p-3">
                             <span className={`inline-block px-2.5 py-0.5 rounded-lg text-xs font-bold ${
@@ -2393,20 +2279,14 @@ TLS Fleet Management`;
                           </td>
                           <td className="p-3 text-center">
                             <button
-                              onClick={() => {
+                              onClick={async () => {
                                 const newOdoStr = prompt(`Change Odometer Reading for ${t.plate} on ${matrixSpecificDate}:`, rec?.odometer ? String(rec.odometer) : '');
                                 if (newOdoStr !== null) {
                                   const newOdo = parseFloat(newOdoStr);
                                   const { kmRun } = calculateOdoKmRun(newOdoStr, prev?.odometer);
-                                  addKmRecord({
-                                    date: matrixSpecificDate,
-                                    veh: t.plate,
-                                    odometer: !isNaN(newOdo) && newOdo > 0 ? newOdo : null,
-                                    km: kmRun,
-                                    driver: t.assignedDriverName || 'Driver',
-                                    notes: 'Edited via Specific Date Editor'
-                                  });
-                                  showToast(`Saved ${t.plate} on ${matrixSpecificDate}: ${kmRun} KM Run.`);
+                                  if(!Number.isFinite(newOdo) || newOdo<0) {showToast('Enter a valid non-negative odometer.','error');return;}
+                                  await updateOdometer(t.id,matrixSpecificDate,newOdo);
+                                  showToast(`Saved odometer for ${t.plate} on ${matrixSpecificDate}. Daily KM preserved.`);
                                 }
                               }}
                               className="text-blue-400 hover:text-white bg-blue-900/40 hover:bg-blue-800 border border-blue-700 px-3 py-1 rounded-lg text-xs font-bold transition"
@@ -2906,16 +2786,9 @@ TLS Fleet Management`;
                   ? parseFloat((odo - prevLog.odometer!).toFixed(1))
                   : 0;
 
-                await addKmRecord({
-                  date: meterDate,
-                  veh: meterTruck.plate,
-                  odometer: odo,
-                  km: netKmCalculated,
-                  driver: meterTruck.assignedDriverName || 'Driver',
-                  notes: 'Quick Meter Log Entry'
-                });
+                await updateOdometer(meterTruck.id,meterDate,odo);
 
-                alert(`Successfully logged ${odo.toLocaleString()} KM for ${meterTruck.plate}! (Net Run: +${netKmCalculated.toLocaleString()} KM)`);
+                alert(`Successfully logged ${odo.toLocaleString()} KM for ${meterTruck.plate}! (daily KM preserved)`);
                 setIsQuickMeterModalOpen(false);
               }}
               className="space-y-3"

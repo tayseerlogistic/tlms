@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { useLms } from '../context/LmsContext';
 import { useAuth } from '../context/AuthContext';
 import { ksaDateISO, shiftISODate, shiftISOMonth } from '../utils/dateUtils';
+import { monthlyKmTotal, fleetMetrics } from '../utils/fleetAnalytics';
 import { transactionCashImpact } from '../utils/cashbookUtils';
 import {
   Truck, Users, Fuel, DollarSign, AlertCircle, ArrowUpRight,
@@ -47,7 +48,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
   const observedDieselPrice = observedFuelLiters > 0 ? observedFuelCost / observedFuelLiters : null;
   
   // Total fleet distance
-  const totalKm = kmRecords.reduce((acc, r) => acc + (r.km || 0), 0);
+  const totalKm = monthlyKmTotal(kmRecords);
   
   // Cash balance
   let cashInflow = 0;
@@ -72,12 +73,8 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigate }) => {
     }> = [];
 
     const buildPoint = (periodKey: string, label: string, monthly: boolean) => {
-      const distance = kmRecords
-        .filter(record => monthly ? record.date?.startsWith(periodKey) : record.date === periodKey)
-        .reduce((sum, record) => sum + Math.max(0, Number(record.km) || 0), 0);
-      const fuel = dieselLogs.filter(record => monthly ? record.date?.startsWith(periodKey) : record.date === periodKey);
-      const liters = fuel.reduce((sum, record) => sum + Math.max(0, Number(record.liters) || 0), 0);
-      const cost = fuel.reduce((sum, record) => sum + Math.max(0, Number(record.cost) || 0), 0);
+      const metrics = fleetMetrics(kmRecords,dieselLogs,periodKey);
+      const distance=metrics.km, liters=metrics.liters, cost=metrics.cost;
       const hasData = distance > 0 && liters > 0;
       const efficiency = hasData ? Number((distance / liters).toFixed(2)) : 0;
       return {

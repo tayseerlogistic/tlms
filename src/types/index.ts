@@ -16,6 +16,13 @@ export interface UserProfile {
 }
 
 export interface Truck {
+  createdAt?: string;
+  updatedAt?: string;
+  archived?: boolean;
+  equipmentNo?: string;
+  isThirdParty?: boolean;
+  normalizedPlate?: string;
+
   id: string;
   seq: number;
   plate: string;
@@ -45,6 +52,10 @@ export interface Equipment {
 }
 
 export interface Driver {
+  createdAt?: string;
+  updatedAt?: string;
+  archivedAt?: string | null;
+
   id: string;
   seq: number;
   name: string;
@@ -86,6 +97,11 @@ export interface StoreMapItem {
 }
 
 export interface TimetableRow {
+  createdAt?: string;
+  updatedAt?: string;
+  truckId?: string | null;
+  driverId?: string | null;
+
   id: string;
   driverName: string;
   iqama: string;
@@ -140,6 +156,11 @@ export interface LearnedRule {
 }
 
 export interface CashTransaction {
+  updatedAt?: string;
+  truckId?: string | null;
+  driverId?: string | null;
+  accountId?: string;
+
   id: string;
   date: string;
   dateISO: string;
@@ -165,6 +186,16 @@ export interface CashAccount {
 }
 
 export interface KmRecord {
+  createdAt?: string;
+  updatedAt?: string;
+  truckId?: string | null;
+  driverId?: string | null;
+  distanceKm?: number;
+  odometerKm?: number | null;
+  source?: string;
+  importBatchId?: string;
+  createdBy?: string;
+
   id: string;
   date: string;
   veh: string;
@@ -176,6 +207,11 @@ export interface KmRecord {
 }
 
 export interface DieselLog {
+  createdAt?: string;
+  updatedAt?: string;
+  truckId?: string | null;
+  driverId?: string | null;
+
   id: string;
   date: string;
   veh: string;

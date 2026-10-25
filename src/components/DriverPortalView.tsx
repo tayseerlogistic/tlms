@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 
 export const DriverPortalView: React.FC = () => {
-  const { drivers, trucks, equipment, manifests, schedules, cashTransactions, saveDailyManifest, addKmRecord } = useLms();
+  const { drivers, trucks, equipment, manifests, schedules, cashTransactions, saveDailyManifest, updateOdometer } = useLms();
   const { user, profile, isAdmin, selectedDriverId, setSelectedDriverId } = useAuth();
 
   // Find current driver profile
@@ -21,6 +21,10 @@ export const DriverPortalView: React.FC = () => {
         (selectedDriverId && driver.id === selectedDriverId) ||
         (user?.email && driver.name.toLowerCase().includes(user.email.split('@')[0].toLowerCase()))
       ) || activeDrivers[0];
+
+  // Meter reading state
+  const [odoInput, setOdoInput] = useState('');
+  const [isSubmittingOdo, setIsSubmittingOdo] = useState(false);
 
   if (!currentDriver) {
     return (
@@ -34,15 +38,12 @@ export const DriverPortalView: React.FC = () => {
 
   const today = ksaDateISO();
   const driverIdx = drivers.findIndex(d => d.id === currentDriver.id);
-  const currentTag = manifests[today]?.[currentDriver.id] || manifests[today]?.[String(driverIdx)] || 'No manifest status recorded for today';
+  const currentTag = manifests[today]?.[currentDriver.id] || 'No manifest status recorded for today';
 
   // Find assigned truck
   const assignedTruck = trucks.find(t => t.assignedDriverId === currentDriver.id || t.plate === currentDriver.assignedVehiclePlate);
   const assignedEquip = equipment.find(e => e.assignedTruckId === assignedTruck?.id);
 
-  // Meter reading state
-  const [odoInput, setOdoInput] = useState('');
-  const [isSubmittingOdo, setIsSubmittingOdo] = useState(false);
 
   // Cash advance total for this driver
   let advanceBalance = 0;
@@ -69,14 +70,7 @@ export const DriverPortalView: React.FC = () => {
 
     setIsSubmittingOdo(true);
     try {
-      await addKmRecord({
-        date: today,
-        veh: assignedTruck.plate,
-        odometer: val,
-        km: 0,
-        driver: currentDriver.name,
-        notes: 'Submitted via Driver Mobile Portal'
-      });
+      await updateOdometer(assignedTruck.id, today, val);
       alert(`Odometer reading ${val.toLocaleString()} KM submitted successfully!`);
       setOdoInput('');
     } catch (error) {
