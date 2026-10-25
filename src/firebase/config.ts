@@ -3,19 +3,15 @@ import { getAuth, GoogleAuthProvider } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 
 export const firebaseConfig = {
-  projectId: "sonic-hawk-hsmzh",
-  appId: "1:688070692162:web:212e958cfdb08eda274cdb",
-  apiKey: "AIzaSyBK1DdmN6P2iM1INPU7WPYbs7d10oiv6hY",
-  authDomain: "sonic-hawk-hsmzh.firebaseapp.com",
-  firestoreDatabaseId: "ai-studio-8c81ea2f-4e0c-45e3-8fb8-22dded5a07f9",
-  storageBucket: "sonic-hawk-hsmzh.firebasestorage.app",
-  messagingSenderId: "688070692162",
-  measurementId: "",
-  oAuthClientId: "688070692162-7jngbts1c7sm17olp2obmcus52pqun82.apps.googleusercontent.com",
-  recaptchaSiteKey: ""
+  projectId: 'tayseer-tlms-1792924020',
+  appId: '1:467784655941:web:fc11ead7315c408e93ef2c',
+  apiKey: 'AIzaSyBHAVsVVZwPEuZEszKA7WI5BaUm5z5SR3o',
+  authDomain: 'tayseer-tlms-1792924020.firebaseapp.com',
+  storageBucket: 'tayseer-tlms-1792924020.firebasestorage.app',
+  messagingSenderId: '467784655941',
 };
 
 export const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+export const db = getFirestore(app);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();

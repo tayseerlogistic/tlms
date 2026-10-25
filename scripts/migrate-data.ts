@@ -4,8 +4,8 @@ import { getFirestore } from "firebase-admin/firestore";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { buildMigrationPlan } from "../src/utils/dataMigration";
-const projectId = "sonic-hawk-hsmzh";
-const databaseId = "ai-studio-8c81ea2f-4e0c-45e3-8fb8-22dded5a07f9";
+const projectId = "tayseer-tlms-1792924020";
+const databaseId = "(default)";
 const app = initializeApp({ projectId, credential: applicationDefault() });
 const db = getFirestore(app, databaseId);
 const names = [

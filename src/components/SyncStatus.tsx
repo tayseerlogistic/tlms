@@ -29,7 +29,7 @@ export function SyncStatus() {
     >
       <strong>{messages[syncStatus]}</strong>
       {['commodities', 'stores', 'data_quality', 'app_state'].some(name => /permission|insufficient/i.test(errorStates[name] || '')) && (
-        <p className="text-amber-300 mt-1">Publish this version’s firestore.rules to project sonic-hawk-hsmzh, database ai-studio-8c81ea2f-4e0c-45e3-8fb8-22dded5a07f9. Deploying the website does not publish Firestore rules.</p>
+        <p className="text-amber-300 mt-1">Publish this version’s firestore.rules to project tayseer-tlms-1792924020, database (default). Deploying the website does not publish Firestore rules.</p>
       )}
       {Object.entries(errorStates).map(([name, message]) => (
         <p key={name} className="text-rose-300 mt-1">
