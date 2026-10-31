@@ -50,7 +50,7 @@ export function parseHeaderDate(colHeader: string, defaultYearMonth: string = '2
   }
 
   // 3. "Thursday, 1" or "Sunday, 4" or "Day, DD"
-  const mDayName = h.match(/(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)?,?\s*(\d{1,2})\b/i);
+  const mDayName = h.match(/^(?:(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),?\s*)?(\d{1,2})$/i);
   if (mDayName) {
     const dayNum = parseInt(mDayName[1], 10);
     if (dayNum >= 1 && dayNum <= 31) {
@@ -64,11 +64,12 @@ export function parseHeaderDate(colHeader: string, defaultYearMonth: string = '2
     jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
     jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12'
   };
-  const mMonthName = h.match(/(\d{1,2})\s*([A-Za-z]{3,9})(?:\s*(\d{4}))?/i);
+  const mMonthName = h.match(/^(\d{1,2})\s*([A-Za-z]{3,9})(?:\s*(\d{4}))?$/i);
   if (mMonthName) {
     const day = mMonthName[1].padStart(2, '0');
     const monKey = mMonthName[2].slice(0, 3).toLowerCase();
-    const month = MONTHS[monKey] || '10';
+    const month = MONTHS[monKey];
+    if (!month) return null;
     const year = mMonthName[3] || defaultYearMonth.split('-')[0] || '2026';
     return `${year}-${month}-${day}`;
   }
@@ -99,22 +100,18 @@ export function parseMultiDayManifest(
     if (!line) continue;
     const cells = lines[i].split('\t').map(c => c.trim());
 
-    // Look for header indicators
-    const lineNorm = norm(line);
-    if (
-      lineNorm.includes('IQAMA') ||
-      lineNorm.includes('EMPLOYEE NO') ||
-      lineNorm.includes('DRIVER NAME') ||
-      lineNorm.includes('THURSDAY') ||
-      lineNorm.includes('FRIDAY')
-    ) {
+    // Require actual tab-separated identity headers; UI instructions can mention
+    // both driver fields and weekdays without being spreadsheet data.
+    if (cells.length > 1 && cells.some(cell =>
+      /^(?:NAME|DRIVER NAME|IQAMA(?:\s*#)?|EMPLOYEE NO\.?|EMP NO\.?)$/.test(norm(cell))
+    )) {
       headerIndex = i;
 
       cells.forEach((cell, idx) => {
         const cn = norm(cell);
         if (cn.includes('IQAMA')) iqamaColIdx = idx;
         else if (cn.includes('EMPLOYEE') || cn.includes('EMP NO') || cn.includes('EMP.')) empColIdx = idx;
-        else if (cn.includes('DRIVER NAME') || (idx === 0 && !cn.includes('IQAMA') && !cn.includes('EMPLOYEE'))) nameColIdx = idx;
+        else if (cn === 'NAME' || cn.includes('DRIVER NAME')) nameColIdx = idx;
         else if (cn.includes('PLATE')) plateColIdx = idx;
 
         // Check if column is a date
