@@ -1,3 +1,4 @@
+import { normalizeDispatchParties } from './dispatchManifest';
 // =====================================================================
 // Timetable Dispatch Engine & Data Services (v4)
 // =====================================================================
@@ -318,7 +319,7 @@ export function parseMailOrder(
     }
   }
 
-  return { date: scheduleDate || todayISO(), rows };
+  return { date: scheduleDate || todayISO(), rows: rows.map(normalizeDispatchParties) };
 }
 
 // ---------------------------------------------------------------------
@@ -350,7 +351,7 @@ export function schedulePriority(r: Partial<TimetableRow>): number {
   const customer = String(r.customer || '');
 
   // 2) TRONOX + Caustic Soda
-  if (/tronox/i.test(customer) && matchComm(commodity, ['Caustic Soda', 'CS'])) return 2;
+  if (/tronox/i.test(partyBlob) && matchComm(commodity, ['Caustic Soda', 'CS'])) return 2;
 
   // 3) Internal transfer
   const src = String(r.source || '').toLowerCase().trim();
@@ -645,6 +646,6 @@ export function parseReadySchedule(
 
   return {
     date: scheduleDate || todayISO(),
-    rows
+    rows: rows.map(normalizeDispatchParties)
   };
 }

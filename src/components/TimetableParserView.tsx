@@ -54,6 +54,7 @@ export const TimetableParserView: React.FC = () => {
     uiPrefs
   };
 
+  const [showManagement, setShowManagement] = useState(false);
   // App navigation state
   const [page, setPage] = useState<'new' | 'schedule' | 'drivers' | 'vehicles' | 'settings'>('new');
   const [view, setView] = useState<'list' | 'daily'>('list');
@@ -161,10 +162,11 @@ export const TimetableParserView: React.FC = () => {
   // VISIBLE COLUMNS MANAGEMENT (Independent per view!)
   // -------------------------------------------------------------------
   const visibleColumns = useMemo(() => {
-    // The dispatch schedule is an operational record: keep all requested columns visible
-    // in both list and daily views, regardless of older saved column preferences.
-    return COLUMNS.map(c => c.key);
-  }, []);
+    const saved = view === 'daily' ? uiPrefs.visibleColumnsDaily : uiPrefs.visibleColumnsList;
+    if (saved) return COLUMNS.filter(column => saved.includes(column.key)).map(column => column.key);
+    const essentials = ['driverName', 'plateNo', 'source', 'destination', 'customer', 'supplier', 'commodity', 'waybill', 'notes'];
+    return COLUMNS.filter(column => essentials.includes(column.key)).map(column => column.key);
+  }, [view, uiPrefs.visibleColumnsDaily, uiPrefs.visibleColumnsList]);
 
   const toggleColumn = async (key: keyof TimetableRow) => {
     const prefKey = view === 'daily' ? 'visibleColumnsDaily' : 'visibleColumnsList';
@@ -1165,7 +1167,7 @@ export const TimetableParserView: React.FC = () => {
           </div>
 
           {/* Navigation tabs */}
-          <nav className="flex items-center gap-1">
+          <nav className="flex flex-wrap items-center gap-1">
             <button
               onClick={() => setPage('new')}
               className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 ${
@@ -1174,7 +1176,7 @@ export const TimetableParserView: React.FC = () => {
                   : 'text-slate-400 hover:text-white hover:bg-slate-800'
               }`}
             >
-              <Plus className="w-3.5 h-3.5" /> New
+              <Plus className="w-3.5 h-3.5" /> Create / Import
             </button>
 
             {/* Open ▾ Dropdown */}
@@ -1187,7 +1189,7 @@ export const TimetableParserView: React.FC = () => {
                     : 'text-slate-400 hover:text-white hover:bg-slate-800'
                 }`}
               >
-                <span>Open ▾</span>
+                <span>Saved schedules ▾</span>
               </button>
 
               {isOpenDropdownOpen && (
@@ -1227,6 +1229,9 @@ export const TimetableParserView: React.FC = () => {
               )}
             </div>
 
+            <button onClick={() => { setCurrentDate(todayISO()); setPage('schedule'); }} className="px-3 py-1.5 rounded-xl text-xs font-bold text-blue-300 border border-slate-700">Today</button>
+            <button aria-expanded={showManagement} onClick={() => setShowManagement(!showManagement)} className="px-3 py-1.5 rounded-xl text-xs text-slate-300">Manage ▾</button>
+            {showManagement && <>
             <button
               onClick={() => setPage('drivers')}
               className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 ${
@@ -1259,6 +1264,7 @@ export const TimetableParserView: React.FC = () => {
             >
               <Settings className="w-3.5 h-3.5" /> Settings
             </button>
+            </>}
           </nav>
         </div>
 
@@ -1272,6 +1278,10 @@ export const TimetableParserView: React.FC = () => {
         )}
       </div>
 
+      <div className="rounded-xl border border-slate-700 bg-slate-900 p-3 text-sm text-slate-200">
+        <strong>Schedule workflow:</strong> Import or create trips → check date, driver, route and supplier/customer → save → review the Daily Manifest.
+        <p className="mt-1 text-xs text-slate-400">Keep a separate row for every trip, even when the same driver travels twice. Driver and vehicle management is under Manage.</p>
+      </div>
       {/* =============================================================
           PAGE 1: NEW (OPTION 1: MAIL ORDER & OPTION 2: READY TEMPLATE)
           ============================================================= */}
@@ -1760,8 +1770,7 @@ export const TimetableParserView: React.FC = () => {
                         <input
                           type="checkbox"
                           checked={visibleColumns.includes(c.key)}
-                          disabled
-                          aria-label={`${c.label} is a required schedule column`}
+                          aria-label={`Show ${c.label}`}
                           onChange={() => toggleColumn(c.key)}
                           className="rounded text-blue-600 focus:ring-0"
                         />

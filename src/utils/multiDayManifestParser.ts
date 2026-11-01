@@ -50,7 +50,7 @@ export function parseHeaderDate(colHeader: string, defaultYearMonth: string = '2
   }
 
   // 3. "Thursday, 1" or "Sunday, 4" or "Day, DD"
-  const mDayName = h.match(/(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)?,?\s*(\d{1,2})\b/i);
+  const mDayName = h.match(/^(?:(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),?\s*)?(\d{1,2})$/i);
   if (mDayName) {
     const dayNum = parseInt(mDayName[1], 10);
     if (dayNum >= 1 && dayNum <= 31) {
@@ -64,11 +64,12 @@ export function parseHeaderDate(colHeader: string, defaultYearMonth: string = '2
     jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
     jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12'
   };
-  const mMonthName = h.match(/(\d{1,2})\s*([A-Za-z]{3,9})(?:\s*(\d{4}))?/i);
+  const mMonthName = h.match(/^(\d{1,2})\s*([A-Za-z]{3,9})(?:\s*(\d{4}))?$/i);
   if (mMonthName) {
     const day = mMonthName[1].padStart(2, '0');
     const monKey = mMonthName[2].slice(0, 3).toLowerCase();
-    const month = MONTHS[monKey] || '10';
+    const month = MONTHS[monKey];
+    if (!month) return null;
     const year = mMonthName[3] || defaultYearMonth.split('-')[0] || '2026';
     return `${year}-${month}-${day}`;
   }
@@ -99,22 +100,18 @@ export function parseMultiDayManifest(
     if (!line) continue;
     const cells = lines[i].split('\t').map(c => c.trim());
 
-    // Look for header indicators
-    const lineNorm = norm(line);
-    if (
-      lineNorm.includes('IQAMA') ||
-      lineNorm.includes('EMPLOYEE NO') ||
-      lineNorm.includes('DRIVER NAME') ||
-      lineNorm.includes('THURSDAY') ||
-      lineNorm.includes('FRIDAY')
-    ) {
+    // Require actual tab-separated identity headers; UI instructions can mention
+    // both driver fields and weekdays without being spreadsheet data.
+    if (cells.length > 1 && cells.some(cell =>
+      /^(?:NAME|DRIVER NAME|IQAMA(?:\s*#)?|EMPLOYEE NO\.?|EMP NO\.?)$/.test(norm(cell))
+    )) {
       headerIndex = i;
 
       cells.forEach((cell, idx) => {
         const cn = norm(cell);
         if (cn.includes('IQAMA')) iqamaColIdx = idx;
         else if (cn.includes('EMPLOYEE') || cn.includes('EMP NO') || cn.includes('EMP.')) empColIdx = idx;
-        else if (cn.includes('DRIVER NAME') || (idx === 0 && !cn.includes('IQAMA') && !cn.includes('EMPLOYEE'))) nameColIdx = idx;
+        else if (cn === 'NAME' || cn.includes('DRIVER NAME')) nameColIdx = idx;
         else if (cn.includes('PLATE')) plateColIdx = idx;
 
         // Check if column is a date
@@ -168,37 +165,25 @@ export function parseMultiDayManifest(
     const rawEmp = empColIdx >= 0 ? cells[empColIdx] : '';
     const rawPlate = plateColIdx >= 0 ? cells[plateColIdx] : '';
 
-    // Find driver match in master list
-    let matchedDriverIndex = -1;
-
-    // 1. Match by clean Iqama # (highest fidelity)
+    // Match unique stable identity fields. Never assign an old driver's history
+    // to the current holder of the same truck, or accept partial-name matches.
+    const unique = (predicate: (driver: Driver) => boolean) => {
+      const matches = driversList.map((driver, index) => predicate(driver) ? index : -1).filter(index => index >= 0);
+      return matches.length === 1 ? matches[0] : -1;
+    };
     const cleanIq = cleanNum(rawIqama);
+    const iqMatch = cleanIq.length >= 7 ? unique(d => cleanNum(d.iqama) === cleanIq) : -1;
+    const empMatch = rawEmp ? unique(d => norm(d.empNo) === norm(rawEmp)) : -1;
+    let matchedDriverIndex = -1;
     if (cleanIq.length >= 7) {
-      matchedDriverIndex = driversList.findIndex(d => cleanNum(d.iqama) === cleanIq);
-    }
-
-    // 2. Match by Employee No (e.g. L-EMP0024)
-    if (matchedDriverIndex < 0 && rawEmp) {
-      const cleanEmp = norm(rawEmp);
-      matchedDriverIndex = driversList.findIndex(d => norm(d.empNo) === cleanEmp);
-    }
-
-    // 3. Match by Driver Name
-    if (matchedDriverIndex < 0 && rawName) {
-      const nName = norm(rawName);
-      matchedDriverIndex = driversList.findIndex(d => {
-        const dNorm = norm(d.name);
-        return dNorm === nName || dNorm.includes(nName) || nName.includes(dNorm);
-      });
-    }
-
-    // 4. Match by Vehicle Plate
-    if (matchedDriverIndex < 0 && rawPlate) {
-      const pNorm = norm(rawPlate).replace(/\s+/g, '');
-      matchedDriverIndex = driversList.findIndex(d => {
-        const dpNorm = norm(d.assignedVehiclePlate || '').replace(/\s+/g, '');
-        return dpNorm && dpNorm === pNorm;
-      });
+      if (iqMatch >= 0 && (!rawEmp || empMatch === iqMatch)) matchedDriverIndex = iqMatch;
+    } else if (rawEmp) {
+      matchedDriverIndex = empMatch;
+    } else if (rawName) {
+      matchedDriverIndex = unique(d => Boolean(norm(d.name)) && norm(d.name) === norm(rawName));
+    } else if (rawPlate) {
+      matchedDriverIndex = unique(d => Boolean(d.assignedVehiclePlate) &&
+        norm(d.assignedVehiclePlate || '').replace(/\s/g, '') === norm(rawPlate).replace(/\s/g, ''));
     }
 
     if (matchedDriverIndex < 0) {

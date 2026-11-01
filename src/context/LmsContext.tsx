@@ -1,3 +1,4 @@
+import { normalizeDispatchParties, scheduleManifestTags } from '../utils/dispatchManifest';
 import React, {
   createContext,
   useContext,
@@ -571,15 +572,9 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({
           throw new Error(
             `Unmatched driver: ${row.driverName}. Add it to Master Data first.`,
           );
-        return { ...row, driverId: d?.id || null, truckId: t?.id || null };
+        return normalizeDispatchParties({ ...row, driverId: d?.id || null, truckId: t?.id || null });
       });
-      const tags: Record<string, string> = {};
-      if (syncToManifest)
-        linked.forEach((r) => {
-          if (r.driverId)
-            tags[r.driverId] =
-              `${r.commodity || ""} Supply for ${r.customer || r.supplier || r.store || "Customer"} - Under Loading at ${r.source || "Yanbu"}`.trim();
-        });
+      const tags = syncToManifest ? scheduleManifestTags(linked) : {};
       const writes: Write[] = [
         {
           collection: "schedules",

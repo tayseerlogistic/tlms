@@ -1,3 +1,5 @@
+import { parseManifestWorkbook } from '../utils/manifestWorkbook';
+import { scheduleRowsForDriver } from '../utils/dispatchManifest';
 import React, { useState, useEffect, useMemo } from 'react';
 import { useLms } from '../context/LmsContext';
 import { useAuth } from '../context/AuthContext';
@@ -54,9 +56,10 @@ export const DailyManifestView: React.FC = () => {
 
   // Multi-day manifest direct paste state
   const [multiPasteText, setMultiPasteText] = useState('');
-  const [multiPasteMonth, setMultiPasteMonth] = useState('2026-10');
+  const [multiPasteMonth, setMultiPasteMonth] = useState(() => localTodayISO().slice(0, 7));
   const [parsedMultiResult, setParsedMultiResult] = useState<MultiDayParseResult | null>(null);
   const [isSyncingMulti, setIsSyncingMulti] = useState(false);
+  const previewDates = parsedMultiResult?.detectedDates.filter(date => date.startsWith(multiPasteMonth)) || [];
 
   // Schedule paste state for historical learning
   const [learningPasteText, setLearningPasteText] = useState('');
@@ -147,7 +150,7 @@ export const DailyManifestView: React.FC = () => {
     const updated: Record<string, string> = {};
     operationalDrivers.forEach(driver => {
       const idx = drivers.findIndex(item => item.id === driver.id);
-      updated[driver.id] = predictManifestTag(idx, selectedDate).text;
+      updated[driver.id] = predictManifestTag(idx, selectedDate, true).text;
     });
     setLocalTags(updated);
     showToast('Generated heuristic suggestions for ' + operationalDrivers.length + ' drivers on ' + selectedDate + '. Review suggestions before confirming the manifest.', 'info');
@@ -184,11 +187,11 @@ export const DailyManifestView: React.FC = () => {
   // -------------------------------------------------------------
   // TRAINED MANIFEST PREDICTION ENGINE
   // -------------------------------------------------------------
-  const predictManifestTag = (driverIdx: number, date: string): ManifestSuggestion => {
+  const predictManifestTag = (driverIdx: number, date: string, regenerate = false): ManifestSuggestion => {
     const d = drivers[driverIdx];
     if (!d) return { text: 'At Yanbu', conf: 'low', reason: 'Driver record not found' };
 
-    const confirmed = manifests[date]?.[d.id] || manifests[date]?.[String(driverIdx)];
+    const confirmed = regenerate ? undefined : manifests[date]?.[d.id];
     const prev = getPreviousTag(driverIdx, date);
     const daySchedule = schedules[date]?.rows || [];
 
@@ -228,7 +231,17 @@ export const DailyManifestView: React.FC = () => {
     setIsSyncingMulti(true);
     try {
       await saveMultiDayManifests(parsedMultiResult.manifestByDate);
-      const retrain = trainManifestAiModel(drivers, schedules, manifests, learnedRules);
+      const mergedManifests = { ...manifests };
+      Object.entries(parsedMultiResult.manifestByDate).forEach(([date, tags]) => {
+        mergedManifests[date] = { ...(manifests[date] || {}), ...tags };
+      });
+      const trainingDrivers = drivers.map(driver => ({
+        ...driver,
+        history: Object.fromEntries(Object.entries(mergedManifests)
+          .filter(([, tags]) => tags[driver.id] !== undefined)
+          .map(([date, tags]) => [date, tags[driver.id]]))
+      }));
+      const retrain = trainManifestAiModel(trainingDrivers, schedules, mergedManifests, learnedRules);
       await learnHistoricalRules(retrain.rules);
       setModelStats(retrain.stats);
       showToast(
@@ -491,7 +504,7 @@ export const DailyManifestView: React.FC = () => {
             onClick={handleConfirmAndSave}
             className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-4 py-2 rounded-xl shadow-lg flex items-center gap-1.5 transition cursor-pointer"
           >
-            <Check className="w-4 h-4" /> Confirm & Save Today
+            <Check className="w-4 h-4" /> Confirm & Save Selected Date
           </button>
         </div>
       </div>
@@ -535,6 +548,12 @@ export const DailyManifestView: React.FC = () => {
         </div>
       )}
 
+      <div className="rounded-xl border border-slate-700 bg-slate-900 p-3 text-sm text-slate-200">
+        <strong>Daily workflow:</strong> 1. Select the date. 2. Review every driver's trips and suggested status. 3. Edit if needed, then Confirm &amp; Save.
+        <p className="mt-1 text-xs text-slate-400">Schedule entries are plans. Confirm actual loading, travel and offloading before saving. All trips for each driver are included.</p>
+      </div>
+      <details className="rounded-xl border border-slate-700">
+        <summary className="cursor-pointer p-3 text-sm font-semibold">Suggestion tools &amp; learning details</summary>
       {/* AI Training & Accuracy Center Banner */}
       <div className="bg-gradient-to-r from-slate-900 via-slate-800/95 to-slate-900 border border-slate-700 rounded-2xl p-5 shadow-2xl space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -544,7 +563,7 @@ export const DailyManifestView: React.FC = () => {
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="text-base font-extrabold text-white">AI Manifest Prediction &amp; Training Engine</h3>
+                <h3 className="text-base font-extrabold text-white">Manifest suggestions &amp; historical patterns</h3>
                 <span className="bg-slate-700/70 text-slate-300 border border-slate-600 text-[10px] font-mono font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
                   <Sparkles className="w-3 h-3 text-slate-400" /> Accuracy not measured
                 </span>
@@ -561,14 +580,14 @@ export const DailyManifestView: React.FC = () => {
               disabled={isRetraining}
               className="bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-bold text-xs px-3.5 py-2 rounded-xl shadow-md transition flex items-center gap-1.5"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${isRetraining ? 'animate-spin' : ''}`} /> ⚡ Retrain AI Model Now
+              <RefreshCw className={`w-3.5 h-3.5 ${isRetraining ? 'animate-spin' : ''}`} /> Refresh historical patterns
             </button>
             <button
               onClick={handleAutoPredictAll}
               className="bg-gradient-to-r from-sky-600 to-blue-600 hover:from-sky-500 hover:to-blue-500 text-white font-bold text-xs px-4 py-2 rounded-xl shadow-md transition flex items-center gap-1.5 cursor-pointer"
               title={`Apply heuristic suggestions to all ${operationalDrivers.length} drivers for ${selectedDate}`}
             >
-              <Sparkles className="w-3.5 h-3.5 text-sky-200" /> 🔮 Auto-Predict All {operationalDrivers.length} Drivers for {selectedDate}
+              <Sparkles className="w-3.5 h-3.5 text-sky-200" /> Suggest statuses for {operationalDrivers.length} Drivers for {selectedDate}
             </button>
           </div>
         </div>
@@ -576,8 +595,8 @@ export const DailyManifestView: React.FC = () => {
         {/* 4 Training Metric Badges */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1 border-t border-slate-700/80">
           <div className="bg-slate-950/70 p-3 rounded-xl border border-slate-800">
-            <span className="text-[10px] font-mono uppercase text-slate-400">INGESTED DISPATCHES</span>
-            <div className="text-base font-black text-white font-mono mt-0.5">{modelStats.totalTripsIngested} Trips</div>
+            <span className="text-[10px] font-mono uppercase text-slate-400">HISTORICAL STATUSES</span>
+            <div className="text-base font-black text-white font-mono mt-0.5">{modelStats.totalTripsIngested} Statuses</div>
             <div className="text-[10px] text-slate-500">Available historical records</div>
           </div>
 
@@ -602,6 +621,8 @@ export const DailyManifestView: React.FC = () => {
           </div>
         </div>
       </div>
+
+      </details>
 
       {/* 1-Day Rental / Temporary Drivers Exclusion Notice */}
       {temporaryRentScheduleDrivers.length > 0 && (
@@ -636,7 +657,7 @@ export const DailyManifestView: React.FC = () => {
           <div className="flex items-center gap-2.5">
             <Zap className="w-4 h-4 text-sky-400 shrink-0" />
             <span className="text-slate-200">
-              <strong className="text-sky-300 font-mono">⚡ Auto-Fetched from Timetable Dispatch:</strong> Loaded <strong className="text-white font-mono">{autoSyncedCount} scheduled trip(s)</strong> for {selectedDate}. Driver manifests auto-predicted!
+              <strong className="text-sky-300 font-mono">⚡ Auto-Fetched from Timetable Dispatch:</strong> Loaded <strong className="text-white font-mono">{autoSyncedCount} scheduled trip(s)</strong> for {selectedDate}. Draft suggestions ready for review.
             </span>
           </div>
           <button
@@ -645,7 +666,7 @@ export const DailyManifestView: React.FC = () => {
               const updated: Record<string, string> = {};
               operationalDrivers.forEach(driver => {
                 const idx = drivers.findIndex(item => item.id === driver.id);
-                updated[driver.id] = predictManifestTag(idx, selectedDate).text;
+                updated[driver.id] = predictManifestTag(idx, selectedDate, true).text;
               });
               setLocalTags(updated);
               showToast("Re-synchronized manifest predictions with latest timetable schedule!", 'info');
@@ -680,7 +701,7 @@ export const DailyManifestView: React.FC = () => {
               : 'border-transparent text-sky-400/90 hover:text-white hover:bg-slate-800/40'
           }`}
         >
-          <FileSpreadsheet className="w-4 h-4 text-sky-400" /> 📋 Paste Multi-Day Manifest / Sync
+          <FileSpreadsheet className="w-4 h-4 text-sky-400" /> Import previous manifests
         </button>
         <button
           onClick={() => setSubTab('history')}
@@ -688,7 +709,7 @@ export const DailyManifestView: React.FC = () => {
             subTab === 'history' ? 'border-emerald-500 text-white' : 'border-transparent text-slate-400 hover:text-slate-200'
           }`}
         >
-          <Clock className="w-4 h-4" /> Driver Timeline History
+          <Clock className="w-4 h-4" /> Driver history
         </button>
         <button
           onClick={() => setSubTab('learning')}
@@ -696,7 +717,7 @@ export const DailyManifestView: React.FC = () => {
             subTab === 'learning' ? 'border-purple-500 text-white' : 'border-transparent text-slate-400 hover:text-slate-200'
           }`}
         >
-          <Brain className="w-4 h-4 text-purple-400" /> 🧠 Historical Learning ({learnedRules.length} Rules)
+          <Brain className="w-4 h-4 text-purple-400" /> Learning ({learnedRules.length} Rules)
         </button>
         <button
           onClick={() => setSubTab('bulk')}
@@ -783,17 +804,8 @@ export const DailyManifestView: React.FC = () => {
                     const pred = predictManifestTag(idx, selectedDate);
                     const currentVal = localTags[d.id] !== undefined ? localTags[d.id] : (getDriverTag(todayTags, d.id, idx) || pred.text);
 
-                    const matchedRow = currentSchedule.find(r => {
-                      const rn = norm(r.driverName);
-                      const dn = norm(d.name);
-                      const nameMatch = rn && dn && (rn === dn || rn.includes(dn) || dn.includes(rn));
-                      const plateMatch = Boolean(
-                        d.assignedVehiclePlate &&
-                        r.plateNo &&
-                        norm(r.plateNo).replace(/\s+/g, '') === norm(d.assignedVehiclePlate).replace(/\s+/g, '')
-                      );
-                      return nameMatch || plateMatch;
-                    });
+                    const matchedTrips = scheduleRowsForDriver(d, currentSchedule);
+                    const matchedRow = matchedTrips[0];
 
                     return {
                       driver: d,
@@ -801,7 +813,7 @@ export const DailyManifestView: React.FC = () => {
                       prev,
                       pred,
                       currentVal,
-                      matchedRow
+                      matchedRow, matchedTrips
                     };
                   })
                   .filter(({ driver, currentVal, matchedRow, pred }) => {
@@ -821,7 +833,7 @@ export const DailyManifestView: React.FC = () => {
 
                     return true;
                   })
-                  .map(({ driver: d, idx, prev, pred, currentVal, matchedRow }) => {
+                  .map(({ driver: d, idx, prev, pred, currentVal, matchedRow, matchedTrips }) => {
                     const differsFromPred = currentVal !== pred.text;
 
                     return (
@@ -833,13 +845,15 @@ export const DailyManifestView: React.FC = () => {
                         </td>
                         <td className="p-3 text-slate-300">
                           {matchedRow ? (
-                            <div className="text-[11px] font-mono bg-blue-950/40 p-2 rounded-lg border border-blue-900/60">
+                            <div className="space-y-1"><span className="text-xs font-bold">{matchedTrips.length} trip(s)</span>{matchedTrips.map((trip, tripIndex) => (
+                            <div key={trip.id || tripIndex} className="text-[11px] font-mono bg-blue-950/40 p-2 rounded-lg border border-blue-900/60">
                               <strong className="text-white flex items-center gap-1">
-                                <Zap className="w-3 h-3 text-sky-400" /> {matchedRow.customer || matchedRow.supplier}
+                                <Zap className="w-3 h-3 text-sky-400" /> {trip.customer || trip.supplier}
                               </strong>
-                              <div className="text-sky-300">{matchedRow.source} &rarr; {matchedRow.destination}</div>
-                              {matchedRow.waybill && <span className="text-slate-400">WB: {matchedRow.waybill}</span>}
+                              <div className="text-sky-300">{trip.source} &rarr; {trip.destination}</div>
+                              {trip.waybill && <span className="text-slate-400">WB: {trip.waybill}</span>}
                             </div>
+                            ))}</div>
                           ) : (
                             <span className="text-slate-500 italic text-[11px]">No schedule match</span>
                           )}
@@ -927,7 +941,7 @@ export const DailyManifestView: React.FC = () => {
         </div>
       )}
 
-      {/* Sub-Tab 2: Driver Timeline History */}
+      {/* Sub-Tab 2: Driver history */}
       {subTab === 'history' && (
         <div className="bg-slate-800/80 border border-slate-700 rounded-2xl p-6 shadow-xl space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-4">
@@ -1176,10 +1190,29 @@ FC Supply for ZAMIL - Under Loading at Yanbu
                 className="bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs px-3.5 py-2 rounded-xl shadow transition flex items-center gap-1.5"
                 title="Populate with the 59-driver Oct 1–4 manifest provided in prompt"
               >
-                <Layers className="w-3.5 h-3.5" /> 📥 Load Oct 1–4 Provided Sample (59 Drivers)
+                <Layers className="w-3.5 h-3.5" /> Show paste format
               </button>
             </div>
           </div>
+
+          <label className="block rounded-xl border border-slate-700 bg-slate-900 p-3 text-sm text-slate-200">
+            <strong>Upload historical manifest workbook (.xlsx)</strong>
+            <p className="mt-1 mb-2 text-xs text-slate-400">Reads monthly manifest tabs together and skips schedule tabs and future dates. Conflicting cells are omitted and listed for review. Review the preview before syncing. Driver master records are unchanged.</p>
+            <input type="file" accept=".xlsx,.xls" onChange={async event => {
+              const file = event.target.files?.[0];
+              if (!file) return;
+              try {
+                const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array', cellDates: false });
+                const result = parseManifestWorkbook(workbook, drivers);
+                setParsedMultiResult(result);
+                showToast(`Preview: ${result.totalEntriesCount} statuses across ${result.detectedDates.length} dates. Review before syncing.`, 'info');
+              } catch (error) {
+                setParsedMultiResult(null);
+                showToast(error instanceof Error ? error.message : 'Workbook could not be read.', 'error');
+              }
+              event.target.value = '';
+            }} className="block w-full text-xs" />
+          </label>
 
           {/* Column Layout Instructions */}
           <div className="p-3.5 bg-slate-900/90 border border-slate-800 rounded-xl text-xs space-y-1.5">
@@ -1200,7 +1233,7 @@ FC Supply for ZAMIL - Under Loading at Yanbu
               <div className="flex items-center gap-3">
                 <span className="font-semibold text-white">Paste Spreadsheet Rows (TSV / Tab-Separated):</span>
                 <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1">
-                  <span className="text-[10px] uppercase text-slate-400">Target Month:</span>
+                  <span className="text-[10px] uppercase text-slate-400">Paste / preview month:</span>
                   <input
                     type="month"
                     value={multiPasteMonth}
@@ -1264,7 +1297,7 @@ FC Supply for ZAMIL - Under Loading at Yanbu
                     {parsedMultiResult.detectedDates.length} Dates
                   </div>
                   <div className="text-[10px] text-slate-400 mt-1 flex flex-wrap gap-1">
-                    {parsedMultiResult.detectedDates.map(d => (
+                    {previewDates.map(d => (
                       <span key={d} className="bg-sky-950 text-sky-300 border border-sky-800 px-1.5 py-0.2 rounded font-mono text-[9px]">
                         {d.split('-').slice(1).join('/')}
                       </span>
@@ -1311,7 +1344,7 @@ FC Supply for ZAMIL - Under Loading at Yanbu
                     Manifest Sheet Validated &amp; Ready for Synchronization
                   </h4>
                   <p className="text-xs text-sky-200 mt-0.5">
-                    Clicking sync updates manifests for <strong>{parsedMultiResult.detectedDates.join(', ')}</strong>, saves each driver&apos;s history timeline, retrains the progression engine, and immediately generates high-confidence predictions for <strong>{selectedDate}</strong>.
+                    Clicking sync updates manifests for <strong>{parsedMultiResult.detectedDates.length} selected dates</strong>, saves each driver&apos;s history timeline, retrains the progression engine, and immediately generates high-confidence predictions for <strong>{selectedDate}</strong>.
                   </p>
                 </div>
                 <button
@@ -1329,7 +1362,7 @@ FC Supply for ZAMIL - Under Loading at Yanbu
                 <div className="flex items-center justify-between text-xs text-slate-300">
                   <span className="font-bold flex items-center gap-1.5">
                     <ClipboardList className="w-3.5 h-3.5 text-sky-400" />
-                    Parsed Driver Manifest Preview ({parsedMultiResult.entries.length} Drivers)
+                    Preview for {multiPasteMonth} ({parsedMultiResult.entries.length} Drivers)
                   </span>
                   <span className="text-slate-400 font-mono text-[11px]">
                     Scroll horizontally to view all daily status columns
@@ -1344,7 +1377,7 @@ FC Supply for ZAMIL - Under Loading at Yanbu
                         <th className="p-2.5 min-w-[200px]">Driver Details</th>
                         <th className="p-2.5 min-w-[130px]">Plate / Iqama</th>
                         <th className="p-2.5 min-w-[90px]">Emp No</th>
-                        {parsedMultiResult.detectedDates.map(dateKey => {
+                        {previewDates.map(dateKey => {
                           const [y, m, d] = dateKey.split('-');
                           const dayNum = parseInt(d, 10);
                           const dayName = new Date(parseInt(y, 10), parseInt(m, 10) - 1, dayNum).toLocaleDateString('en-US', { weekday: 'short' });
@@ -1380,7 +1413,7 @@ FC Supply for ZAMIL - Under Loading at Yanbu
                             <td className="p-2.5 font-mono text-[11px] text-slate-300">
                               {entry.empNo || '—'}
                             </td>
-                            {parsedMultiResult.detectedDates.map(dateKey => {
+                            {previewDates.map(dateKey => {
                               const tag = entry.tagsByDate[dateKey] || '';
                               if (!tag) {
                                 return (

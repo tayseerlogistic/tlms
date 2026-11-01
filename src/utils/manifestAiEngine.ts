@@ -1,3 +1,4 @@
+import { manifestForTrips, scheduleRowsForDriver } from './dispatchManifest';
 import { Driver, DailySchedule, TimetableRow, LearnedRule, ManifestSuggestion } from '../types';
 
 export interface ModelTrainingStats {
@@ -60,24 +61,16 @@ export function trainManifestAiModel(
       const tripKey = `${drv.id}__${dt}__${tag}`;
       if (!tripKeys.has(tripKey)) { tripKeys.add(tripKey); tripsCount++; }
 
-      // Extract core routing tokens from tag
-      const normTag = normText(tag);
-      let patternKey = 'GENERAL_ROUTING';
-
-      if (normTag.includes('LUBEREF')) patternKey = 'YANBU>YANBU|LUBEREF|SULPHER';
-      else if (normTag.includes('ZAMIL')) patternKey = 'YANBU>JUBAIL|ZAMIL|FC';
-      else if (normTag.includes('TASNEE')) patternKey = 'YANBU>JUBAIL|TASNEE|SA';
-      else if (normTag.includes('BAYARIQ')) patternKey = 'YANBU>YANBU|BAYARIQ|SOP';
-      else if (normTag.includes('TRONOX')) patternKey = 'YANBU>YANBU|TRONOX|SA';
-      else if (normTag.includes('NBC')) patternKey = 'YANBU>RIYADH|NBC|SA';
-      else if (normTag.includes('CISCO')) patternKey = 'YANBU>KUWAIT|CISCO|SA';
-      else if (normTag.includes('DROPS')) patternKey = 'YANBU>KHAFJI|DROPS|HCL';
-      else if (normTag.includes('MWSPC')) patternKey = 'YANBU>TURAIF|MWSPC|SBS';
-      else if (normTag.includes('SWCC')) patternKey = 'YANBU>BAISH|SWCC|PAC';
-      else if (normTag.includes('ARASCO')) patternKey = 'YANBU>DAMMAM|ARASCO|EXTERNAL FLEET';
-      else if (normTag.includes('GOLDEN')) patternKey = 'YANBU>JEDDAH|GOLDEN|EXTERNAL FLEET';
-      else if (normTag.includes('MARAFIQ')) patternKey = 'YANBU>YANBU|MARAFIQ|SMBS';
-      else if (normTag.includes('LEHAA')) patternKey = 'YANBU>WADI AL DAWASSIR|LEHAA|SOP';
+      // Derive commodity/party features from the observed activity, never assume
+      // a customer's commodity or route from its name alone.
+      const features = tag.split(/\s+\/\s+/).map(activity => {
+        const collection = activity.match(/^(.+?)\s+Collection from\s+(.+?)(?:\s+-|$)/i);
+        const supply = activity.match(/^(.+?)\s+Supply for\s+(.+?)(?:\s+-|$)/i);
+        if (collection) return `COLLECTION|${normText(collection[2])}|${normText(collection[1])}`;
+        if (supply) return `SUPPLY|${normText(supply[2])}|${normText(supply[1])}`;
+        return normText(activity) === 'INTERNAL TRANSFER' ? 'INTERNAL_TRANSFER' : 'STATUS';
+      });
+      const patternKey = features.join(' + ');
 
       const ruleKey = `${drv.id}__${tag}`;
       const existing = rulesMap.get(ruleKey);
@@ -115,34 +108,25 @@ export function trainManifestAiModel(
       const isNewObservation = !tripKeys.has(tripKey);
       if (isNewObservation) { tripKeys.add(tripKey); tripsCount++; }
       // Check if driver was dispatched in timetable for this date
-      const matchedRow = schedRows.find(r => {
-        const dNorm = normText(drv.name);
-        const rNorm = normText(r.driverName);
-        const nameMatch = Boolean(dNorm && rNorm && (dNorm.includes(rNorm) || rNorm.includes(dNorm)));
-        const plateMatch = Boolean(r.plateNo && drv.assignedVehiclePlate && normText(r.plateNo).replace(/\s+/g, '') === normText(drv.assignedVehiclePlate).replace(/\s+/g, ''));
-        return nameMatch || plateMatch;
-      });
-
-      if (matchedRow) {
-        const src = normText(matchedRow.source || 'YANBU');
-        const dst = normText(matchedRow.destination || '');
-        const cust = normText(matchedRow.customer || matchedRow.supplier || '');
-        const comm = normText(matchedRow.commodity?.split('/')[0] || '');
-        const key = `${src}>${dst}|${cust}|${comm}`;
+      const matchedRows = scheduleRowsForDriver(drv, schedRows);
+      if (matchedRows.length) {
+        const keys = matchedRows.map(row =>
+          `${normText(row.source)}>${normText(row.destination)}|${normText(row.supplier || row.customer)}|${normText(row.commodity?.split('/')[0] || '')}`
+        );
 
         const ruleKey = `${drv.id}__${tag}`;
         const existing = rulesMap.get(ruleKey);
         if (existing) {
           // A driver's status may exist in both history and the manifest collection.
           if (isNewObservation) existing.hits += 1;
-          if (!existing.keys.includes(key)) existing.keys.push(key);
+          existing.keys = Array.from(new Set([...existing.keys, ...keys]));
           if (dt > existing.lastSeen) existing.lastSeen = dt;
         } else {
           rulesMap.set(ruleKey, {
             driverId: drv.id,
             driverIndex: drvIdx,
             driverName: drv.name,
-            keys: [key],
+            keys,
             result: tag,
             hits: isNewObservation ? 1 : 0,
             lastSeen: dt
@@ -163,7 +147,16 @@ export function trainManifestAiModel(
     observed.keys = Array.from(new Set([...(previous.keys || []), ...(observed.keys || [])]));
   });
 
-  const updatedRules = Array.from(rulesMap.values()).sort((a, b) => b.hits - a.hits);
+  // Learned rules live in one app_state document. Bound the serialized payload
+  // below Firestore's document limit, including long historical descriptions.
+  let bytes = 0;
+  const updatedRules = Array.from(rulesMap.values()).sort((a, b) => b.hits - a.hits)
+    .filter(rule => {
+      const size = new TextEncoder().encode(JSON.stringify(rule)).length + 1;
+      if (bytes + size > 650000) return false;
+      bytes += size;
+      return true;
+    }).slice(0, 500);
 
   globalModelStats = {
     totalTripsIngested: tripsCount,
@@ -210,191 +203,27 @@ export function predictManifestForDriver(
   }
 
   const prevNorm = normText(previousTag);
-  const drvNorm = normText(driver.name);
-  const drvPlateNorm = normText(driver.assignedVehiclePlate || '').replace(/\s+/g, '');
-
-  // 1. AUTO-FETCH FROM TIMETABLE DISPATCH:
-  // Match scheduled row for this driver by Name or Vehicle Plate
-  const matchedScheduleRow = currentScheduleRows.find(r => {
-    const rNameNorm = normText(r.driverName);
-    const rPlateNorm = normText(r.plateNo).replace(/\s+/g, '');
-    const nameMatch = rNameNorm && (drvNorm.includes(rNameNorm) || rNameNorm.includes(drvNorm));
-    const plateMatch = drvPlateNorm && rPlateNorm && (drvPlateNorm === rPlateNorm);
-    return nameMatch || plateMatch;
-  });
-
-  if (matchedScheduleRow) {
-    const src = matchedScheduleRow.source?.trim() || 'Yanbu';
-    const dst = matchedScheduleRow.destination?.trim() || '';
-    const cust = matchedScheduleRow.customer?.trim() || matchedScheduleRow.supplier?.trim() || matchedScheduleRow.store?.trim() || 'Customer';
-    const commRaw = matchedScheduleRow.commodity?.split('/')[0]?.trim() || '';
-    const comm = commRaw.replace(/\s+Granular$/i, '').trim();
-
-    const srcUpper = normText(src);
-    const dstUpper = normText(dst);
-    const custUpper = normText(cust);
-    const commUpper = normText(comm);
-
-    // 1a. Internal transfer detection (TLS <-> TPF)
-    const isInternal = (srcUpper === 'TLS' && dstUpper === 'TPF') || (srcUpper === 'TPF' && dstUpper === 'TLS') || (srcUpper === 'TPF' && dstUpper === 'TPF');
-    if (isInternal) {
-      return {
-        text: 'Internal Transfer',
-        conf: 'high',
-        reason: `⚡ Timetable Dispatch: Internal plant transfer between ${src} and ${dst}.`
-      };
-    }
-
-    // 1b. Luberef Sulphur collection
-    if (custUpper.includes('LUBEREF') || normText(matchedScheduleRow.supplier || '').includes('LUBEREF')) {
-      return {
-        text: 'MOLTEN SULPHER Collection from LUBEREF',
-        conf: 'high',
-        reason: '⚡ Timetable Dispatch: Molten Sulphur collection from Luberef refinery.'
-      };
-    }
-
-    // 1c. Tronox Caustic Soda / CS collection
-    if (custUpper.includes('TRONOX') && (commUpper.includes('CS') || commUpper.includes('CAUSTIC'))) {
-      return {
-        text: 'CS Collection from TRONOX',
-        conf: 'high',
-        reason: '⚡ Timetable Dispatch: Caustic Soda collection from Tronox plant.'
-      };
-    }
-
-    // 1d. Multi-day cycle progression for scheduled driver
-    if (prevNorm.includes('UNDER LOADING') && (prevNorm.includes(custUpper) || prevNorm.includes(dstUpper))) {
-      return {
-        text: `${comm} Supply for ${cust} - On the way to ${dst}`,
-        conf: 'high',
-        reason: `⚡ Cycle Progression: Driver was Under Loading yesterday; today en route to ${dst}.`
-      };
-    }
-
-    if (prevNorm.includes('ON THE WAY') && (prevNorm.includes(custUpper) || prevNorm.includes(dstUpper))) {
-      return {
-        text: `${comm} Supply for ${cust} - Under Offloading at ${dst}`,
-        conf: 'high',
-        reason: `⚡ Cycle Progression: Driver was en route yesterday; today arriving for offloading at ${dst}.`
-      };
-    }
-
-    // 1e. Default timetable dispatch tag
-    const isLocal = srcUpper === dstUpper || dstUpper.includes('YANBU');
-    const defaultTag = isLocal
-      ? `${comm} Supply for ${cust} - Under Loading at ${src}`
-      : `${comm} Supply for ${cust} - Under Loading at ${src}`;
-
+  const matchedRows = scheduleRowsForDriver(driver, currentScheduleRows);
+  if (matchedRows.length) {
     return {
-      text: defaultTag,
-      conf: 'high',
-      reason: `⚡ Auto-Fetched from Timetable: Dispatched ${src} → ${dst} (${comm} for ${cust}).`
+      text: manifestForTrips(matchedRows),
+      conf: 'medium',
+      reason: `Schedule draft: all ${matchedRows.length} trip(s) included. Loading, travel and offloading must be checked by the dispatcher; a schedule is not proof of completion.`
     };
   }
 
-  // 2. CHECK MULTI-DAY TRIP PROGRESSION FROM PREVIOUS DAY
+  // History is evidence of the previous status, not proof of a new trip stage.
+  // The workbook includes trips lasting different numbers of days, so automatic
+  // Loading -> Travel -> Offloading transitions would fabricate completion.
+  if (/UNDER LOADING|ON THE WAY|BORDER|OFFLOADING|COMING BACK|COLLECTION FROM/i.test(previousTag) ||
+      previousTag.includes(' / ')) {
+    return {
+      text: previousTag,
+      conf: 'low',
+      reason: 'Previous recorded activity carried forward. No current dispatch evidence confirms a new stage; review before saving.'
+    };
+  }
   if (prevNorm) {
-    // 2a. Under Loading progression
-    if (prevNorm.includes('UNDER LOADING')) {
-      const destMatch = previousTag.match(/to\s+([A-Za-z\s]+)/i) || previousTag.match(/at\s+([A-Za-z\s]+)/i);
-      const custMatch = previousTag.match(/for\s+([A-Za-z\s]+?)\s*[-]/i);
-      const cust = custMatch ? custMatch[1].trim() : '';
-
-      // Check destination keywords in previous tag
-      let dst = '';
-      if (prevNorm.includes('TURAIF') || prevNorm.includes('MWSPC')) dst = 'Turaif';
-      else if (prevNorm.includes('JUBAIL') || prevNorm.includes('TASNEE')) dst = 'Jubail';
-      else if (prevNorm.includes('RIYADH') || prevNorm.includes('NBC') || prevNorm.includes('MAAR')) dst = 'Riyadh';
-      else if (prevNorm.includes('KUWAIT') || prevNorm.includes('CISCO')) dst = 'Kuwait';
-      else if (prevNorm.includes('RAS AL KHAIR')) dst = 'Ras Al Khair';
-      else if (prevNorm.includes('DAMMAM') || prevNorm.includes('NOMAC') || prevNorm.includes('ARASCO')) dst = 'Dammam';
-      else if (prevNorm.includes('KHAFJI') || prevNorm.includes('DROPS')) dst = 'Khafji';
-      else if (prevNorm.includes('SHUHEIBA') || prevNorm.includes('SHUHAIBA')) dst = 'Shuhaiba';
-      else if (prevNorm.includes('SHUQAIQ')) dst = 'Shuqaiq';
-      else if (prevNorm.includes('RABIGH') || prevNorm.includes('PRC') || prevNorm.includes('RPC')) dst = 'Rabigh';
-      else if (destMatch) dst = destMatch[1].trim();
-
-      if (dst && normText(dst) !== 'YANBU') {
-        const updated = previousTag.replace(/Under Loading at\s+[A-Za-z\s]+/i, `On the way to ${dst}`);
-        return {
-          text: updated.includes('On the way') ? updated : `${previousTag.split('-')[0].trim()} - On the way to ${dst}`,
-          conf: 'high',
-          reason: `Trip Progression: Finished loading yesterday at Yanbu, now en route to ${dst}.`
-        };
-      } else if (dst && normText(dst) === 'YANBU') {
-        return {
-          text: previousTag.replace(/Under Loading at\s+Yanbu/i, 'Under Offloading at Yanbu'),
-          conf: 'high',
-          reason: 'Local Yanbu Transit: Loading completed, cargo under offloading.'
-        };
-      }
-    }
-
-    // 2b. Waiting for Loading / Offloading progression
-    if (prevNorm.includes('WAITING FOR OFFLOADING')) {
-      return {
-        text: previousTag.replace(/Waiting for Offloading/i, 'Under Offloading'),
-        conf: 'high',
-        reason: 'Standby Queue Cleared: Began offloading at destination customer facility.'
-      };
-    }
-
-    if (prevNorm.includes('WAITING FOR LOADING')) {
-      return {
-        text: previousTag.replace(/Waiting for Loading/i, 'Under Loading'),
-        conf: 'high',
-        reason: 'Queue Cleared: Began cargo loading at supply facility.'
-      };
-    }
-
-    // 2c. On the way progression
-    if (prevNorm.includes('ON THE WAY')) {
-      if (prevNorm.includes('KUWAIT') && !prevNorm.includes('BORDER')) {
-        return {
-          text: previousTag.replace(/On the way to\s+Kuwait/i, 'At Kuwait Border'),
-          conf: 'high',
-          reason: 'Cross-Border Route: 2nd transit day arrived at Kuwait border customs post.'
-        };
-      }
-
-      const destMatch = previousTag.match(/to\s+([A-Za-z\s]+)/i);
-      const dst = destMatch ? destMatch[1].trim() : 'Destination';
-
-      return {
-        text: previousTag.replace(/On the way to\s+/i, 'Under Offloading at '),
-        conf: 'high',
-        reason: `Trip Progression: Arrived at destination ${dst} for cargo discharge.`
-      };
-    }
-
-    // 2d. At Kuwait Border -> Under Offloading at Kuwait
-    if (prevNorm.includes('AT KUWAIT BORDER')) {
-      return {
-        text: 'SA Supply for CISCO - Under Offloading at Kuwait',
-        conf: 'high',
-        reason: 'Border Clearance Complete: Offloading at CISCO customer facility in Kuwait.'
-      };
-    }
-
-    // 2e. Under Offloading -> Returning
-    if (prevNorm.includes('UNDER OFFLOADING')) {
-      return {
-        text: 'Coming Back to Yanbu',
-        conf: 'high',
-        reason: 'Cargo Discharged: Return journey commenced to Yanbu central fleet depot.'
-      };
-    }
-
-    // 2f. Coming Back -> Standby at Yanbu Base
-    if (prevNorm.includes('COMING BACK')) {
-      return {
-        text: 'At Yanbu',
-        conf: 'high',
-        reason: 'Return Leg Completed: Prime mover arrived back and standby at Yanbu base.'
-      };
-    }
-
     // 2g. Maintenance / Vacation / Standby
     if (prevNorm.includes('TRUCK UNDER MAINTENANCE')) {
       return {
@@ -407,7 +236,7 @@ export function predictManifestForDriver(
     if (prevNorm.includes('VACATION')) {
       return {
         text: 'Vacation',
-        conf: 'high',
+        conf: 'medium',
         reason: 'Driver on approved annual vacation leave.'
       };
     }
@@ -441,7 +270,7 @@ export function predictManifestForDriver(
   const driverRules = learnedRules.filter(r => r.driverId ? r.driverId === driver.id : r.driverIndex === driverIndex);
   if (driverRules.length > 0) {
     const topRule = driverRules[0];
-    if (topRule.hits >= 3 && !topRule.result.includes('Offloading')) {
+    if (topRule.hits >= 3 && /^(At Yanbu|Standby)$/i.test(topRule.result)) {
       return {
         text: topRule.result,
         conf: 'medium',
