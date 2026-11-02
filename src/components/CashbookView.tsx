@@ -1,3 +1,5 @@
+import { EmployeeBalanceDashboard } from './EmployeeBalanceDashboard';
+import { employeeBalanceStatuses } from '../utils/employeeBalances';
 import { parseCashbookReplacement, cashbookReplacementSummary } from '../utils/cashbookImport';
 import { fleetRepository } from '../services/fleetRepository';
 import React, { useState } from 'react';
@@ -96,15 +98,10 @@ export const CashbookView: React.FC = () => {
 
   const totalCash = Object.values(accountBalances).reduce((a, b) => a + b, 0);
 
-  // Outstanding Employee Advances
-  const employeeBalances: Record<string, number> = {};
-  cashTransactions.forEach(t => {
-    if (!t.employee) return;
-    const impact = transactionEmployeeAdvanceImpact(t, cashTransactions);
-    if (impact !== 0) employeeBalances[t.employee] = (employeeBalances[t.employee] || 0) + impact;
-  });
-
-  const totalOutstandingAdvances = Object.values(employeeBalances).reduce((a, b) => a + Math.max(0, b), 0);
+  // Share one cent-accurate projection between dashboard, KPI and statements.
+  const employeeStatuses = employeeBalanceStatuses(cashTransactions, cashEmployees);
+  const employeeBalances = Object.fromEntries(employeeStatuses.map(row => [row.name, row.balance]));
+  const totalOutstandingAdvances = employeeStatuses.reduce((sum,row)=>sum+Math.max(0,Math.round(row.balance*100)),0)/100;
 
   // Filter transactions
   const filtered = cashTransactions.filter(t => {
@@ -442,6 +439,8 @@ export const CashbookView: React.FC = () => {
         ))}
       </div>
 
+      <EmployeeBalanceDashboard rows={employeeStatuses} onStatement={setStatementEmployee} />
+
       {/* Main Ledger Table */}
       <div className="bg-slate-800/80 border border-slate-700 rounded-2xl overflow-hidden shadow-2xl p-4 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3 pb-2 border-b border-slate-700">
@@ -739,9 +738,9 @@ export const CashbookView: React.FC = () => {
             </div>
 
             <div className="p-4 bg-slate-800/80 rounded-xl border border-slate-700 flex items-center justify-between">
-              <span className="text-xs text-slate-400 font-mono">Current Net Outstanding Balance:</span>
+              <span className="text-xs text-slate-400 font-mono">{(employeeBalances[statementEmployee] || 0) < 0 ? 'Company owes employee:' : 'Employee owes company:'}</span>
               <span className="text-lg font-black font-mono text-amber-400">
-                SAR {(employeeBalances[statementEmployee] || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                SAR {Math.abs(employeeBalances[statementEmployee] || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
               </span>
             </div>
 
@@ -749,7 +748,7 @@ export const CashbookView: React.FC = () => {
               <h4 className="text-xs font-bold uppercase text-slate-400 font-mono">Transaction History</h4>
               <div className="divide-y divide-slate-800 border border-slate-800 rounded-xl overflow-hidden">
                 {cashTransactions
-                  .filter(t => t.employee === statementEmployee && (t.status !== 'Reversed' || cashTransactions.some(reversal => reversal.type === 'Reversal' && reversal.reversalOf === t.id)))
+                  .filter(t => String(t.employee || '').trim() === statementEmployee && (t.status !== 'Reversed' || cashTransactions.some(reversal => reversal.type === 'Reversal' && reversal.reversalOf === t.id)))
                   .map(t => {
                     const advanceImpact = transactionEmployeeAdvanceImpact(t, cashTransactions);
                     return (
