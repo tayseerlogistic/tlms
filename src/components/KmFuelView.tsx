@@ -1,3 +1,4 @@
+import { parseDailyMeters, dailyMeterExport, type MeterImportRow } from '../utils/dailyMeterImport';
 import React, { useState, useEffect, useRef } from 'react';
 import { useLms } from '../context/LmsContext';
 import { useAuth } from '../context/AuthContext';
@@ -85,6 +86,11 @@ export const KmFuelView: React.FC = () => {
   const [searchRecon, setSearchRecon] = useState('');
   const [searchHist, setSearchHist] = useState('');
 
+  const [showDailyImport, setShowDailyImport] = useState(false);
+  const [dailyImportText, setDailyImportText] = useState('');
+  const [orderedPaste, setOrderedPaste] = useState(false);
+  const [dailyImportPreview, setDailyImportPreview] = useState<{date:string;rows:MeterImportRow[]} | null>(null);
+  const [dailyImportError, setDailyImportError] = useState('');
   // Meter Entry Form state
   const [readingDate, setReadingDate] = useState(() => localISODate());
   const [plateInput, setPlateInput] = useState('');
@@ -94,9 +100,17 @@ export const KmFuelView: React.FC = () => {
 
   // Daily Fleet Meter Table Drafts (plateNorm -> input string)
   const [dailyDraftOdo, setDailyDraftOdo] = useState<Record<string, string>>({});
+  const [isSavingDaily, setIsSavingDaily] = useState(false);
+  const readingDateRef = useRef(readingDate);
+  readingDateRef.current = readingDate;
   const [entryMode, setEntryMode] = useState<'fleet-table' | 'fast-logger'>('fleet-table');
   const [feedbackToast, setFeedbackToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
 
+  useEffect(() => {
+    setDailyDraftOdo({});
+    setDailyImportPreview(null);
+    setDailyImportError('');
+  }, [readingDate]);
   // Month & Specific Date Manager / Matrix state
   const matrixMonth = selectedKmMonth === 'All' ? latestRecordedKmMonth(kmRecords) || localISODate().slice(0,7) : selectedKmMonth;
   const setMatrixMonth = setSelectedKmMonth;
@@ -276,8 +290,37 @@ export const KmFuelView: React.FC = () => {
     }, 5000);
   };
 
+  const previewDailyMeters = (matrix: unknown[][], valuesOnly = orderedPaste) => {
+    try {
+      const rows = parseDailyMeters(matrix, trucks, readingDate, valuesOnly);
+      setDailyImportPreview({date:readingDate,rows});
+      setDailyImportError('');
+    } catch(error) {
+      setDailyImportPreview(null);
+      setDailyImportError(error instanceof Error ? error.message : 'Could not read meter data.');
+    }
+  };
+  const previewPastedMeters = () => {
+    const matrix=dailyImportText.split(/\r?\n/).map(line=>line.trim()).filter(Boolean)
+      .filter(line=>!/^\|?[\s:|-]+\|?$/.test(line))
+      .map(line=>line.includes('|') ? line.replace(/^\||\|$/g,'').split('|').map(value=>value.trim()) : line.split('\t'));
+    previewDailyMeters(matrix);
+  };
+  const exportDailyMeters = () => {
+    try {
+      const sheet=XLSX.utils.json_to_sheet(dailyMeterExport(trucks,kmRecords,readingDate));
+      sheet['!cols']=[{wch:7},{wch:20},{wch:15},{wch:18},{wch:18}];
+      const book=XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(book,sheet,'Meter Readings');
+      XLSX.writeFile(book,'Fleet_Opening_KM_'+readingDate+'.xlsx');
+    } catch(error) {
+      showToast(error instanceof Error ? error.message : 'Export failed.','error');
+    }
+  };
   // Confirm and Save entire fleet readings for selected readingDate
   const handleConfirmAndSaveDailyFleet = async () => {
+    if (isSavingDaily) return;
+    setIsSavingDaily(true);
     try {
       const drafts = trucks.filter(t=>dailyDraftOdo[t.plateNorm] !== undefined);
       for (const t of drafts) {
@@ -285,10 +328,14 @@ export const KmFuelView: React.FC = () => {
         const value=raw==='' ? null : Number(raw);
         if(value!==null && (!Number.isFinite(value) || value<0)) throw new Error(`Invalid odometer for ${t.plate}`);
         await updateOdometer(t.id,readingDate,value);
+        if (readingDateRef.current === readingDate) setDailyDraftOdo(previous => {
+          if (previous[t.plateNorm] !== dailyDraftOdo[t.plateNorm]) return previous;
+          const next={...previous}; delete next[t.plateNorm]; return next;
+        });
       }
-      setDailyDraftOdo({});
       showToast(`Saved ${drafts.length} meter readings. Daily KM values were preserved.`, 'success');
     } catch(error) { showToast(String(error),'error'); }
+    finally { setIsSavingDaily(false); }
 
   };
 
@@ -1666,7 +1713,7 @@ TLS Fleet Management`;
                   <span>📟</span> KM Meter Entry &amp; Fleet Run Engine
                 </h3>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  Automated vehicle difference formula &bull; Cross-month continuity &bull; Real-time dashboard synchronization
+                  Opening odometer readings by date &bull; Daily KM-run values are stored independently
                 </p>
               </div>
 
@@ -1703,7 +1750,7 @@ TLS Fleet Management`;
                   <span className="font-bold text-white">Odometer Difference Formula: </span>
                   <span className="text-sky-300 font-mono">Day 2 (4,900) &minus; Day 1 (4,100) = 800 KM Run</span>
                   <p className="text-slate-300 mt-0.5">
-                    On Day 1 of a new month, the engine subtracts the previous month&apos;s Day 30 or 31 reading. If empty or missing, defaults to <strong>0 KM Run</strong>.
+                    The difference shown is informational. Saving or importing a meter reading does not overwrite stored daily KM-run values.
                   </p>
                 </div>
               </div>
@@ -1751,25 +1798,15 @@ TLS Fleet Management`;
                 >
                   Today
                 </button>
-                <button
-                  onClick={() => setReadingDate('2026-10-01')}
-                  className={`text-xs px-2.5 py-1.5 rounded-lg font-bold border transition ${
-                    readingDate === '2026-10-01' ? 'bg-blue-600 text-white border-blue-500' : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
-                  }`}
-                >
-                  Oct 1 (Sample Month Start)
-                </button>
-                <button
-                  onClick={() => setReadingDate(ksaDateISO())}
-                  className="text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-2.5 py-1.5 rounded-lg font-bold border border-slate-700 transition"
-                >
-                  Today
-                </button>
               </div>
 
               {/* Action Buttons */}
               <div className="flex flex-wrap items-center gap-2">
+                <button onClick={exportDailyMeters} className="rounded-xl border border-slate-600 px-3 py-2 text-xs font-bold text-slate-200"><Download className="inline w-4 h-4 mr-1" />Export {readingDate} Excel</button>
+                {(isAdmin || isDispatcher) && <button onClick={() => setShowDailyImport(value=>!value)} className="rounded-xl bg-blue-700 px-3 py-2 text-xs font-bold text-white"><Upload className="inline w-4 h-4 mr-1" />Import opening KM</button>}
+
                 <button
+                  disabled={isSavingDaily}
                   onClick={handleConfirmAndSaveDailyFleet}
                   className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow-lg flex items-center gap-1.5 transition cursor-pointer"
                 >
@@ -1784,6 +1821,36 @@ TLS Fleet Management`;
               </div>
             </div>
           </div>
+
+          {showDailyImport && <section className="rounded-xl border border-blue-600 bg-slate-900 p-4 space-y-3 text-sm text-slate-200">
+            <h4 className="font-bold">Import opening odometers for {readingDate}</h4>
+            <p className="text-xs">Upload Excel/CSV with Truck Plate# and Opening KM, or paste one value per truck in the current fleet order. Preview first. This updates odometers only; daily KM-run values stay unchanged. Export uses saved readings, including blank meters for trucks not yet entered.</p>
+            <input type="file" accept=".xlsx,.xls,.csv" aria-label="Import dated opening meters" onChange={async event=>{
+              const file=event.target.files?.[0];if(!file)return;
+              try {
+                const book=XLSX.read(await file.arrayBuffer(),{type:'array',cellDates:false,raw:true});
+                previewDailyMeters(XLSX.utils.sheet_to_json<unknown[]>(book.Sheets[book.SheetNames[0]],{header:1,defval:'',raw:true}),false);
+              } catch(error) {setDailyImportError(error instanceof Error ? error.message : 'File could not be read.');setDailyImportPreview(null);}
+              event.target.value='';
+            }} />
+            <textarea value={dailyImportText} onChange={event=>{setDailyImportText(event.target.value);setDailyImportPreview(null);}} rows={6} placeholder="Opening KM&#10;203425&#10;282426" className="block w-full rounded border border-slate-600 bg-slate-950 p-2 font-mono text-xs" />
+            <label className="block text-xs"><input type="checkbox" checked={orderedPaste} onChange={event=>{setOrderedPaste(event.target.checked);setDailyImportPreview(null);}} /> Values-only paste follows the full fleet order shown below; I will verify every plate in the preview.</label>
+            <button onClick={previewPastedMeters} className="rounded bg-blue-700 px-3 py-2 text-white">Preview pasted readings</button>
+            {dailyImportError && <p role="alert" className="text-rose-300">{dailyImportError}</p>}
+            {dailyImportPreview && <div>
+              <p className="font-bold">{dailyImportPreview.rows.length} readings for {dailyImportPreview.date}. Check truck assignments before loading.</p>
+              <div className="max-h-72 overflow-auto my-2"><table className="w-full text-xs"><thead><tr><th>Truck plate</th><th>Imported opening KM</th></tr></thead><tbody>
+                {dailyImportPreview.rows.map(row=><tr key={row.truckId}><td className="p-1">{row.plate}</td><td className="p-1 text-right">{row.odometer.toLocaleString()}</td></tr>)}
+              </tbody></table></div>
+              <button onClick={()=>{
+                if(dailyImportPreview.date!==readingDate){setDailyImportError('Date changed. Preview again.');return;}
+                const drafts:Record<string,string>={};
+                dailyImportPreview.rows.forEach(row=>{const truck=trucks.find(truck=>truck.id===row.truckId);if(truck)drafts[truck.plateNorm]=String(row.odometer);});
+                setDailyDraftOdo(previous=>({...previous,...drafts}));setEntryMode('fleet-table');setShowDailyImport(false);setDailyImportPreview(null);
+                showToast('Imported readings loaded as drafts. Click Confirm & Save KM Fleet to persist. Daily KM values are unchanged.','info');
+              }} className="rounded bg-emerald-700 px-3 py-2 text-white font-bold">Load preview into fleet table</button>
+            </div>}
+          </section>}
 
           {/* Mode 1: Full Fleet Table */}
           {entryMode === 'fleet-table' && (
@@ -1925,6 +1992,7 @@ TLS Fleet Management`;
                   Tip: Change any vehicle reading above and click <strong>&ldquo;Confirm &amp; Save KM Fleet&rdquo;</strong> to synchronize all numbers into the dashboard.
                 </span>
                 <button
+                  disabled={isSavingDaily}
                   onClick={handleConfirmAndSaveDailyFleet}
                   className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-5 py-2 rounded-xl shadow-lg transition flex items-center gap-1.5 cursor-pointer ml-auto"
                 >
