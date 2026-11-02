@@ -39,3 +39,19 @@ test('employee advance balance is neutral when an advance is fully reversed', ()
   const ledger = [original, reversal];
   assert.equal(ledger.reduce((sum, item) => sum + transactionEmployeeAdvanceImpact(item, ledger), 0), 0);
 });
+
+test('settling an advance clears employee debt without deducting cash a second time', () => {
+  const advance=tx({id:'adv',type:'Advance Given',amount:100,employee:'Driver A'});
+  const settlement=tx({id:'settle',type:'Expense Settlement',amount:80,employee:'Driver A'});
+  const returned=tx({id:'returned',type:'Advance Returned',amount:20,employee:'Driver A'});
+  const ledger=[advance,settlement,returned];
+  assert.equal(ledger.reduce((sum,row)=>sum+transactionCashImpact(row,ledger),0),-80);
+  assert.equal(ledger.reduce((sum,row)=>sum+transactionEmployeeAdvanceImpact(row,ledger),0),0);
+});
+test('reversing a settlement changes employee debt but has no cash effect',()=>{
+  const settlement=tx({id:'settle',type:'Expense Settlement',amount:80,status:'Reversed'});
+  const reversal=tx({id:'reverse',type:'Reversal',amount:80,reversalOf:'settle',reversedType:'Expense Settlement'});
+  const ledger=[settlement,reversal];
+  assert.equal(transactionCashImpact(reversal,ledger),0);
+  assert.equal(ledger.reduce((sum,row)=>sum+transactionEmployeeAdvanceImpact(row,ledger),0),0);
+});

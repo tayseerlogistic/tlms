@@ -14,7 +14,7 @@ import {
   type Firestore,
 } from "firebase/firestore";
 import { auth, db } from "../firebase/config";
-import type { KmRecord, Truck } from "../types";
+import type { CashTransaction, KmRecord, Truck } from "../types";
 import { runVerifiedImport, type ImportResult } from "./verifiedImport";
 export type { ImportResult } from "./verifiedImport";
 import { canonicalKm } from "../utils/fleetAnalytics";
@@ -84,6 +84,41 @@ export function createFleetRepository(
       requireSession();
       const result = await getDocsFromServer(collection(db, name));
       return result.docs.map((d) => ({ ...d.data(), id: d.id }));
+    },
+    async replaceCashbook(incoming: CashTransaction[], before: DocumentData[]) {
+      const uid = requireSession();
+      if (!incoming.length || new Set(incoming.map(row => row.id)).size !== incoming.length)
+        throw new Error('Replacement must contain unique transactions.');
+      const next = new Map(incoming.map(row => [row.id, row]));
+      const old = new Map(before.map(row => [row.id, row]));
+      const ids = Array.from(new Set([...next.keys(), ...old.keys()]));
+      if (ids.length > 450) throw new Error('Replacement exceeds the safe atomic limit. No transactions were changed.');
+      const stable = (value: any): any => Array.isArray(value) ? value.map(stable) :
+        value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map(key => [key, stable(value[key])])) : value;
+      await runTransaction(db, async transaction => {
+        if (requireSession() !== uid) throw new Error('Account changed. Preview again.');
+        const snapshots = await Promise.all(ids.map(id => transaction.get(doc(db, 'cashbook', id))));
+        snapshots.forEach((snapshot,index) => {
+          const previous = old.get(ids[index]);
+          const actual = snapshot.exists() ? { ...snapshot.data(), id: snapshot.id } : undefined;
+          if (JSON.stringify(stable(actual)) !== JSON.stringify(stable(previous)))
+            throw new Error('Transactions changed since preview. Nothing replaced; load the CSV again.');
+        });
+        ids.forEach(id => {
+          const row = next.get(id);
+          const ref = doc(db, 'cashbook', id);
+          if (row) transaction.set(ref, clean({ ...row, createdBy: old.get(id)?.createdBy || uid,
+            createdAt: old.get(id)?.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString(),
+            importSource: 'cashbook-csv-replacement' }));
+          else transaction.delete(ref);
+        });
+      });
+      const saved = await this.list('cashbook');
+      if (saved.length !== incoming.length || saved.some(actual => {
+        const expected = next.get(actual.id);
+        return !expected || Object.entries(expected).some(([key,value]) => (actual as DocumentData)[key] !== value);
+      })) throw new Error('Replacement committed, but final verification differs. Do not repeat blindly; check for concurrent entries.');
+      return saved.length;
     },
     async save(name: string, id: string, data: DocumentData, merge = true) {
       requireSession();

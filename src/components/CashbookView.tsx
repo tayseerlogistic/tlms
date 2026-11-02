@@ -1,3 +1,5 @@
+import { parseCashbookReplacement, cashbookReplacementSummary } from '../utils/cashbookImport';
+import { fleetRepository } from '../services/fleetRepository';
 import React, { useState } from 'react';
 import { useLms } from '../context/LmsContext';
 import { useAuth } from '../context/AuthContext';
@@ -13,8 +15,48 @@ import {
 } from 'lucide-react';
 
 export const CashbookView: React.FC = () => {
-  const { cashTransactions, cashAccounts, cashEmployees, drivers, addCashTransaction, addCashAccount, deleteCashAccount, addCashEmployee, deleteCashEmployee, reverseCashTransaction, deleteCashTransaction } = useLms();
+  const { replaceCashTransactions, cashTransactions, cashAccounts, cashEmployees, drivers, addCashTransaction, addCashAccount, deleteCashAccount, addCashEmployee, deleteCashEmployee, reverseCashTransaction, deleteCashTransaction } = useLms();
   const { isCashier, isAdmin } = useAuth();
+
+  const [replacement, setReplacement] = useState<{ rows: CashTransaction[]; before: Record<string, any>[] } | null>(null);
+  const [replacementMessage, setReplacementMessage] = useState('');
+  const [replacing, setReplacing] = useState(false);
+  const replacementSummary = replacement ? cashbookReplacementSummary(replacement.rows) : null;
+  const previewReplacement = async (file: File) => {
+    setReplacement(null);
+    setReplacementMessage('');
+    try {
+      const workbook = XLSX.read(await file.text(), { type: 'string', raw: true });
+      const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[workbook.SheetNames[0]], { defval: '', raw: true });
+      const [before, accounts] = await Promise.all([fleetRepository.list('cashbook'), fleetRepository.list('cash_accounts')]);
+      const parsed = parseCashbookReplacement(rows, accounts as any);
+      const count = new Set([...before.map(row => row.id), ...parsed.map(row => row.id)]).size;
+      if (count > 450) throw new Error('Too many unique IDs for a safe atomic replacement. Nothing changed.');
+      setReplacement({ rows: parsed, before });
+    } catch (error) {
+      setReplacementMessage(error instanceof Error ? error.message : 'CSV could not be read.');
+    }
+  };
+  const applyReplacement = async () => {
+    if (!replacement || replacing) return;
+    setReplacing(true);
+    try {
+      const backup = { project: 'tayseer-tlms-1792924020', collection: 'cashbook', exportedAt: new Date().toISOString(), transactions: replacement.before };
+      const url = URL.createObjectURL(new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'Cashbook_Before_Replacement_' + Date.now() + '.json';
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+      const count = await replaceCashTransactions(replacement.rows, replacement.before);
+      setReplacement(null);
+      setReplacementMessage('Server verified: ' + count + ' transactions. Accounts, opening balances, employees and fleet data were unchanged.');
+    } catch (error) {
+      setReplacementMessage(error instanceof Error ? error.message : 'Replacement failed.');
+    } finally {
+      setReplacing(false);
+    }
+  };
 
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState('');
@@ -182,6 +224,7 @@ export const CashbookView: React.FC = () => {
       Account: t.account,
       Type: t.type,
       Category: t.category,
+      'Amount (SAR)': t.amount,
       'Signed Cash Impact (SAR)': transactionCashImpact(t, filtered),
       Description: t.description,
       Status: t.status,
@@ -228,7 +271,7 @@ export const CashbookView: React.FC = () => {
     };
     drawHeader();
     reportRows.forEach(tx => {
-      const cells = [tx.dateISO || tx.date, tx.employee || '—', tx.account, tx.type, tx.category, transactionCashImpact(tx, reportRows).toFixed(2), tx.description || '', tx.status];
+      const cells = [tx.dateISO || tx.date, tx.employee || '—', tx.account, tx.type, tx.category, Number(tx.amount).toFixed(2), tx.description || '', tx.status];
       const wrapped = cells.map((value, index) => pdf.splitTextToSize(String(value), widths[index] - 2));
       const rowHeight = Math.max(6, ...wrapped.map(lines => lines.length * 4));
       if (y + rowHeight > 190) { pdf.addPage(); y = 15; drawHeader(); }
@@ -253,7 +296,7 @@ export const CashbookView: React.FC = () => {
             <Wallet className="w-6 h-6 text-emerald-400" /> Cashbook Pro &bull; Driver Advances &amp; Petty Cash
           </h2>
           <p className="text-xs text-slate-400 mt-1">
-            Real-time cash flow, trip per diem settlements, and double-entry driver float ledger
+            Cash movements and employee advances. Expense settlements clear advances without a second cash deduction.
           </p>
         </div>
 
@@ -284,6 +327,26 @@ export const CashbookView: React.FC = () => {
           )}
         </div>
       </div>
+
+      {isAdmin && <details className="rounded-xl border border-amber-600 bg-slate-900 p-4 text-slate-200">
+        <summary className="cursor-pointer font-bold text-sm">Replace transactions from CSV (administrator)</summary>
+        <p className="my-3 text-xs">This replaces the entire Cashbook transaction list with the CSV, including removing transactions absent from it. Account opening balances, employees, KM and fleet data are retained. Pause transaction entry on other devices during replacement. A transaction backup downloads before saving; allow the download and keep it.</p>
+        <input type="file" accept=".csv" disabled={replacing} aria-label="Replacement transaction CSV" onChange={async event => {
+          const file = event.target.files?.[0];
+          if (file) await previewReplacement(file);
+          event.target.value = '';
+        }} className="text-xs max-w-full" />
+        {replacement && replacementSummary && <div className="mt-3 space-y-2 text-sm">
+          <p>Current: {replacement.before.length} → replacement: <strong>{replacementSummary.count}</strong> posted transactions.</p>
+          <p>Advances: SAR {replacementSummary.advances.toFixed(2)} · Settlements: SAR {replacementSummary.settlements.toFixed(2)} · Returned: SAR {replacementSummary.returned.toFixed(2)}</p>
+          <p>Employees still owing: SAR {replacementSummary.outstanding.toFixed(2)}. Settlements clear advances without deducting cash twice.</p>
+          <button disabled={replacing} onClick={applyReplacement} className="rounded-lg bg-rose-700 px-4 py-2 text-white font-bold disabled:opacity-50">
+            {replacing ? 'Replacing & verifying…' : 'Download backup & replace transactions'}
+          </button>
+          <button disabled={replacing} onClick={() => setReplacement(null)} className="ml-3 underline">Cancel</button>
+        </div>}
+        {replacementMessage && <p role="status" className="mt-3 text-sm">{replacementMessage}</p>}
+      </details>}
 
       {(isCashier || isAdmin) && <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <section className="rounded-2xl border border-slate-700 bg-slate-800/70 p-4 space-y-3">
@@ -463,7 +526,7 @@ export const CashbookView: React.FC = () => {
                     </td>
                     <td className="p-3 text-slate-400">{t.category}</td>
                     <td className={`p-3 text-right font-mono font-bold text-sm ${isInf ? 'text-emerald-400' : isOut ? 'text-rose-400' : 'text-slate-300'}`}>
-                      {cashImpact > 0 ? '+' : cashImpact < 0 ? '−' : '—'}{Math.abs(Number(t.amount) || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      {cashImpact > 0 ? '+' : cashImpact < 0 ? '−' : ''}{Math.abs(Number(t.amount) || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </td>
                     <td className="p-3 text-slate-300 max-w-xs truncate">{t.description || '—'}</td>
                     <td className="p-3">

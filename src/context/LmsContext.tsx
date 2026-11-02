@@ -98,6 +98,7 @@ interface LmsContextType {
     batchData: Record<string, Record<string, string>>,
   ) => Promise<void>;
 
+  replaceCashTransactions: (incoming: CashTransaction[], before: Record<string, any>[]) => Promise<number>;
   addCashTransaction: (
     tx: Omit<CashTransaction, "id" | "createdAt">,
   ) => Promise<void>;
@@ -612,6 +613,8 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({
         })),
       ),
     );
+  const replaceCashTransactions = (incoming: CashTransaction[], before: Record<string, any>[]) =>
+    run(() => fleetRepository.replaceCashbook(incoming, before));
   const addCashTransaction = (tx: Omit<CashTransaction, "id" | "createdAt">) =>
     run(async () => {
       const account = cashAccounts.find(
@@ -1149,6 +1152,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({
     deleteDailySchedule,
     saveDailyManifest,
     saveMultiDayManifests,
+    replaceCashTransactions,
     addCashTransaction,
     addCashAccount,
     deleteCashAccount,
