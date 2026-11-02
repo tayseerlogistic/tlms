@@ -1,3 +1,4 @@
+import { compareFleetPlates } from '../utils/fleetOrder';
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useLms } from '../context/LmsContext';
 import { useAuth } from '../context/AuthContext';
@@ -47,7 +48,7 @@ export const TimetableParserView: React.FC = () => {
         return {id:e.id,truckId:t?.id || null,plateNo:t?.plate || '',equipmentNo:e.equipNo,type:e.type,defaultDriverId:masterDrivers.some(d=>d.id===t?.assignedDriverId && d.active!==false) ? t?.assignedDriverId || '' : '',isThirdParty:false};
       }),
       ...masterTrucks.filter(t=>!masterEquipment.some(e=>e.active!==false && (e.assignedTruckId===t.id || e.id===t.assignedEquipmentId))).map(t=>({id:t.id,truckId:t.id,plateNo:t.plate,equipmentNo:t.equipmentNo || '',type:deriveEquipmentType(t.equipmentNo || t.type),defaultDriverId:t.assignedDriverId || '',isThirdParty:t.isThirdParty || false}))
-    ],
+    ].sort((a,b)=>compareFleetPlates(a.plateNo,b.plateNo)||a.id.localeCompare(b.id)),
     commodities: masterCommodities.map(c=>({...c,jumboBagMT:c.jumboBagMT ?? 0})),
     storeMap: Object.fromEntries(masterStores.map(s=>[s.destination,s.storeName])),
     schedules: Object.fromEntries(Object.entries(contextSchedules).map(([date,s])=>[date,{date,rows:s.rows,createdAt:s.updatedAt || '',updatedAt:s.updatedAt || ''}])),
@@ -69,7 +70,7 @@ export const TimetableParserView: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterPending, setFilterPending] = useState(false);
   const [filterGroup, setFilterGroup] = useState<'all' | 'tls' | 'ext'>('all');
-  const [enableSort, setEnableSort] = useState<boolean>(() => db.uiPrefs.enableSort !== false);
+  const [enableSort, setEnableSort] = useState<boolean>(true);
   const [showPriority, setShowPriority] = useState<boolean>(() => db.uiPrefs.showPriority !== false);
   const [isColPanelOpen, setIsColPanelOpen] = useState(false);
 
@@ -219,7 +220,7 @@ export const TimetableParserView: React.FC = () => {
     }
 
     if (enableSort) {
-      rows.sort((a, b) => (a.priority || 999) - (b.priority || 999));
+      rows.sort((a, b) => compareFleetPlates(a.plateNo, b.plateNo));
     }
 
     return rows;
@@ -875,8 +876,12 @@ export const TimetableParserView: React.FC = () => {
     const extRows = rowsList.filter(r => r.transporter && r.transporter !== 'TLS');
 
     const groups: { label: string; rows: TimetableRow[] }[] = [];
-    if (tlsRows.length) groups.push({ label: 'TLS Fleets', rows: tlsRows });
-    if (extRows.length) groups.push({ label: 'External Trips', rows: extRows });
+    if (enableSort) {
+      groups.push({ label: 'Fleet sequence', rows: [...rowsList].sort((a,b)=>compareFleetPlates(a.plateNo,b.plateNo)) });
+    } else {
+      if (tlsRows.length) groups.push({ label: 'TLS Fleets', rows: tlsRows });
+      if (extRows.length) groups.push({ label: 'External Trips', rows: extRows });
+    }
 
     return groups.map(g => (
       <React.Fragment key={g.label}>
@@ -1690,7 +1695,7 @@ export const TimetableParserView: React.FC = () => {
                   }`}
                   title="Sort rows by priority sequence P1–P11"
                 >
-                  ⬆ Priority Sort
+                  ⬆ Fleet Order
                 </button>
 
                 <button
@@ -1852,7 +1857,7 @@ export const TimetableParserView: React.FC = () => {
                   {totalRowsCount} rows · <span className="text-emerald-400">{assignedCount} assigned</span> ·{' '}
                   <span className="text-amber-400">{pendingCount} pending</span> ·{' '}
                   <span className="text-blue-400 font-bold">{totalMT.toFixed(2)} MT total</span> ·{' '}
-                  {enableSort ? 'Sorted by priority' : 'Original order'}
+                  {enableSort ? 'Sorted by fleet sequence' : 'Original order'}
                 </div>
                 <div className="text-[11px] text-slate-500">
                   Tip: Double-click any cell to edit · Click to copy · Shift+click to copy range (TSV)
@@ -2233,7 +2238,7 @@ export const TimetableParserView: React.FC = () => {
               <span>⚡</span> Priority Sort Order (v4 Logic)
             </h3>
             <p className="text-xs text-slate-400">
-              When <b>⬆ Priority Sort</b> is enabled, rows are automatically sorted from P1 to P11, followed by all remaining commodities (P999).
+              When <b>⬆ Fleet Order</b> is enabled, rows are automatically sorted from P1 to P11, followed by all remaining commodities (P999).
             </p>
             <ol className="text-xs space-y-2 pt-1 font-mono">
               <li className="flex items-center gap-2.5">

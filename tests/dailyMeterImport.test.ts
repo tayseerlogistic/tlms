@@ -10,7 +10,7 @@ test('one-column meters need full fleet count and explicit order acknowledgement
 });
 test('plate-labelled imports match identities independent of row order and preserve real zero',()=>{
  const result=parseDailyMeters([['Truck Plate#','Opening KM','Date'],['DJA4828','0','2026-11-01'],['DJA4827','203,425','2026-11-01']],trucks,'2026-11-01');
- assert.deepEqual(result.map(row=>[row.truckId,row.odometer]),[['t2',0],['t1',203425]]);
+ assert.deepEqual(result.map(row=>[row.truckId,row.odometer]),[['t1',203425],['t2',0]]);
 });
 test('rejects wrong dates, duplicates, unmatched trucks and invalid numeric readings',()=>{
  for(const rows of [

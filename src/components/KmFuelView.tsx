@@ -1,3 +1,4 @@
+import { compareFleetPlates, missingFleetPlates } from '../utils/fleetOrder';
 import { parseDailyMeters, dailyMeterExport, type MeterImportRow } from '../utils/dailyMeterImport';
 import React, { useState, useEffect, useRef } from 'react';
 import { useLms } from '../context/LmsContext';
@@ -292,6 +293,7 @@ export const KmFuelView: React.FC = () => {
 
   const previewDailyMeters = (matrix: unknown[][], valuesOnly = orderedPaste) => {
     try {
+      if(valuesOnly && missingFleetPlates(trucks).length) throw new Error('Fleet registry is missing: '+missingFleetPlates(trucks).join(', ')+'. Register these trucks before pasting values by position, or import a plate-labelled file.');
       const rows = parseDailyMeters(matrix, trucks, readingDate, valuesOnly);
       setDailyImportPreview({date:readingDate,rows});
       setDailyImportError('');
@@ -540,7 +542,7 @@ TLS Fleet Management`;
   });
 
   const aggList = Object.entries(vehDistanceMap).map(([veh, km]) => ({ veh, km }));
-  aggList.sort((a, b) => b.km - a.km);
+  aggList.sort((a, b) => compareFleetPlates(a.veh, b.veh));
 
   const totalFleetKm = aggList.reduce((acc, x) => acc + x.km, 0);
   const activeTrucksCount = aggList.filter(x => x.km > 0).length || aggList.length;
@@ -550,8 +552,9 @@ TLS Fleet Management`;
   const highRunCount = aggList.filter(x => x.km > highLimit).length;
   const modRunCount = aggList.length - lowRunCount - highRunCount;
 
-  // Recommender lowest 3 utilization
-  const lowest3Available = aggList.filter(x => x.km > 0).slice(-3).reverse();
+  // Select utilization extremes numerically, but display trucks in fleet order.
+  const rankedByKm = [...aggList].sort((a,b)=>b.km-a.km);
+  const lowest3Available = rankedByKm.filter(x => x.km > 0).slice(-3).sort((a,b)=>compareFleetPlates(a.veh,b.veh));
 
   // -------------------------------------------------------------
   // CHART RENDERING (Chart.js)
@@ -559,8 +562,8 @@ TLS Fleet Management`;
   useEffect(() => {
     if (activeTab !== 'dashboard') return;
 
-    const top10 = aggList.slice(0, 10);
-    const low10 = aggList.filter(x => x.km > 0).slice(-10).reverse();
+    const top10 = rankedByKm.slice(0, 10).sort((a,b)=>compareFleetPlates(a.veh,b.veh));
+    const low10 = rankedByKm.filter(x => x.km > 0).slice(-10).sort((a,b)=>compareFleetPlates(a.veh,b.veh));
 
     // 1. Top 10 Chart
     if (topBarCanvasRef.current) {
@@ -1824,6 +1827,7 @@ TLS Fleet Management`;
 
           {showDailyImport && <section className="rounded-xl border border-blue-600 bg-slate-900 p-4 space-y-3 text-sm text-slate-200">
             <h4 className="font-bold">Import opening odometers for {readingDate}</h4>
+            <p className="text-xs text-blue-300">Shared fleet order: 47 trucks. SSA 1197 is #35; SSA 1198 is #36. A 46-value list needs the new truck’s reading inserted before positional import.</p>
             <p className="text-xs">Upload Excel/CSV with Truck Plate# and Opening KM, or paste one value per truck in the current fleet order. Preview first. This updates odometers only; daily KM-run values stay unchanged. Export uses saved readings, including blank meters for trucks not yet entered.</p>
             <input type="file" accept=".xlsx,.xls,.csv" aria-label="Import dated opening meters" onChange={async event=>{
               const file=event.target.files?.[0];if(!file)return;

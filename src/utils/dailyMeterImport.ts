@@ -1,3 +1,4 @@
+import { sortFleetTrucks, fleetSequence, compareFleetPlates } from './fleetOrder';
 import type { Truck, KmRecord } from '../types';
 import { isValidISODate } from './dateUtils';
 import { normalizePlate, odometerKm, distanceKm } from './fleetAnalytics';
@@ -6,6 +7,7 @@ export type MeterImportRow = {truckId:string;plate:string;odometer:number};
 const norm=(value:unknown)=>String(value??'').replace(/^\uFEFF/,'').trim().toLowerCase();
 export function parseDailyMeters(matrix: unknown[][], trucks: Truck[], date:string, allowOrdered=false): MeterImportRow[] {
  if(!isValidISODate(date))throw new Error('Choose a valid reading date.');
+ trucks=sortFleetTrucks(trucks);
  let rows=matrix.filter(row=>row.some(value=>String(value??'').trim()));
  if(!rows.length)throw new Error('No readings supplied.');
  const first=rows[0].map(norm);
@@ -39,13 +41,14 @@ export function parseDailyMeters(matrix: unknown[][], trucks: Truck[], date:stri
   seen.add(truck.id);result.push({truckId:truck.id,plate:truck.plate,odometer:valueAt(row[meterColumn])});
  }
  if(!result.length)throw new Error('No populated readings found.');
- return result;
+ return result.sort((a,b)=>compareFleetPlates(a.plate,b.plate));
 }
 
 export function dailyMeterExport(trucks:Truck[], records:KmRecord[],date:string){
  if(!isValidISODate(date))throw new Error('Choose a valid reading date.');
+ trucks=sortFleetTrucks(trucks);
  return trucks.map((truck,index)=>{
   const row=records.find(record=>record.truckId===truck.id&&record.date===date);
-  return {'SL#':index+1,'Truck Plate#':truck.plate,Date:date,'Opening KM':row ? odometerKm(row) : null,'Daily KM Run':row ? distanceKm(row) : null};
+  return {'SL#':fleetSequence(truck.plate) ?? index+1,'Truck Plate#':truck.plate,Date:date,'Opening KM':row ? odometerKm(row) : null,'Daily KM Run':row ? distanceKm(row) : null};
  });
 }

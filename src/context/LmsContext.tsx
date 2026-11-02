@@ -1,3 +1,4 @@
+import { sortFleetTrucks, fleetSequence, FLEET_PLATE_SEQUENCE } from '../utils/fleetOrder';
 import { normalizeDispatchParties, scheduleManifestTags } from '../utils/dispatchManifest';
 import React, {
   createContext,
@@ -217,8 +218,9 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({
   } = useMemo(() => {
     const sorted = <T extends { seq?: number }>(items: T[]) =>
       [...items].sort((a, b) => (a.seq || 0) - (b.seq || 0));
-    const allTrucks = sorted<Truck>(rows.trucks || []).map((t) => ({
+    const allTrucks = sortFleetTrucks<Truck>(rows.trucks || []).map((t, index, ordered) => ({
       ...t,
+      seq: fleetSequence(t.plate) ?? FLEET_PLATE_SEQUENCE.length + ordered.slice(0, index + 1).filter(truck => !fleetSequence(truck.plate)).length,
       plateNorm: normalizePlate(t.plate),
       normalizedPlate: normalizePlate(t.plate),
     }));
