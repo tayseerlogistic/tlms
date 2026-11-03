@@ -7,6 +7,7 @@ import { Navbar } from './components/Navbar';
 const OverviewView = lazy(() => import('./components/OverviewView').then(module => ({ default: module.OverviewView })));
 const TimetableParserView = lazy(() => import('./components/TimetableParserView').then(module => ({ default: module.TimetableParserView })));
 const DailyManifestView = lazy(() => import('./components/DailyManifestView').then(module => ({ default: module.DailyManifestView })));
+const MyWebView = lazy(() => import('./components/MyWebView').then(module => ({ default: module.MyWebView })));
 const CashbookView = lazy(() => import('./components/CashbookView').then(module => ({ default: module.CashbookView })));
 const KmFuelView = lazy(() => import('./components/KmFuelView').then(module => ({ default: module.KmFuelView })));
 const SettingsView = lazy(() => import('./components/SettingsView').then(module => ({ default: module.SettingsView })));
@@ -115,6 +116,7 @@ const MainAppContent: React.FC = () => {
           {currentTab === 'manifest' && <DailyManifestView />}
           {currentTab === 'km-fuel' && <KmFuelView />}
           {currentTab === 'cashbook' && <CashbookView />}
+          {currentTab === 'my-web' && <MyWebView />}
           {currentTab === 'settings' && <SettingsView onBackToCommandCenter={() => setCurrentTab('overview')} />}
           {currentTab === 'master' && <SettingsView initialTab="master" onBackToCommandCenter={() => setCurrentTab('overview')} />}
           {currentTab === 'driver-portal' && <SettingsView initialTab="driver-portal" onBackToCommandCenter={() => setCurrentTab('overview')} />}

@@ -5,7 +5,7 @@ import { useTheme } from '../context/ThemeContext';
 import { UserRole } from '../types';
 import {
   Truck, FileSpreadsheet, ClipboardList, Wallet, Gauge,
-  Shield, LogOut, LogIn, Settings, Sun, Moon
+  Shield, LogOut, LogIn, Settings, Sun, Moon, Globe
 } from 'lucide-react';
 
 interface NavbarProps {
@@ -50,6 +50,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, setCurrentTab, onOpe
     { id: 'manifest', label: 'Daily Manifest', icon: ClipboardList, badge: undefined as number | undefined },
     { id: 'km-fuel', label: 'KM & Fuel Balancing', icon: Truck, badge: undefined as number | undefined },
     { id: 'cashbook', label: 'Cashbook Pro', icon: Wallet, badge: undefined as number | undefined },
+    { id: 'my-web', label: 'My Web', icon: Globe, badge: undefined as number | undefined },
   ];
 
   const roleColors: Record<UserRole, { bg: string; text: string; border: string }> = {
