@@ -68,6 +68,7 @@ interface LmsContextType {
   commodities: Commodity[];
   stores: StoreMapItem[];
   schedules: Record<string, DailySchedule>;
+  manifestDraftDates: string[];
   manifests: Record<string, Record<string, string>>; // date -> { driverIndex/name -> tag }
   cashTransactions: CashTransaction[];
   cashAccounts: CashAccount[];
@@ -205,6 +206,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({
     commodities,
     stores,
     manifests,
+    manifestDraftDates,
     drivers,
     schedules,
     cashTransactions,
@@ -235,12 +237,13 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({
     > = Object.fromEntries(
       (rows.manifests || []).map((m) => [m.date || m.id, m.tags || {}]),
     );
+    const manifestDraftDates = (rows.manifests || []).filter(m => m.confirmed === false).map(m => m.date || m.id);
     // History is a projection of canonical manifests, never a second persisted copy.
     const drivers = rawDrivers.map((d) => ({
       ...d,
       history: Object.fromEntries(
         Object.entries(manifests)
-          .filter(([, tags]) => tags[d.id] !== undefined)
+          .filter(([date, tags]) => !manifestDraftDates.includes(date) && tags[d.id] !== undefined)
           .map(([date, tags]) => [date, tags[d.id]]),
       ),
     }));
@@ -301,6 +304,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({
       commodities,
       stores,
       manifests,
+      manifestDraftDates,
       drivers,
       schedules,
       cashTransactions,
@@ -589,7 +593,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({
         writes.push({
           collection: "manifests",
           id: date,
-          data: { date, scheduleId: date, tags, confirmedBy: user!.uid },
+          data: { date, scheduleId: date, tags, confirmed: false, updatedBy: user!.uid },
         });
       await fleetRepository.commit(writes);
     });
@@ -600,6 +604,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({
       fleetRepository.save("manifests", date, {
         date,
         tags: normalizeTags(tags),
+        confirmed: true,
         confirmedBy: user!.uid,
       }),
     );
@@ -611,7 +616,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({
         Object.entries(data).map(([date, tags]) => ({
           collection: "manifests",
           id: date,
-          data: { date, tags: normalizeTags(tags) },
+          data: { date, tags: normalizeTags(tags), confirmed: true },
         })),
       ),
     );
@@ -1046,7 +1051,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({
           writes.push({
             collection: "manifests",
             id: date,
-            data: { date, tags: normalizeTags(tags as Record<string, string>) },
+            data: { date, tags: normalizeTags(tags as Record<string, string>), confirmed: !data.manifestDraftDates?.includes(date) },
           }),
         );
         await fleetRepository.commit(writes);
@@ -1102,6 +1107,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({
       stores,
       schedules,
       manifests,
+      manifestDraftDates,
       cashbook: {
         accounts: cashAccounts,
         transactions: cashTransactions,
@@ -1137,6 +1143,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({
     stores,
     schedules,
     manifests,
+    manifestDraftDates,
     cashTransactions,
     cashAccounts,
     cashEmployees,

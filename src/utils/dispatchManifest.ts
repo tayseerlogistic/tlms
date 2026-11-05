@@ -41,6 +41,11 @@ export function scheduleRowsForDriver(driver: Driver, rows: TimetableRow[]): Tim
   });
 }
 
+export function isWarehouseTransfer(row: Pick<TimetableRow, 'customer'|'supplier'|'store'|'destination'>): boolean {
+  return !row.supplier?.trim() && /\bWH\b|WAREHOUSE/i.test([row.store,row.destination,row.customer].join(' ')) &&
+    (!row.customer?.trim() || /TAYSEER|^TLS\b|^TPF\b/i.test(row.customer));
+}
+
 export function manifestActivity(input: TimetableRow): string {
   const row = normalizeDispatchParties(input);
   if (isInternalTransfer(row)) return 'Internal Transfer';
@@ -51,6 +56,7 @@ export function manifestActivity(input: TimetableRow): string {
     const material = canonical === 'TRONOX' ? 'CS' : commodity;
     return `${material} Collection from ${canonical || supplier}`;
   }
+  if (isWarehouseTransfer(row)) return `${commodity} Transfer ${row.destination?.trim() || 'Destination'} WH - Under Loading at ${row.source?.trim() || 'Yanbu'}`;
   return `${commodity} Supply for ${row.customer?.trim() || row.store?.trim() || 'Customer'} - Under Loading at ${row.source?.trim() || 'Yanbu'}`;
 }
 
