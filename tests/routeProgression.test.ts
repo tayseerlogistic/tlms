@@ -64,3 +64,9 @@ test('changed destinations start a new draft and full commodity names match thei
  const repeat=predictRouteProgression(d,'2026-11-02',first,[row({commodity:'Ferric Chloride'})],schedules(row()),model)!;
  assert.match(repeat.text,/On the way/);
 });
+test('an explicit travel destination can advance without a dispatch; stale loading needs an entry',()=>{
+ const tag='FC Supply for Plant - On the way to Turaif';
+ const predict=(date:string,previous:string)=>predictManifestForDriver(0,driver({'2026-11-01':previous}),date,[],previous,[],undefined,{schedules:{},model});
+ assert.match(predict('2026-11-02',tag).text,/Under Offloading at Turaif/);
+ assert.equal(predict('2026-11-03','FC Supply for Plant - Under Loading at Yanbu').text,'');
+});

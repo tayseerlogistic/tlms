@@ -208,7 +208,11 @@ export function predictManifestForDriver(
   if (progression) {
     const suggestion = predictRouteProgression(driver, date, previousTag, scheduleRowsForDriver(driver,currentScheduleRows),
       progression.schedules, progression.model || referenceTransitions as TransitionModel);
-    if (suggestion) return suggestion;
+    if (suggestion) {
+      if (!scheduleRowsForDriver(driver,currentScheduleRows).length && suggestion.conf==='low' && suggestion.text===previousTag)
+        return {...suggestion,text:''};
+      return suggestion;
+    }
   }
 
   const prevNorm = normText(previousTag);
@@ -227,9 +231,9 @@ export function predictManifestForDriver(
   if (/UNDER LOADING|ON THE WAY|BORDER|OFFLOADING|COMING BACK|COLLECTION FROM/i.test(previousTag) ||
       previousTag.includes(' / ')) {
     return {
-      text: previousTag,
+      text: progression ? '' : previousTag,
       conf: 'low',
-      reason: 'Previous recorded activity carried forward. No current dispatch evidence confirms a new stage; review before saving.'
+      reason: progression ? 'Review today’s status. The available dated history and dispatch could not establish the next trip stage.' : 'Previous recorded activity carried forward. No current dispatch evidence confirms a new stage; review before saving.'
     };
   }
   if (prevNorm) {

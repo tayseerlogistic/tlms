@@ -53,8 +53,9 @@ export function trainTransitions(observations:Observation[]):TransitionModel{
  }));
  return {version:1,through:observations.map(item=>item.date).sort().at(-1)||'',observations:observations.length,counts};
 }
-export function selectTransition(model:TransitionModel,route:Route,stage:Stage,age:number){
+export function selectTransition(model:TransitionModel,route:Route,stage:Stage,age:number,destinationOnly=false){
  for(const [index,key]of tiers(route,stage,age).entries()){
+  if(destinationOnly && index!==2)continue;
   const counts=model.counts[key];if(!counts)continue;
   const options=Object.entries(counts).sort((a,b)=>(b[1]||0)-(a[1]||0));
   const total=options.reduce((sum,[,count])=>sum+(count||0),0),best=options[0];
@@ -163,10 +164,12 @@ export function predictRouteProgression(driver:Driver,date:string,previousTag:st
   if(!activity.stage||!['supply','warehouse'].includes(activity.kind))return planned?manifestActivity(planned):activity.text;
   const compatible=past.filter(({row})=>{const route=routeFor(row);return route.kind===activity.kind&&route.commodity===activity.commodity;});
   const exact=compatible.filter(({row})=>activities(manifestActivity(row))[0]?.stem===activity.stem);
-  const candidates=exact.length?exact:compatible;
+  const candidates=exact;
   const latest=candidates[0]?.day;
   const routes=new Map(candidates.filter(item=>item.day===latest).map(({row})=>{const route=routeFor(row);return [JSON.stringify(route),route];}));
-  const route=planned?routeFor(planned):routes.size===1?[...routes.values()][0]:undefined;
+  const dispatchRoute=planned?routeFor(planned):routes.size===1?[...routes.values()][0]:undefined;
+  const recordedDestination=routes.size===0 && ['transit','waiting','offloading'].includes(activity.stage) ? city(activity.location) : '';
+  const route=dispatchRoute || (recordedDestination ? {kind:activity.kind,commodity:activity.commodity,source:'',destination:recordedDestination} : undefined);
   if(!route){warnings.push('Route is ambiguous; review required.');return activity.text;}
   if(['transit','waiting','offloading'].includes(activity.stage)&&city(activity.location)!==route.destination){
    warnings.push('Recorded location differs from route destination; review required.');return activity.text;
@@ -176,9 +179,9 @@ export function predictRouteProgression(driver:Driver,date:string,previousTag:st
    const matches=activities(history[day]).filter(item=>item.stage===activity.stage&&(returning||item.stem===activity.stem));
    if(matches.length!==1)break;age++;day=shiftISODate(day,-1);
   }
-  const result=selectTransition(model,route,activity.stage,Math.max(age,1));
-  if(!result){warnings.push('Insufficient route history; previous activity needs review.');return activity.text;}
-  warnings.push(`${route.source} → ${route.destination}, ${activity.kind}, day ${age||1} in ${activity.stage}: ${result.support} historical transitions, ${Math.round(result.confidence*100)}% chose ${result.next}.`);
+  const result=selectTransition(model,route,activity.stage,Math.max(age,1),!dispatchRoute);
+  if(!result||(!dispatchRoute&&result.next==='loading')){warnings.push('Insufficient route history; previous activity needs review.');return activity.text;}
+  warnings.push(`${dispatchRoute ? route.source+' → ' : 'Recorded destination '}${route.destination}, ${activity.kind}, day ${age||1} in ${activity.stage}: ${result.support} historical transitions, ${Math.round(result.confidence*100)}% chose ${result.next}.`);
   return renderStage(activity,route,result.next);
  };
  if(currentRows.length){

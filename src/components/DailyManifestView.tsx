@@ -164,36 +164,26 @@ export const DailyManifestView: React.FC = () => {
   // -------------------------------------------------------------
   // PREVIOUS ACTIVITY LOOKUP
   // -------------------------------------------------------------
-  const getPreviousTag = (driverIdx: number, date: string): string => {
-    const d = drivers[driverIdx];
-    if (!d) return '';
-
-    // Check confirmed manifests before date
-    const pastManifestDates = Object.keys(confirmedManifests).filter(dt => dt < date).sort();
-    if (pastManifestDates.length) {
-      const lastDate = pastManifestDates[pastManifestDates.length - 1];
-      if (confirmedManifests[lastDate]) {
-        const tag = getDriverTag(confirmedManifests[lastDate], d.id, driverIdx);
-        if (tag) return tag;
-      }
+  const predictionDrivers = useMemo(() => drivers.map((driver, index) => {
+    const history = { ...driver.history };
+    for (const [day, tags] of Object.entries(confirmedManifests)) {
+      const tag = getDriverTag(tags, driver.id, index);
+      if (tag) history[day] = tag;
     }
+    return { ...driver, history };
+  }), [drivers, confirmedManifests]);
 
-    // Check driver history object
-    if (d.history) {
-      const histDates = Object.keys(d.history).filter(dt => dt < date).sort();
-      if (histDates.length) {
-        return d.history[histDates[histDates.length - 1]];
-      }
-    }
-
-    return '';
+  const getPreviousTag = (index: number, date: string) => {
+    const history = predictionDrivers[index]?.history || {};
+    const latest = Object.keys(history).filter(day => day < date && history[day]).sort().at(-1);
+    return latest ? history[latest] : '';
   };
 
   // -------------------------------------------------------------
   // TRAINED MANIFEST PREDICTION ENGINE
   // -------------------------------------------------------------
   const predictManifestTag = (driverIdx: number, date: string, regenerate = false): ManifestSuggestion => {
-    const d = drivers[driverIdx];
+    const d = predictionDrivers[driverIdx];
     if (!d) return { text: 'At Yanbu', conf: 'low', reason: 'Driver record not found' };
 
     const confirmed = regenerate ? undefined : confirmedManifests[date]?.[d.id];
@@ -294,6 +284,10 @@ export const DailyManifestView: React.FC = () => {
       finalTags[driver.id] = localTags[driver.id] !== undefined ? localTags[driver.id] :
         (getDriverTag(todayTags, driver.id, idx) || predictManifestTag(idx, selectedDate).text);
     });
+    if (Object.values(finalTags).some(tag => !tag.trim())) {
+      showToast('Enter a status for each driver before confirming this manifest.', 'error');
+      return;
+    }
     try {
       await saveDailyManifest(selectedDate, finalTags);
       showToast('Confirmed and saved the manifest for ' + operationalDrivers.length + ' drivers on ' + selectedDate + '.', 'success');
@@ -863,7 +857,7 @@ export const DailyManifestView: React.FC = () => {
                             </div>
                             ))}</div>
                           ) : (
-                            <span className="text-slate-500 italic text-[11px]">No schedule match</span>
+                            <span className="text-slate-500 italic text-[11px]">{schedules[selectedDate]?.rows?.length ? 'No dispatch matched this driver' : 'No dispatch rows for '+selectedDate}</span>
                           )}
                         </td>
                         <td className="p-3 text-slate-300 text-xs font-mono">
@@ -877,6 +871,7 @@ export const DailyManifestView: React.FC = () => {
                           <div className="relative">
                             <textarea
                               rows={2}
+                              placeholder="Enter today’s verified status"
                               value={currentVal}
                               onChange={(e) => handleTagChange(d.id, e.target.value)}
                               className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-white text-xs font-mono focus:outline-none focus:border-blue-500 custom-scrollbar"
