@@ -1,3 +1,6 @@
+import transitionAudit from '../data/manifestTransitions.audit.json';
+import referenceTransitions from '../data/manifestTransitions.json';
+import { liveTransitionModel, type TransitionModel } from '../utils/routeProgression';
 import { parseManifestWorkbook } from '../utils/manifestWorkbook';
 import { scheduleRowsForDriver } from '../utils/dispatchManifest';
 import React, { useState, useEffect, useMemo } from 'react';
@@ -38,7 +41,7 @@ function localTodayISO(): string {
 
 export const DailyManifestView: React.FC = () => {
   const {
-    drivers, manifests, schedules, saveDailyManifest, saveMultiDayManifests,
+    drivers, manifests, manifestDraftDates, schedules, saveDailyManifest, saveMultiDayManifests,
     learnedRules, learnHistoricalRules
   } = useLms();
 
@@ -96,7 +99,9 @@ export const DailyManifestView: React.FC = () => {
   const [localTags, setLocalTags] = useState<Record<string, string>>({});
   const [autoSyncedCount, setAutoSyncedCount] = useState<number>(0);
 
-  const todayTags = manifests[selectedDate] || {};
+  const confirmedManifests = useMemo(() => Object.fromEntries(Object.entries(manifests).filter(([date]) => !manifestDraftDates.includes(date))), [manifests,manifestDraftDates]);
+  const progressionModel = useMemo(() => liveTransitionModel(referenceTransitions as TransitionModel,drivers,schedules,confirmedManifests,selectedDate),[drivers,schedules,confirmedManifests,selectedDate]);
+  const todayTags = confirmedManifests[selectedDate] || {};
   const currentSchedule = schedules[selectedDate]?.rows || [];
   const getDriverTag = (tags: Record<string, string>, driverId: string, driverIdx: number) => tags[driverId] ?? '';
 
@@ -134,7 +139,7 @@ export const DailyManifestView: React.FC = () => {
     // Yield once so the working state renders; progress is not simulated.
     await new Promise(resolve => setTimeout(resolve, 0));
     try {
-      const result = trainManifestAiModel(drivers, schedules, manifests, learnedRules);
+      const result = trainManifestAiModel(drivers, schedules, confirmedManifests, learnedRules);
       await learnHistoricalRules(result.rules);
       setModelStats(result.stats);
       showToast('Model refreshed from ' + result.stats.totalTripsIngested + ' distinct recorded driver/date/status observations. Accuracy remains unmeasured without a separate validation set.', 'success');
@@ -164,11 +169,11 @@ export const DailyManifestView: React.FC = () => {
     if (!d) return '';
 
     // Check confirmed manifests before date
-    const pastManifestDates = Object.keys(manifests).filter(dt => dt < date).sort();
+    const pastManifestDates = Object.keys(confirmedManifests).filter(dt => dt < date).sort();
     if (pastManifestDates.length) {
       const lastDate = pastManifestDates[pastManifestDates.length - 1];
-      if (manifests[lastDate]) {
-        const tag = getDriverTag(manifests[lastDate], d.id, driverIdx);
+      if (confirmedManifests[lastDate]) {
+        const tag = getDriverTag(confirmedManifests[lastDate], d.id, driverIdx);
         if (tag) return tag;
       }
     }
@@ -191,7 +196,7 @@ export const DailyManifestView: React.FC = () => {
     const d = drivers[driverIdx];
     if (!d) return { text: 'At Yanbu', conf: 'low', reason: 'Driver record not found' };
 
-    const confirmed = regenerate ? undefined : manifests[date]?.[d.id];
+    const confirmed = regenerate ? undefined : confirmedManifests[date]?.[d.id];
     const prev = getPreviousTag(driverIdx, date);
     const daySchedule = schedules[date]?.rows || [];
 
@@ -202,7 +207,8 @@ export const DailyManifestView: React.FC = () => {
       daySchedule,
       prev,
       learnedRules,
-      confirmed
+      confirmed,
+      {schedules,model:progressionModel}
     );
   };
 
@@ -231,9 +237,9 @@ export const DailyManifestView: React.FC = () => {
     setIsSyncingMulti(true);
     try {
       await saveMultiDayManifests(parsedMultiResult.manifestByDate);
-      const mergedManifests = { ...manifests };
+      const mergedManifests = { ...confirmedManifests };
       Object.entries(parsedMultiResult.manifestByDate).forEach(([date, tags]) => {
-        mergedManifests[date] = { ...(manifests[date] || {}), ...tags };
+        mergedManifests[date] = { ...(confirmedManifests[date] || {}), ...tags };
       });
       const trainingDrivers = drivers.map(driver => ({
         ...driver,
@@ -550,7 +556,7 @@ export const DailyManifestView: React.FC = () => {
 
       <div className="rounded-xl border border-slate-700 bg-slate-900 p-3 text-sm text-slate-200">
         <strong>Daily workflow:</strong> 1. Select the date. 2. Review every driver's trips and suggested status. 3. Edit if needed, then Confirm &amp; Save.
-        <p className="mt-1 text-xs text-slate-400">Schedule entries are plans. Confirm actual loading, travel and offloading before saving. All trips for each driver are included.</p>
+        <p className="mt-1 text-xs text-slate-400">Route-specific suggestions use confirmed history and days in the current stage. Review actual loading, travel and offloading before saving. All scheduled trips remain included.</p>
       </div>
       <details className="rounded-xl border border-slate-700">
         <summary className="cursor-pointer p-3 text-sm font-semibold">Suggestion tools &amp; learning details</summary>
@@ -565,7 +571,7 @@ export const DailyManifestView: React.FC = () => {
               <div className="flex items-center gap-2">
                 <h3 className="text-base font-extrabold text-white">Manifest suggestions &amp; historical patterns</h3>
                 <span className="bg-slate-700/70 text-slate-300 border border-slate-600 text-[10px] font-mono font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
-                  <Sparkles className="w-3 h-3 text-slate-400" /> Accuracy not measured
+                  <Sparkles className="w-3 h-3 text-slate-400" /> Suggestions require review
                 </span>
               </div>
               <p className="text-xs text-slate-300 mt-0.5">
@@ -607,9 +613,9 @@ export const DailyManifestView: React.FC = () => {
           </div>
 
           <div className="bg-slate-950/70 p-3 rounded-xl border border-slate-800">
-            <span className="text-[10px] font-mono uppercase text-slate-400">LEARNED PATTERNS</span>
-            <div className="text-base font-black text-purple-400 font-mono mt-0.5">{learnedRules.length || modelStats.patternsExtracted} Rules</div>
-            <div className="text-[10px] text-slate-500">Multi-day cycle transitions</div>
+            <span className="text-[10px] font-mono uppercase text-slate-400">LEARNED ROUTE TRANSITIONS</span>
+            <div className="text-base font-black text-purple-400 font-mono mt-0.5">{progressionModel.observations.toLocaleString()} Transitions</div>
+            <div className="text-[10px] text-slate-500">Route-specific timing through {progressionModel.through || 'available history'}</div>
           </div>
 
           <div className="bg-slate-950/70 p-3 rounded-xl border border-slate-800">
@@ -623,6 +629,8 @@ export const DailyManifestView: React.FC = () => {
       </div>
 
       </details>
+
+      <p className="text-xs text-slate-400">Route timing check: {(transitionAudit.nextStageAccuracy*100).toFixed(1)}% correct next stages across {transitionAudit.coveredTransitions} covered later-history cases. This is not a measured accuracy for complete daily manifests.</p>
 
       {/* 1-Day Rental / Temporary Drivers Exclusion Notice */}
       {temporaryRentScheduleDrivers.length > 0 && (

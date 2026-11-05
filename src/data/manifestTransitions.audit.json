@@ -1,0 +1,23 @@
+{
+  "sourceSheets": 46,
+  "manifestSheets": 24,
+  "scheduleSheets": 22,
+  "through": "2026-11-04",
+  "statuses": 47171,
+  "scheduleRows": 16409,
+  "conflictingCells": 2,
+  "scheduleDriverDates": 12946,
+  "sameDayDriverDateMatches": 11652,
+  "matchedActivities": 6861,
+  "ambiguousActivities": 56,
+  "transitions": 17072,
+  "trainingTransitions": 16561,
+  "holdoutTransitions": 511,
+  "holdoutStart": "2026-10-01",
+  "coveredTransitions": 444,
+  "correctTransitions": 330,
+  "unchangedStageCorrect": 78,
+  "nextStageAccuracy": 0.7432432432432432,
+  "unchangedStageAccuracy": 0.17567567567567569,
+  "note": "Chronological next-stage validation on covered cross-matched transitions; not full-manifest or live-production accuracy. Final model is then refit on all eligible prior records."
+}

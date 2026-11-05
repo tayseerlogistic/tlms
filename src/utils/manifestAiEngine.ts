@@ -1,3 +1,5 @@
+import referenceTransitions from '../data/manifestTransitions.json';
+import { predictRouteProgression, type TransitionModel } from './routeProgression';
 import { manifestForTrips, scheduleRowsForDriver } from './dispatchManifest';
 import { Driver, DailySchedule, TimetableRow, LearnedRule, ManifestSuggestion } from '../types';
 
@@ -191,7 +193,8 @@ export function predictManifestForDriver(
   currentScheduleRows: TimetableRow[],
   previousTag: string,
   learnedRules: LearnedRule[],
-  confirmedTag?: string
+  confirmedTag?: string,
+  progression?: {schedules: Record<string, DailySchedule>; model?: TransitionModel}
 ): ManifestSuggestion {
   // If already confirmed by dispatcher for this date, return locked
   if (confirmedTag) {
@@ -200,6 +203,12 @@ export function predictManifestForDriver(
       conf: 'high',
       reason: 'Confirmed & verified manifest status for this date'
     };
+  }
+
+  if (progression) {
+    const suggestion = predictRouteProgression(driver, date, previousTag, scheduleRowsForDriver(driver,currentScheduleRows),
+      progression.schedules, progression.model || referenceTransitions as TransitionModel);
+    if (suggestion) return suggestion;
   }
 
   const prevNorm = normText(previousTag);
