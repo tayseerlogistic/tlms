@@ -161,7 +161,12 @@ export function findCommodity(commodities: TimetableCommodity[], name: string): 
 
 export function shortFormFor(commodities: TimetableCommodity[], name: string): string {
   const c = findCommodity(commodities, name);
-  return c ? c.shortForm : name;
+  const aliases: Record<string, string> = {
+    'caustic soda': 'CS', 'ferric chloride': 'FC', 'hydrochloric acid': 'HCL',
+    'sulfuric acid': 'SA', 'sulphuric acid': 'SA', 'aluminium sulphate': 'AS',
+    'poly aluminium chloride': 'PAC', 'sodium metabisulphite': 'SMBS', 'sodium bisulphite': 'SBS'
+  };
+  return c?.shortForm || aliases[name.trim().toLowerCase()] || name;
 }
 
 export function buildCommodityString(
@@ -171,7 +176,7 @@ export function buildCommodityString(
   weightKg: number | string,
   equipmentType: string
 ): string {
-  const w = parseFloat(String(weightKg)) || 0;
+  const w = parseFloat(String(weightKg).replace(/,/g, '')) || 0;
   const mt = w / 1000;
   const mtStr = (mt % 1 === 0) ? String(mt) : mt.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
   const name = (material || '').trim();
@@ -229,7 +234,10 @@ export function parseMailOrder(
   const rows: TimetableRow[] = [];
 
   for (let i = 0; i < rawLines.length; i++) {
-    const raw = rawLines[i];
+    const raw = rawLines[i].trim().startsWith('|')
+      ? rawLines[i].trim().replace(/^\||\|$/g, '').split('|').map(cell => cell.trim().replace(/\*\*/g, '')).join('\t')
+      : rawLines[i].replace(/\*\*/g, '');
+    if (/^[\s|:\-]+$/.test(raw)) continue;
     const line = raw.trim();
     if (!line) continue;
 
@@ -254,6 +262,8 @@ export function parseMailOrder(
     }
     if (cells.length < 2) continue;
 
+    // Merged material cells may be empty or omitted in copied email tables.
+    if (!cells[0] && /^\d+$/.test(cells[1] || '')) cells.shift();
     let numTrucks = parseInt(cells[0]);
     if (isNaN(numTrucks)) {
       currentMaterial = cells[0];
@@ -281,6 +291,7 @@ export function parseMailOrder(
       partyName = colF;
     }
 
+    commodityRaw = commodityRaw.replace(/magnisium sulfate/ig, 'Magnesium Sulphate');
     const commodityStr = buildCommodityString(commodities, commodityRaw, packing, weight, equipped);
 
     let customer = '';
@@ -345,13 +356,13 @@ export function schedulePriority(r: Partial<TimetableRow>): number {
   const partyBlob = (String(r.supplier || '') + ' ' + String(r.customer || '')).toLowerCase();
 
   // 1) LUBEREF (either field)
-  if (partyBlob.includes('lubref') || partyBlob.includes('lubereff')) return 1;
+  if (/luberef|lubref|lubereff/.test(partyBlob)) return 1;
 
   const commodity = String(r.commodity || '');
   const customer = String(r.customer || '');
 
   // 2) TRONOX + Caustic Soda
-  if (/tronox/i.test(partyBlob) && matchComm(commodity, ['Caustic Soda', 'CS'])) return 2;
+  if (/tronox/i.test(customer) && matchComm(commodity, ['Caustic Soda', 'CS'])) return 2;
 
   // 3) Internal transfer
   const src = String(r.source || '').toLowerCase().trim();

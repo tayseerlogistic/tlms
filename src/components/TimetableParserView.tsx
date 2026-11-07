@@ -199,7 +199,7 @@ export const TimetableParserView: React.FC = () => {
     if (!currentSchedule || !currentSchedule.rows) return [];
     let rows = currentSchedule.rows.map(r => ({
       ...r,
-      priority: r.priority !== undefined ? r.priority : schedulePriority(r)
+      priority: schedulePriority(r)
     }));
 
     if (filterGroup === 'tls') {
@@ -220,7 +220,7 @@ export const TimetableParserView: React.FC = () => {
     }
 
     if (enableSort) {
-      rows.sort((a, b) => compareFleetPlates(a.plateNo, b.plateNo));
+      rows.sort((a, b) => schedulePriority(a) - schedulePriority(b) || compareFleetPlates(a.plateNo, b.plateNo));
     }
 
     return rows;
@@ -877,7 +877,7 @@ export const TimetableParserView: React.FC = () => {
 
     const groups: { label: string; rows: TimetableRow[] }[] = [];
     if (enableSort) {
-      groups.push({ label: 'Fleet sequence', rows: [...rowsList].sort((a,b)=>compareFleetPlates(a.plateNo,b.plateNo)) });
+      groups.push({ label: 'Priority sequence', rows: [...rowsList].sort((a,b)=>schedulePriority(a)-schedulePriority(b)||compareFleetPlates(a.plateNo,b.plateNo)) });
     } else {
       if (tlsRows.length) groups.push({ label: 'TLS Fleets', rows: tlsRows });
       if (extRows.length) groups.push({ label: 'External Trips', rows: extRows });
@@ -899,7 +899,7 @@ export const TimetableParserView: React.FC = () => {
               ? 'border-l-4 border-l-amber-500'
               : 'border-l-4 border-l-emerald-500';
 
-          const prio = r.priority !== undefined ? r.priority : schedulePriority(r);
+          const prio = schedulePriority(r);
           const isDragging = draggedRowId === r.id;
           const isDragOver = dragOverRowId === r.id;
 
@@ -1857,7 +1857,7 @@ export const TimetableParserView: React.FC = () => {
                   {totalRowsCount} rows · <span className="text-emerald-400">{assignedCount} assigned</span> ·{' '}
                   <span className="text-amber-400">{pendingCount} pending</span> ·{' '}
                   <span className="text-blue-400 font-bold">{totalMT.toFixed(2)} MT total</span> ·{' '}
-                  {enableSort ? 'Sorted by fleet sequence' : 'Original order'}
+                  {enableSort ? 'Sorted by priority P1–P11' : 'Original order'}
                 </div>
                 <div className="text-[11px] text-slate-500">
                   Tip: Double-click any cell to edit · Click to copy · Shift+click to copy range (TSV)
