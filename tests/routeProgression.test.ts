@@ -87,3 +87,19 @@ test('a unique dispatch yesterday supplies the destination even with no learned 
   [], schedules(row()), trainTransitions([]));
  assert.equal(result?.text, 'FC Supply for Plant - On the way to Turaif');
 });
+
+test('yesterday’s offloading suggests a return to Yanbu when today has no matching dispatch', () => {
+ for (const tag of ['SOP Supply for SONDOS - Under Offloading at Wadi Al Dawaseer',
+  'PAC Supply for SWCC - Under Offloading at Hali Dam', 'Offloading', 'Offloading Completed']) {
+  const d = driver({'2026-11-10': tag});
+  const predict = (date: string, rows: TimetableRow[] = [], confirmed?: string) =>
+   predictManifestForDriver(0, d, date, rows, tag, [], confirmed, {schedules: {}, model});
+  assert.equal(predict('2026-11-11').text, 'Coming Back to Yanbu');
+  assert.equal(predict('2026-11-11', [], 'At Yanbu').text, 'At Yanbu');
+  assert.match(predict('2026-11-11', [row()]).text, /Under Loading/);
+  assert.doesNotMatch(predict('2026-11-12').text, /Coming Back/);
+ }
+ const waiting = 'PAC Supply for SWCC - Waiting for Offloading at Hali Dam';
+ assert.doesNotMatch(predictManifestForDriver(0, driver({'2026-11-10': waiting}), '2026-11-11',
+  [], waiting, [], undefined, {schedules: {}, model: trainTransitions([])}).text, /Coming Back/);
+});

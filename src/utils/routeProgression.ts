@@ -22,7 +22,7 @@ export function activities(tag:string):Activity[]{
   let stage:Stage|null=null;
   if(/WAITING.*OFFLOAD/.test(n))stage='waiting';
   else if(/BORDER/.test(n))stage='border';
-  else if(/UNDER OFFLOAD|UNLOADING/.test(n))stage='offloading';
+  else if(/UNDER OFFLOAD|UNLOADING/.test(n) || /(?:^| - )OFFLOADING(?:$| AT | COMPLETED\b)/.test(n))stage='offloading';
   else if(/UNDER LOAD|LOADING AT/.test(n))stage='loading';
   else if(/ON THE WAY|EN ROUTE/.test(n))stage='transit';
   else if(/COMING BACK|RETURNING/.test(n))stage='returning';
@@ -149,9 +149,16 @@ export function liveTransitionModel(base:TransitionModel,drivers:Driver[],schedu
 
 export function predictRouteProgression(driver:Driver,date:string,previousTag:string,currentRows:TimetableRow[],schedules:Record<string,DailySchedule>,model:TransitionModel):ManifestSuggestion|null{
  const history=driver.history||{};
- const previousDate=Object.keys(history).filter(day=>day<date).sort().at(-1);
+ const previousDate=Object.keys(history).filter(day=>day<date && history[day]?.trim()).sort().at(-1);
  if(!previousDate||shiftISODate(previousDate,1)!==date)return null;
  const previous=activities(previousTag);
+ if (!currentRows.length && previous.length && previous.every(activity => activity.stage === 'offloading')) {
+  return {
+   text: 'Coming Back to Yanbu',
+   conf: 'medium',
+   reason: 'Yesterday’s manifest recorded offloading and today has no matching dispatch. Confirm the return with the driver.'
+  };
+ }
  const earlierTag=Object.entries(history).filter(([day])=>day<previousDate).sort(([a],[b])=>b.localeCompare(a))[0]?.[1]||'';
  const earlierActivities=activities(earlierTag).filter(activity=>['supply','warehouse'].includes(activity.kind)&&activity.stage);
  const earlierActivity=earlierActivities.length===1?earlierActivities[0]:undefined;
