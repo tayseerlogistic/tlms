@@ -722,11 +722,23 @@ html.dark {
 }
 html body .fleet-shell { background: var(--fleet-page) !important; color: var(--fleet-ink) !important; font-family: var(--font-sans); font-variant-numeric: tabular-nums; }
 html body .fleet-shell header.fleet-header { background: #17324d !important; color: white; border-color: #294866 !important; box-shadow: none; }
-html body .fleet-header :is(nav, nav button) { border-color: transparent; background: transparent !important; }
-html body .fleet-header nav button, html body .fleet-header nav button * { color: #deebf8 !important; font-size: 13px; }
-html body .fleet-header nav button:is(:hover,[aria-current="page"]) { background: #254867 !important; border-bottom-color: #91baff !important; }
-html body .fleet-header :is(.truncate, p.truncate,button[title^="Sign Out"]) { color: #f2f7ff !important; }
-html body .fleet-header button:focus-visible { outline-color: #c4ddff; }
+/* These controls always sit on navy, including in the light theme. */
+.fleet-header .fleet-nav-tab, .fleet-header .fleet-signout {
+  background: #17324d;
+  color: #fff;
+  border-bottom: 3px solid transparent;
+  font-size: 13px;
+}
+.fleet-header .fleet-nav-tab:hover, .fleet-header .fleet-signout:hover {
+  background: #294d70;
+}
+.fleet-header .fleet-nav-tab[aria-current="page"] {
+  color: #17324d;
+  background: #fff;
+  border-bottom-color: #6aa8ff;
+}
+html body .fleet-header :is(.truncate, p.truncate) { color: #f2f7ff !important; }
+.fleet-header button:focus-visible { outline: 2px solid #ffcd73; outline-offset: -2px; }
 .fleet-shell main h2 { font: 650 22px/1.3 var(--font-sans); }
 .fleet-shell main table { font-variant-numeric: tabular-nums; }
 :is(.dispatch-workspace,.followup-workspace) :is(.text-xs,[class*="text-[9px]"],[class*="text-[10px]"],[class*="text-[11px]"]) { font-size: 13px; line-height: 1.4; }

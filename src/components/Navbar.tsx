@@ -95,11 +95,9 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, setCurrentTab, onOpe
                     key={item.id}
                     aria-current={isActive ? 'page' : undefined}
                     onClick={() => setCurrentTab(item.id)}
-                    className={`flex flex-none justify-start items-center gap-2 px-2 sm:px-3.5 py-2.5 text-[11px] sm:text-xs font-semibold whitespace-nowrap transition-all border-b-2 ${isActive
-                      ? 'border-blue-500 text-white bg-slate-800/60 font-bold'
-                      : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800/30'}`}
+                    className="fleet-nav-tab flex flex-none items-center gap-2 px-2 sm:px-3.5 py-2.5 font-semibold whitespace-nowrap"
                   >
-                    <Icon className={`w-4 h-4 ${isActive ? 'text-blue-400' : 'text-slate-400'}`} />
+                    <Icon className="w-4 h-4" />
                     <span>{item.label}</span>
                     {item.badge !== undefined && (
                       <span className="bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[10px] font-bold px-1.5 py-0.2 rounded-full font-mono">
@@ -186,7 +184,8 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, setCurrentTab, onOpe
               <button
                 onClick={logout}
                 title="Sign Out of TLS Hub"
-                className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-slate-800 rounded-lg transition"
+                aria-label="Sign out"
+                className="fleet-signout p-1.5 rounded-lg"
               >
                 <LogOut className="w-4 h-4" />
               </button>
