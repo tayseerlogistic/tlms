@@ -3,7 +3,8 @@ import { normalizeDispatchParties } from './dispatchManifest';
 // Timetable Dispatch Engine & Data Services (v4)
 // =====================================================================
 
-import { TimetableRow } from '../types';
+import type { Driver, Equipment, Truck, TimetableRow } from '../types';
+import { resolveTruck } from './fleetAnalytics';
 import { ksaDateISO } from './dateUtils';
 
 export interface TimetableDriver {
@@ -21,6 +22,25 @@ export interface TimetableVehicle {
   type: 'Tanker' | 'Flatbed' | 'Dumber';
   defaultDriverId: string;
   isThirdParty: boolean;
+}
+
+/** Resolve both sides of the assignment, including older one-sided links. */
+export function assignedTripVehicle(driver: Pick<Driver, 'id' | 'assignedTruckId' | 'assignedVehiclePlate'>,
+  trucks: Truck[], equipment: Equipment[]) {
+  const candidates = trucks.filter(t => !t.archived &&
+    (t.id === driver.assignedTruckId || t.assignedDriverId === driver.id));
+  const truck = candidates[0] || (!driver.assignedTruckId && driver.assignedVehiclePlate
+    ? resolveTruck(trucks.filter(t => !t.archived), null, driver.assignedVehiclePlate) : undefined);
+  if (!truck || candidates.length > 1 || (driver.assignedTruckId && driver.assignedTruckId !== truck.id) ||
+      (truck.assignedDriverId && truck.assignedDriverId !== driver.id)) return null;
+  const units = equipment.filter(e => e.active !== false &&
+    (e.id === truck.assignedEquipmentId || e.assignedTruckId === truck.id));
+  const [unit] = units;
+  const linkedUnit = units.length === 1 && (!unit.assignedTruckId || unit.assignedTruckId === truck.id)
+    ? unit : undefined;
+  const equipmentNo = linkedUnit?.equipNo || truck.equipmentNo || '';
+  const equipmentType = linkedUnit?.type || truck.type || (equipmentNo ? deriveEquipmentType(equipmentNo) : '');
+  return { truckId: truck.id, plateNo: truck.plate, equipmentNo, equipmentType };
 }
 
 export interface TimetableCommodity {

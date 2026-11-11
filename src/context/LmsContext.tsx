@@ -581,21 +581,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({
           );
         return normalizeDispatchParties({ ...row, driverId: d?.id || null, truckId: t?.id || null });
       });
-      const tags = syncToManifest ? scheduleManifestTags(linked) : {};
-      const writes: Write[] = [
-        {
-          collection: "schedules",
-          id: date,
-          data: { date, rows: linked, confirmed: true, updatedBy: user!.uid },
-        },
-      ];
-      if (syncToManifest)
-        writes.push({
-          collection: "manifests",
-          id: date,
-          data: { date, scheduleId: date, tags, confirmed: false, updatedBy: user!.uid },
-        });
-      await fleetRepository.commit(writes);
+      await fleetRepository.saveSchedule(date, linked, syncToManifest ? scheduleManifestTags(linked) : undefined);
     });
   const deleteDailySchedule = (date: string) =>
     run(() => fleetRepository.remove("schedules", date));

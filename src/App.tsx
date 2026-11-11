@@ -44,7 +44,7 @@ const MainAppContent: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-slate-300 space-y-4">
+      <div className="fleet-shell min-h-screen bg-slate-950 flex flex-col items-center justify-center text-slate-300 space-y-4">
         <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
         <p className="text-xs font-mono tracking-wider uppercase text-slate-400">Initializing TLS Logistics Hub &amp; Firebase...</p>
       </div>
@@ -54,7 +54,7 @@ const MainAppContent: React.FC = () => {
   // If not authenticated and user hasn't explicitly chosen guest mode, show the secure Login Screen
   if (!isAuthenticated && !isGuestMode) {
     return (
-      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center px-4 py-8 relative">
+      <div className="fleet-shell min-h-screen bg-slate-950 flex flex-col items-center justify-center px-4 py-8 relative">
         <Suspense fallback={<div className="text-xs text-slate-400">Loading login…</div>}>
           <LoginView
             onSuccess={() => setIsGuestMode(false)}
@@ -69,7 +69,7 @@ const MainAppContent: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-blue-600 selection:text-white">
+    <div className="fleet-shell min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-blue-600 selection:text-white">
       {/* Top Universal Navbar */}
       <Navbar
         currentTab={currentTab}

@@ -18,6 +18,7 @@ import {
   todayISO,
   fmtDate,
   deriveEquipmentType,
+  assignedTripVehicle,
   bayanClass,
   schedulePriority,
   parseMailOrder,
@@ -57,7 +58,7 @@ export const TimetableParserView: React.FC = () => {
 
   const [showManagement, setShowManagement] = useState(false);
   // App navigation state
-  const [page, setPage] = useState<'new' | 'schedule' | 'drivers' | 'vehicles' | 'settings'>('new');
+  const [page, setPage] = useState<'new' | 'schedule' | 'drivers' | 'vehicles' | 'settings'>('schedule');
   const [view, setView] = useState<'list' | 'daily'>('list');
   // Always open on today's date after refresh; historical dates remain selectable manually.
   const [currentDate, setCurrentDate] = useState<string>(() => todayISO());
@@ -68,9 +69,10 @@ export const TimetableParserView: React.FC = () => {
 
   // Filters & display toggles
   const [searchQuery, setSearchQuery] = useState('');
+  const [phoneTable, setPhoneTable] = useState(false);
   const [filterPending, setFilterPending] = useState(false);
   const [filterGroup, setFilterGroup] = useState<'all' | 'tls' | 'ext'>('all');
-  const [enableSort, setEnableSort] = useState<boolean>(true);
+  const [enableSort, setEnableSort] = useState<boolean>(() => db.uiPrefs.enableSort !== false);
   const [showPriority, setShowPriority] = useState<boolean>(() => db.uiPrefs.showPriority !== false);
   const [isColPanelOpen, setIsColPanelOpen] = useState(false);
 
@@ -151,14 +153,6 @@ export const TimetableParserView: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Sync initial page
-  useEffect(() => {
-    const allDates = Object.keys(db.schedules).sort();
-    if (allDates.length && !newRows) {
-      setPage('schedule');
-    }
-  }, []);
-
   // -------------------------------------------------------------------
   // VISIBLE COLUMNS MANAGEMENT (Independent per view!)
   // -------------------------------------------------------------------
@@ -234,6 +228,8 @@ export const TimetableParserView: React.FC = () => {
       await navigator.clipboard.writeText(text);
       showToast('Copied: ' + (label || (text.length > 40 ? text.slice(0, 40) + '…' : text) || '(empty)'));
     } catch (e) {
+      // A denied clipboard request can settle after a double-click opens the editor.
+      if (editInputRef.current && document.activeElement === editInputRef.current) return;
       const ta = document.createElement('textarea');
       ta.value = text;
       document.body.appendChild(ta);
@@ -294,10 +290,25 @@ export const TimetableParserView: React.FC = () => {
     setEditingValue(String(row[colKey] || ''));
   };
 
+  const driverChoice = (driver: TimetableDatabase['drivers'][number]) => {
+    const name = driver.name.trim().toLowerCase();
+    return db.drivers.some(d => d.id !== driver.id && d.name.trim().toLowerCase() === name)
+      ? driver.name + ' (' + (driver.iqama || driver.id) + ')' : driver.name;
+  };
+
   const commitEditCell = async () => {
     if (!editingCell) return;
     const { rowId, colKey } = editingCell;
     const val = editingValue.trim();
+
+    const activeDrivers = colKey === 'driverName' ? masterDrivers.filter(d => d.active !== false) : [];
+    const namedDrivers = activeDrivers.filter(d => d.name.trim().toLowerCase() === val.toLowerCase());
+    const selectedDriver = namedDrivers.length === 1 ? namedDrivers[0] :
+      activeDrivers.find(d => driverChoice(d) === val && namedDrivers.length === 0);
+    if (namedDrivers.length > 1) {
+      showToast('Choose the driver by name and Iqama from the list.');
+      return;
+    }
 
     const applyUpdate = (rowList: TimetableRow[]): TimetableRow[] => {
       return rowList.map(r => {
@@ -306,13 +317,15 @@ export const TimetableParserView: React.FC = () => {
 
         // Driver Name autocomplete
         if (colKey === 'driverName') {
-          const d = db.drivers.find(x => x.name.toLowerCase() === val.toLowerCase());
-          updated.driverId = d?.id || null;
-          if (d) {
-            updated.driverId = d.id;
-                updated.driverName = d.name;
-            updated.iqama = d.iqama;
-            updated.mobile = d.mobile;
+          const driver = selectedDriver;
+          updated.driverId = driver?.id || null;
+          updated.iqama = driver?.iqama || '';
+          updated.mobile = driver?.mobile || '';
+          if (driver) {
+            updated.driverName = driver.name;
+            const vehicle = assignedTripVehicle(driver, masterTrucks, masterEquipment);
+            if (vehicle) Object.assign(updated, vehicle);
+            else showToast('No unique assigned truck. Check the plate for this trip.');
           }
         }
 
@@ -430,8 +443,9 @@ export const TimetableParserView: React.FC = () => {
 
   const handleLoadSampleTemplate = () => {
     setTemplateInput(SAMPLE_READY_TEMPLATE);
-    setTemplateFileName('Tayseer_Factory_05_Oct_2026.tsv');
-    handleParseTemplate(SAMPLE_READY_TEMPLATE);
+    setTemplateFileName('');
+    setNewRows(null);
+    setParseInfo('');
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -440,7 +454,7 @@ export const TimetableParserView: React.FC = () => {
     setTemplateFileName(file.name);
 
     const reader = new FileReader();
-    if (file.name.endsWith('.csv') || file.name.endsWith('.tsv') || file.name.endsWith('.txt')) {
+    if (/\.(tsv|txt)$/i.test(file.name)) {
       reader.onload = (event) => {
         const text = (event.target?.result as string) || '';
         setTemplateInput(text);
@@ -452,7 +466,7 @@ export const TimetableParserView: React.FC = () => {
       reader.onload = (event) => {
         try {
           const data = new Uint8Array(event.target?.result as ArrayBuffer);
-          const workbook = XLSX.read(data, { type: 'array' });
+          const workbook = XLSX.read(data, { type: 'array', raw: true });
           const firstSheetName = workbook.SheetNames[0];
           const worksheet = workbook.Sheets[firstSheetName];
           const tsv = XLSX.utils.sheet_to_csv(worksheet, { FS: '\t' });
@@ -856,21 +870,6 @@ export const TimetableParserView: React.FC = () => {
   // -------------------------------------------------------------------
   // RENDER HELPERS
   // -------------------------------------------------------------------
-  const getPrioBadgeClass = (prio: number) => {
-    if (prio === 1) return 'bg-rose-600 text-white border-rose-700';
-    if (prio === 2) return 'bg-orange-600 text-white border-orange-700';
-    if (prio === 3) return 'bg-amber-600 text-white border-amber-700';
-    if (prio === 4) return 'bg-yellow-600 text-white border-yellow-700';
-    if (prio === 5) return 'bg-lime-600 text-white border-lime-700';
-    if (prio === 6) return 'bg-emerald-600 text-white border-emerald-700';
-    if (prio === 7) return 'bg-cyan-600 text-white border-cyan-700';
-    if (prio === 8) return 'bg-blue-600 text-white border-blue-700';
-    if (prio === 9) return 'bg-violet-600 text-white border-violet-700';
-    if (prio === 10) return 'bg-purple-600 text-white border-purple-700';
-    if (prio === 11) return 'bg-fuchsia-600 text-white border-fuchsia-700';
-    return 'bg-slate-700 text-slate-300 border-slate-600';
-  };
-
   const renderTableRows = (rowsList: TimetableRow[], isPreview: boolean = false) => {
     const tlsRows = rowsList.filter(r => !r.transporter || r.transporter === 'TLS');
     const extRows = rowsList.filter(r => r.transporter && r.transporter !== 'TLS');
@@ -963,7 +962,7 @@ export const TimetableParserView: React.FC = () => {
               {/* Dynamic Columns */}
               {visibleColumns.map((colKey, idx) => {
                 const colDef = COLUMNS.find(c => c.key === colKey);
-                const isSticky = colKey === 'driverName';
+                const isSticky = colKey === 'driverName' || colKey === 'plateNo';
                 const val = r[colKey] || '';
                 const isBayan = colKey === 'bayanExpiry';
                 const bayanStyle = isBayan && val ? bayanClass(String(val)) : '';
@@ -975,6 +974,7 @@ export const TimetableParserView: React.FC = () => {
                 return (
                   <td
                     key={colKey}
+                    data-field={colKey}
                     onDoubleClick={e => {
                       e.stopPropagation();
                       startEditCell(r, colKey);
@@ -1084,9 +1084,7 @@ export const TimetableParserView: React.FC = () => {
                         {/* Priority Badge on the first visible cell */}
                         {showPriority && idx === 0 && (
                           <span
-                            className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-black border font-mono ${getPrioBadgeClass(
-                              prio
-                            )}`}
+                            className="priority-code"
                             title={`Priority ${prio}`}
                           >
                             {prio === 999 ? '—' : `P${prio}`}
@@ -1096,6 +1094,7 @@ export const TimetableParserView: React.FC = () => {
                         {val ? (
                           <div className="flex items-center gap-1.5 truncate">
                             <span className="truncate">{val}</span>
+                            {isBayan && bayanStyle && <span>{/^\d{4}-\d{2}-\d{2}$/.test(String(val)) && String(val) < todayISO() ? 'Expired' : 'Check expiry'}</span>}
                             {colKey === 'driverName' && (() => {
                               const valStr = String(val || '').toUpperCase().trim();
                               const isPermanent = db.drivers.some((d: any) => {
@@ -1148,7 +1147,7 @@ export const TimetableParserView: React.FC = () => {
   const allSavedDates = Object.keys(db.schedules).sort().reverse();
 
   return (
-    <div className="space-y-4">
+    <div className="dispatch-workspace space-y-4">
       {/* Toast popup */}
       {toastMsg && (
         <div className="fixed bottom-6 right-6 bg-slate-900 text-white border border-blue-500/60 px-4 py-2.5 rounded-xl text-xs font-mono shadow-2xl z-50 animate-fade-in flex items-center gap-2">
@@ -1163,12 +1162,10 @@ export const TimetableParserView: React.FC = () => {
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-2.5 sm:p-3 shadow-xl flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2 sm:gap-3">
           <div className="flex items-center gap-2">
-            <span className="text-base sm:text-lg font-black tracking-tight text-white flex items-center gap-1.5 font-mono">
-              <Calendar className="w-5 h-5 text-blue-400" /> Timetable
-            </span>
-            <span className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-blue-500/20 text-blue-400 border border-blue-500/30">
-              v4
-            </span>
+            <h2 className="tracking-tight flex items-center gap-1.5">
+              <Calendar className="w-5 h-5 text-blue-400" /> Schedule
+            </h2>
+
           </div>
 
           {/* Navigation tabs */}
@@ -1181,7 +1178,7 @@ export const TimetableParserView: React.FC = () => {
                   : 'text-slate-400 hover:text-white hover:bg-slate-800'
               }`}
             >
-              <Plus className="w-3.5 h-3.5" /> Create / Import
+              <Plus className="w-3.5 h-3.5" /> Import / Create
             </button>
 
             {/* Open ▾ Dropdown */}
@@ -1283,10 +1280,6 @@ export const TimetableParserView: React.FC = () => {
         )}
       </div>
 
-      <div className="rounded-xl border border-slate-700 bg-slate-900 p-3 text-sm text-slate-200">
-        <strong>Schedule workflow:</strong> Import or create trips → check date, driver, route and supplier/customer → save → review the Daily Manifest.
-        <p className="mt-1 text-xs text-slate-400">Keep a separate row for every trip, even when the same driver travels twice. Driver and vehicle management is under Manage.</p>
-      </div>
       {/* =============================================================
           PAGE 1: NEW (OPTION 1: MAIL ORDER & OPTION 2: READY TEMPLATE)
           ============================================================= */}
@@ -1316,10 +1309,7 @@ export const TimetableParserView: React.FC = () => {
                   }`}
                 >
                   <FileSpreadsheet className="w-3.5 h-3.5" />
-                  <span>Option 2: Ready Sheet / Template</span>
-                  <span className="text-[10px] px-1.5 py-0.5 bg-emerald-500/20 text-emerald-300 rounded border border-emerald-500/30">
-                    New
-                  </span>
+                  <span>Excel or pasted sheet</span>
                 </button>
 
                 <button
@@ -1332,7 +1322,7 @@ export const TimetableParserView: React.FC = () => {
                   }`}
                 >
                   <FileText className="w-3.5 h-3.5" />
-                  <span>Option 1: Mail Order Schedule</span>
+                  <span>Mail order</span>
                 </button>
               </div>
             </div>
@@ -1376,7 +1366,7 @@ export const TimetableParserView: React.FC = () => {
                   <textarea
                     value={templateInput}
                     onChange={e => setTemplateInput(e.target.value)}
-                    placeholder={`Tayseer Group Factory\nMonday, 5 October 2026\nDriver Name\tIqama #\tDriver Mobile #\tEquipment#\tVehicle Plate No\tSource\tDestination\tCustomer\tSupplier\tStore\tEquipment Type\tCommodity\tWaybill#\tDN Number\tTransporter\tNotes\tBayan Expairy\nTLS Fleets\nMUHAMMAD FAYYAZ AWAN\t2326626773\t595343932\tDT-01\tأ ح د D J A 4829\tYanbu\tYanbu\t\tLUBEREF\tTayseer Group Factory\tDumber\tSULPHUR / 25 MT\t51135\t\tTLS\t\t\nSARU IBRAHIM\t2598393839\t531330746\t135HCL19\tأ ر ك K R A 7503\tYanbu\tYanbu\t\tTRONOX\tTLS Warehouse\tTanker\tCS / 25 MT\t51140\t\tTLS\t\t\n...`}
+                    placeholder="Paste the header and trip rows from your spreadsheet."
                     rows={10}
                     className="w-full bg-slate-950 border border-slate-700/80 rounded-xl p-3.5 text-xs text-slate-100 font-mono focus:outline-none focus:border-blue-500 custom-scrollbar leading-relaxed"
                   />
@@ -1406,9 +1396,9 @@ export const TimetableParserView: React.FC = () => {
                       type="button"
                       onClick={handleLoadSampleTemplate}
                       className="bg-purple-900/40 hover:bg-purple-800/50 text-purple-200 border border-purple-500/40 font-semibold text-xs px-3.5 py-2.5 rounded-xl transition flex items-center gap-1.5"
-                      title="Load Tayseer Group Factory 05-Oct-2026 Sample (39 rows)"
+                      title="Insert the official schedule column headings"
                     >
-                      <Sparkles className="w-3.5 h-3.5 text-purple-400" /> Load Sample Ready Schedule
+                      <Sparkles className="w-3.5 h-3.5 text-purple-400" /> Insert column headers
                     </button>
 
                     <button
@@ -1420,58 +1410,12 @@ export const TimetableParserView: React.FC = () => {
                     </button>
                   </div>
 
-                  {newRows && newRows.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={handleSaveNew}
-                      className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-5 py-2.5 rounded-xl shadow-lg flex items-center gap-2 transition"
-                    >
-                      <Check className="w-4 h-4" /> Save as {fmtDate(newDate || todayISO())} ({newRows.length} Dispatches)
-                    </button>
-                  )}
                 </div>
 
-                {/* Column Structure Badge */}
-                <div className="bg-slate-950/70 border border-slate-800/80 rounded-xl p-2.5 text-[11px] font-mono text-slate-400 flex flex-wrap items-center gap-x-2 gap-y-1">
-                  <span className="text-slate-200 font-bold">Headers:</span>
-                  <span>Driver Name</span>
-                  <span className="text-slate-600">·</span>
-                  <span>Iqama #</span>
-                  <span className="text-slate-600">·</span>
-                  <span>Mobile #</span>
-                  <span className="text-slate-600">·</span>
-                  <span>Plate No</span>
-                  <span className="text-slate-600">·</span>
-                  <span className="text-sky-300 font-bold bg-sky-950/80 px-1.5 py-0.5 rounded border border-sky-700/60" title="Equipment Number like DT-01, 135HCL19, 4004006">
-                    Equipment# (Unit ID)
-                  </span>
-                  <span className="text-slate-600">·</span>
-                  <span>Customer</span>
-                  <span className="text-slate-600">·</span>
-                  <span>Source</span>
-                  <span className="text-slate-600">·</span>
-                  <span>Destination</span>
-                  <span className="text-slate-600">·</span>
-                  <span>Commodity</span>
-                  <span className="text-slate-600">·</span>
-                  <span>Supplier</span>
-                  <span className="text-slate-600">·</span>
-                  <span>Store</span>
-                  <span className="text-slate-600">·</span>
-                  <span className="text-amber-300 font-bold bg-amber-950/80 px-1.5 py-0.5 rounded border border-amber-700/60" title="Equipment Type like Dumber, Tanker, Flatbed">
-                    Equipment Type (Dumber/Tanker/Flatbed)
-                  </span>
-                  <span className="text-slate-600">·</span>
-                  <span>Waybill#</span>
-                  <span className="text-slate-600">·</span>
-                  <span>DN Number</span>
-                  <span className="text-slate-600">·</span>
-                  <span>Transporter</span>
-                  <span className="text-slate-600">·</span>
-                  <span>Notes</span>
-                  <span className="text-slate-600">·</span>
-                  <span>Bayan Expiry</span>
-                </div>
+                <details className="driver-details">
+                  <summary>Spreadsheet columns</summary>
+                  <p>{OFFICIAL_EXPORT_COLUMNS.map(([, label]) => label).join(' · ')}</p>
+                </details>
               </div>
             )}
 
@@ -1515,15 +1459,6 @@ export const TimetableParserView: React.FC = () => {
                     </button>
                   </div>
 
-                  {newRows && newRows.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={handleSaveNew}
-                      className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-5 py-2.5 rounded-xl shadow-lg flex items-center gap-2 transition"
-                    >
-                      <Check className="w-4 h-4" /> Save as {fmtDate(newDate || todayISO())}
-                    </button>
-                  )}
                 </div>
               </div>
             )}
@@ -1536,26 +1471,29 @@ export const TimetableParserView: React.FC = () => {
                 <div>
                   <h4 className="text-xs font-bold text-white font-mono uppercase tracking-wider flex items-center gap-2">
                     <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                    Live Preview ({newRows.length} Rows) for {fmtDate(newDate || todayISO())}
+                    Review imported trips
                   </h4>
                   <p className="text-[11px] text-slate-400 mt-0.5 flex items-center gap-1.5">
                     <GripVertical className="w-3 h-3 text-blue-400" />
                     <span><b>Manual sequence reordering:</b> Drag the (⋮⋮) grip icon or click ↑ / ↓ arrows on any row to change its sequence order. Double-click cells to edit.</span>
                   </p>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <label>Schedule date <input type="date" value={newDate || ''} onChange={e => setNewDate(e.target.value)} /></label>
+                  <span>{newRows.length} trips</span>
                   <button
                     type="button"
                     onClick={handleSaveNew}
-                    className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-4 py-2 rounded-xl shadow flex items-center gap-1.5 transition"
+                    disabled={!newDate}
+                    className="fleet-primary bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-4 py-2 rounded-xl shadow flex items-center gap-1.5 transition"
                   >
-                    <Check className="w-3.5 h-3.5" /> Save as {fmtDate(newDate || todayISO())}
+                    <Check className="w-3.5 h-3.5" /> Save schedule
                   </button>
                 </div>
               </div>
 
               <div className="overflow-x-auto max-h-[500px] custom-scrollbar border border-slate-800 rounded-xl">
-                <table className="w-full text-left border-collapse text-xs">
+                <table className="dispatch-sheet w-full text-left border-collapse text-xs">
                   <thead className="bg-slate-950 text-slate-400 font-mono sticky top-0 z-20 border-b border-slate-800">
                     <tr>
                       <th className="w-16 min-w-[64px] text-center py-2.5 px-1 sticky left-0 bg-slate-950 z-30 font-mono text-[10px] text-slate-500">
@@ -1563,10 +1501,11 @@ export const TimetableParserView: React.FC = () => {
                       </th>
                       {visibleColumns.map(colKey => {
                         const colDef = COLUMNS.find(c => c.key === colKey);
-                        const isSticky = colKey === 'driverName';
+                        const isSticky = colKey === 'driverName' || colKey === 'plateNo';
                         return (
                           <th
                             key={colKey}
+                            data-field={colKey}
                             className={`py-2.5 px-3 whitespace-nowrap font-bold ${
                               isSticky ? 'sticky left-16 bg-slate-950 z-20 text-white' : ''
                             }`}
@@ -1595,7 +1534,7 @@ export const TimetableParserView: React.FC = () => {
             <div className="bg-slate-900 border border-slate-800 rounded-2xl p-10 text-center text-slate-400 space-y-3">
               <h3 className="text-base font-bold text-white">No schedule found for {fmtDate(currentDate)}</h3>
               <p className="text-xs">
-                Click <b>New</b> to paste a mail order, or use the <b>Open</b> dropdown above to view an existing schedule.
+                Import an Excel sheet, paste a mail order, or open a saved schedule.
               </p>
               <button
                 onClick={() => setPage('new')}
@@ -1612,7 +1551,7 @@ export const TimetableParserView: React.FC = () => {
                   <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-400" />
                   <input
                     type="text"
-                    placeholder="🔍 Search any value..."
+                    placeholder="Search trips" aria-label="Search trips"
                     value={searchQuery}
                     onChange={e => setSearchQuery(e.target.value)}
                     className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-8 pr-3 py-1.5 text-xs text-white placeholder-slate-400 outline-none focus:border-blue-500"
@@ -1643,7 +1582,7 @@ export const TimetableParserView: React.FC = () => {
                       : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-white'
                   }`}
                 >
-                  ⚠ Pending
+                  Pending ({pendingCount})
                 </button>
 
                 <button
@@ -1738,22 +1677,17 @@ export const TimetableParserView: React.FC = () => {
                   <Plus className="w-3.5 h-3.5" /> Add Row
                 </button>
 
-                <button
-                  onClick={exportExcel}
-                  className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-xl text-xs font-bold shadow transition flex items-center gap-1"
-                >
-                  <Download className="w-3.5 h-3.5" /> Excel
-                </button>
-
-                <button
-                  onClick={exportCsv}
-                  className="bg-slate-950 hover:bg-slate-800 text-slate-300 border border-slate-800 px-3 py-1.5 rounded-xl text-xs font-semibold transition flex items-center gap-1"
-                >
-                  CSV
-                </button>
+                <details className="export-options">
+                  <summary>Export</summary>
+                  <div>
+                    <button onClick={exportExcel}>Excel (.xlsx)</button>
+                    <button onClick={exportCsv}>CSV (.csv)</button>
+                  </div>
+                </details>
 
                 <button
                   onClick={handleDeleteSchedule}
+                  aria-label="Delete schedule"
                   className="text-rose-400 hover:text-rose-300 hover:bg-rose-950/40 border border-rose-900/50 px-2.5 py-1.5 rounded-xl text-xs font-semibold transition"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
@@ -1811,9 +1745,25 @@ export const TimetableParserView: React.FC = () => {
               </div>
 
               {/* Main Timetable */}
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-2xl">
+              <button className="phone-view-toggle" aria-pressed={phoneTable} onClick={() => setPhoneTable(!phoneTable)}>
+                {phoneTable ? 'Show trip cards' : 'Open editable table'}
+              </button>
+              {!phoneTable && <div className="phone-trips">
+                {currentVisibleRows.map(trip => (
+                  <details className="trip-card" key={trip.id}>
+                    <summary>
+                      <strong>{trip.driverName || 'Unassigned driver'}</strong> <span>{trip.plateNo || 'No plate'}</span>
+                      <div>{trip.source || '—'} → {trip.destination || '—'}</div>
+                    </summary>
+                    <dl>{OFFICIAL_EXPORT_COLUMNS.filter(([key]) => !['driverName','plateNo','source','destination'].includes(key)).map(([key, label]) =>
+                      <div key={key}><dt>{label}</dt><dd>{trip[key] || '—'}</dd></div>)}</dl>
+                  </details>
+                ))}
+                {!currentVisibleRows.length && <p>No trips match these filters.</p>}
+              </div>}
+              <div className={`${phoneTable ? '' : 'desktop-sheet'} bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-2xl`}>
                 <div className="overflow-x-auto max-h-[calc(100vh-320px)] custom-scrollbar">
-                  <table className="w-full text-left border-collapse text-xs">
+                  <table className="dispatch-sheet w-full text-left border-collapse text-xs">
                     <thead className="bg-slate-950 text-slate-400 font-mono sticky top-0 z-20 border-b border-slate-800 shadow">
                       <tr>
                         <th className="w-16 min-w-[64px] text-center py-2.5 px-1 sticky left-0 bg-slate-950 z-30 font-mono text-[10px] text-slate-500">
@@ -1821,10 +1771,11 @@ export const TimetableParserView: React.FC = () => {
                         </th>
                         {visibleColumns.map(colKey => {
                           const colDef = COLUMNS.find(c => c.key === colKey);
-                          const isSticky = colKey === 'driverName';
+                          const isSticky = colKey === 'driverName' || colKey === 'plateNo';
                           return (
                             <th
                               key={colKey}
+                              data-field={colKey}
                               className={`py-2.5 px-3 whitespace-nowrap font-bold text-slate-300 ${
                                 isSticky ? 'sticky left-16 bg-slate-950 z-20 text-white' : ''
                               }`}
@@ -1902,7 +1853,7 @@ export const TimetableParserView: React.FC = () => {
           </div>
 
           <div className="overflow-x-auto max-h-[600px] custom-scrollbar border border-slate-800 rounded-xl">
-            <table className="w-full text-left border-collapse text-xs">
+            <table className="dispatch-sheet w-full text-left border-collapse text-xs">
               <thead className="bg-slate-950 text-slate-400 font-mono sticky top-0 z-10 border-b border-slate-800">
                 <tr>
                   <th className="p-3 w-[45%]">Name</th>
@@ -1997,7 +1948,7 @@ export const TimetableParserView: React.FC = () => {
           </div>
 
           <div className="overflow-x-auto max-h-[600px] custom-scrollbar border border-slate-800 rounded-xl">
-            <table className="w-full text-left border-collapse text-xs">
+            <table className="dispatch-sheet w-full text-left border-collapse text-xs">
               <thead className="bg-slate-950 text-slate-400 font-mono sticky top-0 z-10 border-b border-slate-800">
                 <tr>
                   <th className="p-3 w-[22%]">Equipment#</th>
@@ -2101,7 +2052,7 @@ export const TimetableParserView: React.FC = () => {
             </div>
 
             <div className="overflow-x-auto max-h-[400px] custom-scrollbar border border-slate-800 rounded-xl">
-              <table className="w-full text-left border-collapse text-xs">
+              <table className="dispatch-sheet w-full text-left border-collapse text-xs">
                 <thead className="bg-slate-950 text-slate-400 font-mono sticky top-0 z-10 border-b border-slate-800">
                   <tr>
                     <th className="p-3 w-[30%]">Canonical Name</th>
@@ -2190,7 +2141,7 @@ export const TimetableParserView: React.FC = () => {
             </div>
 
             <div className="overflow-x-auto max-h-[300px] custom-scrollbar border border-slate-800 rounded-xl">
-              <table className="w-full text-left border-collapse text-xs">
+              <table className="dispatch-sheet w-full text-left border-collapse text-xs">
                 <thead className="bg-slate-950 text-slate-400 font-mono sticky top-0 z-10 border-b border-slate-800">
                   <tr>
                     <th className="p-3 w-[45%]">Destination Key</th>
@@ -2323,7 +2274,7 @@ export const TimetableParserView: React.FC = () => {
       {/* Datalists for autocompleting driver name, equipment#, and plate# */}
       <datalist id="dl-drivers-tt-edit">
         {db.drivers.map(d => (
-          <option key={d.id} value={d.name}>
+          <option key={d.id} value={driverChoice(d)}>
             {d.iqama ? `Iqama: ${d.iqama}` : ''}
           </option>
         ))}

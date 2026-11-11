@@ -3,7 +3,7 @@ import referenceTransitions from '../data/manifestTransitions.json';
 import { liveTransitionModel, type TransitionModel } from '../utils/routeProgression';
 import { parseManifestWorkbook } from '../utils/manifestWorkbook';
 import { scheduleRowsForDriver } from '../utils/dispatchManifest';
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useLms } from '../context/LmsContext';
 import { useAuth } from '../context/AuthContext';
 import { ManifestSuggestion, LearnedRule } from '../types';
@@ -42,7 +42,7 @@ function localTodayISO(): string {
 export const DailyManifestView: React.FC = () => {
   const {
     drivers, manifests, manifestDraftDates, schedules, saveDailyManifest, saveMultiDayManifests,
-    learnedRules, learnHistoricalRules
+    loadingStates, errorStates, learnedRules, learnHistoricalRules
   } = useLms();
 
   const { isDispatcher, isAdmin } = useAuth();
@@ -92,17 +92,26 @@ export const DailyManifestView: React.FC = () => {
   };
 
   // Search and filters for Manifest Table
+  const [phoneTable, setPhoneTable] = useState(false);
   const [manifestSearch, setManifestSearch] = useState('');
-  const [manifestFilter, setManifestFilter] = useState<'all' | 'scheduled' | 'transit' | 'offloading' | 'returning'>('all');
+  const [manifestFilter, setManifestFilter] = useState<'all' | 'review' | 'scheduled' | 'transit' | 'offloading' | 'returning'>('all');
 
   // Editable tags for currently selected date
-  const [localTags, setLocalTags] = useState<Record<string, string>>({});
-  const [autoSyncedCount, setAutoSyncedCount] = useState<number>(0);
+  const [edits, setEdits] = useState<Record<string, Record<string, string>>>({});
+  const localTags = edits[selectedDate] || {};
+  const setLocalTags = (tags: Record<string, string>) => setEdits(prev => ({ ...prev, [selectedDate]: tags }));
+  const [saving, setSaving] = useState(false);
+  const storedTags = manifests[selectedDate] || {};
+  const unmatched = Object.entries(storedTags).filter(([id]) => !operationalDrivers.some(driver => driver.id === id));
 
   const confirmedManifests = useMemo(() => Object.fromEntries(Object.entries(manifests).filter(([date]) => !manifestDraftDates.includes(date))), [manifests,manifestDraftDates]);
   const progressionModel = useMemo(() => liveTransitionModel(referenceTransitions as TransitionModel,drivers,schedules,confirmedManifests,selectedDate),[drivers,schedules,confirmedManifests,selectedDate]);
   const todayTags = confirmedManifests[selectedDate] || {};
+  const needsReview = (id: string) => !todayTags[id]?.trim() ||
+    (localTags[id] !== undefined && localTags[id] !== todayTags[id]);
+  const reviewCount = operationalDrivers.filter(driver => needsReview(driver.id)).length;
   const currentSchedule = schedules[selectedDate]?.rows || [];
+  const autoSyncedCount = currentSchedule.length;
   const getDriverTag = (tags: Record<string, string>, driverId: string, driverIdx: number) => tags[driverId] ?? '';
 
   // Identify temporary / 1-day rental drivers in today's schedule who are NOT in the 64 master fleet sequence
@@ -205,21 +214,21 @@ export const DailyManifestView: React.FC = () => {
   // -------------------------------------------------------------
   // MULTI-DAY PREVIOUS MANIFEST INGESTION HANDLERS
   // -------------------------------------------------------------
-  const handleParseMulti = (customText?: string) => {
+  const handleParseMulti = (customText?: string, month = multiPasteMonth) => {
     const textToUse = customText !== undefined ? customText : multiPasteText;
     if (!textToUse.trim()) {
       showToast("Please paste the previous daily manifest sheet text first.", 'error');
       return;
     }
 
-    const res = parseMultiDayManifest(textToUse, drivers, multiPasteMonth);
+    const res = parseMultiDayManifest(textToUse, drivers, month);
     setParsedMultiResult(res);
   };
 
   const handleLoadSampleMulti = () => {
     setMultiPasteText(SAMPLE_OCTOBER_1_4_MANIFEST_TEXT);
     setMultiPasteMonth('2026-10');
-    handleParseMulti(SAMPLE_OCTOBER_1_4_MANIFEST_TEXT);
+    handleParseMulti(SAMPLE_OCTOBER_1_4_MANIFEST_TEXT, '2026-10');
   };
 
   const handleApplyMultiSync = async () => {
@@ -256,22 +265,8 @@ export const DailyManifestView: React.FC = () => {
   // -------------------------------------------------------------
   // AUTO-SYNC SCHEDULE ON DATE CHANGE OR MOUNT
   // -------------------------------------------------------------
-  useEffect(() => {
-    const schedRows = schedules[selectedDate]?.rows || [];
-    setAutoSyncedCount(schedRows.length);
-
-    // Initialize localTags with predicted tags or confirmed tags
-    const initial: Record<string, string> = {};
-    operationalDrivers.forEach(driver => {
-      const idx = drivers.findIndex(item => item.id === driver.id);
-      const existing = getDriverTag(todayTags, driver.id, idx);
-      initial[driver.id] = existing || predictManifestTag(idx, selectedDate).text;
-    });
-    setLocalTags(initial);
-  }, [selectedDate, schedules, manifests, drivers, operationalDrivers]);
-
   const handleTagChange = (driverId: string, val: string) => {
-    setLocalTags(prev => ({ ...prev, [driverId]: val }));
+    setEdits(prev => ({ ...prev, [selectedDate]: { ...prev[selectedDate], [driverId]: val } }));
   };
 
   // -------------------------------------------------------------
@@ -282,17 +277,25 @@ export const DailyManifestView: React.FC = () => {
     operationalDrivers.forEach(driver => {
       const idx = drivers.findIndex(item => item.id === driver.id);
       finalTags[driver.id] = localTags[driver.id] !== undefined ? localTags[driver.id] :
-        (getDriverTag(todayTags, driver.id, idx) || predictManifestTag(idx, selectedDate).text);
+        (getDriverTag(storedTags, driver.id, idx) || predictManifestTag(idx, selectedDate).text);
     });
+    if (!operationalDrivers.length || saving) return;
     if (Object.values(finalTags).some(tag => !tag.trim())) {
       showToast('Enter a status for each driver before confirming this manifest.', 'error');
       return;
     }
     try {
+      setSaving(true);
       await saveDailyManifest(selectedDate, finalTags);
+      setEdits(previous => {
+        const remaining = Object.entries(previous[selectedDate] || {}).filter(([id, value]) => value !== finalTags[id]);
+        return { ...previous, [selectedDate]: Object.fromEntries(remaining) };
+      });
       showToast('Confirmed and saved the manifest for ' + operationalDrivers.length + ' drivers on ' + selectedDate + '.', 'success');
     } catch (error) {
       showToast(error instanceof Error ? 'Manifest was not saved: ' + error.message : 'Manifest was not saved. Check the connection and permissions.', 'error');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -416,7 +419,7 @@ export const DailyManifestView: React.FC = () => {
         'Driver Name': driver.name,
         'Employee No': driver.empNo,
         'Vehicle Plate': driver.assignedVehiclePlate || '—',
-        [selectedDate]: localTags[driver.id] !== undefined ? localTags[driver.id] : (getDriverTag(todayTags, driver.id, idx) || predictManifestTag(idx, selectedDate).text)
+        [selectedDate]: localTags[driver.id] !== undefined ? localTags[driver.id] : (getDriverTag(storedTags, driver.id, idx) || predictManifestTag(idx, selectedDate).text)
       };
     });
 
@@ -427,19 +430,19 @@ export const DailyManifestView: React.FC = () => {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="followup-workspace space-y-4">
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h2 className="text-xl sm:text-2xl font-black text-white flex items-center gap-2">
-            <ClipboardList className="w-6 h-6 text-emerald-400" /> TLS Daily Fleet Manifest
+            <ClipboardList className="w-6 h-6 text-emerald-400" /> Daily follow-up
           </h2>
           <p className="text-xs text-slate-400 mt-1">
-            Browser-first &bull; Auto-sync with Timetable Dispatch &bull; AI-Trained Heuristic Progression
+            {operationalDrivers.length} drivers · {currentSchedule.length} scheduled trips · {reviewCount} need review
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <div className="flex items-center gap-1.5 bg-slate-800 border border-slate-700 rounded-xl px-2 py-1">
             <button
               onClick={() => setSelectedDate(shiftDateStr(selectedDate, -1))}
@@ -501,13 +504,26 @@ export const DailyManifestView: React.FC = () => {
             <Download className="w-3.5 h-3.5" /> Export Excel
           </button>
           <button
+            disabled={saving || !operationalDrivers.length || loadingStates.manifests || !!errorStates.manifests}
             onClick={handleConfirmAndSave}
-            className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-4 py-2 rounded-xl shadow-lg flex items-center gap-1.5 transition cursor-pointer"
+            className="fleet-primary bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-4 py-2 rounded-xl shadow-lg flex items-center gap-1.5 transition cursor-pointer"
           >
-            <Check className="w-4 h-4" /> Confirm & Save Selected Date
+            <Check className="w-4 h-4" /> Confirm daily follow-up
           </button>
         </div>
       </div>
+
+      <div className="flex flex-wrap items-center gap-3 text-sm">
+        <strong>{errorStates.manifests ? 'Manifest history unavailable' : loadingStates.manifests ? 'Loading manifest history…' :
+          manifests[selectedDate] ? (manifestDraftDates.includes(selectedDate) ? 'Saved draft — review before confirming' : 'Confirmed manifest') : 'No saved manifest'} · {selectedDate}</strong>
+        <label>Open saved manifest <select value={manifests[selectedDate] ? selectedDate : ''} onChange={e => e.target.value && setSelectedDate(e.target.value)}>
+          <option value="">Choose date</option>
+          {Object.keys(manifests).sort().reverse().map(date => <option key={date} value={date}>{date} · {manifestDraftDates.includes(date) ? 'Draft' : 'Confirmed'}</option>)}
+        </select></label>
+      </div>
+      {unmatched.length > 0 && <details><summary>Saved entries without a matching driver ({unmatched.length})</summary>
+        {unmatched.map(([id, tag]) => <p key={id}>{id} — {tag}</p>)}
+      </details>}
 
       {/* Dynamic In-App Notification Toast */}
       {notification && (
@@ -547,84 +563,6 @@ export const DailyManifestView: React.FC = () => {
           </span>
         </div>
       )}
-
-      <div className="rounded-xl border border-slate-700 bg-slate-900 p-3 text-sm text-slate-200">
-        <strong>Daily workflow:</strong> 1. Select the date. 2. Review every driver's trips and suggested status. 3. Edit if needed, then Confirm &amp; Save.
-        <p className="mt-1 text-xs text-slate-400">Route-specific suggestions use confirmed history and days in the current stage. Review actual loading, travel and offloading before saving. All scheduled trips remain included.</p>
-      </div>
-      <details className="rounded-xl border border-slate-700">
-        <summary className="cursor-pointer p-3 text-sm font-semibold">Suggestion tools &amp; learning details</summary>
-      {/* AI Training & Accuracy Center Banner */}
-      <div className="bg-gradient-to-r from-slate-900 via-slate-800/95 to-slate-900 border border-slate-700 rounded-2xl p-5 shadow-2xl space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-purple-600/20 border border-purple-500/40 flex items-center justify-center text-purple-400 shadow-inner">
-              <Brain className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h3 className="text-base font-extrabold text-white">Manifest suggestions &amp; historical patterns</h3>
-                <span className="bg-slate-700/70 text-slate-300 border border-slate-600 text-[10px] font-mono font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
-                  <Sparkles className="w-3 h-3 text-slate-400" /> Suggestions require review
-                </span>
-              </div>
-              <p className="text-xs text-slate-300 mt-0.5">
-                Learns patterns from available manifest history &bull; Auto-syncs timetable dispatches &bull; Heuristic cycle progression
-              </p>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              onClick={handleRetrainAiModel}
-              disabled={isRetraining}
-              className="bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-bold text-xs px-3.5 py-2 rounded-xl shadow-md transition flex items-center gap-1.5"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${isRetraining ? 'animate-spin' : ''}`} /> Refresh historical patterns
-            </button>
-            <button
-              onClick={handleAutoPredictAll}
-              className="bg-gradient-to-r from-sky-600 to-blue-600 hover:from-sky-500 hover:to-blue-500 text-white font-bold text-xs px-4 py-2 rounded-xl shadow-md transition flex items-center gap-1.5 cursor-pointer"
-              title={`Apply heuristic suggestions to all ${operationalDrivers.length} drivers for ${selectedDate}`}
-            >
-              <Sparkles className="w-3.5 h-3.5 text-sky-200" /> Suggest statuses for {operationalDrivers.length} Drivers for {selectedDate}
-            </button>
-          </div>
-        </div>
-
-        {/* 4 Training Metric Badges */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1 border-t border-slate-700/80">
-          <div className="bg-slate-950/70 p-3 rounded-xl border border-slate-800">
-            <span className="text-[10px] font-mono uppercase text-slate-400">HISTORICAL STATUSES</span>
-            <div className="text-base font-black text-white font-mono mt-0.5">{modelStats.totalTripsIngested} Statuses</div>
-            <div className="text-[10px] text-slate-500">Available historical records</div>
-          </div>
-
-          <div className="bg-slate-950/70 p-3 rounded-xl border border-slate-800">
-            <span className="text-[10px] font-mono uppercase text-slate-400">DRIVERS MODELLED</span>
-            <div className="text-base font-black text-sky-400 font-mono mt-0.5">{operationalDrivers.length} Operational Drivers</div>
-            <div className="text-[10px] text-slate-500">Archived drivers remain available on historical dates.</div>
-          </div>
-
-          <div className="bg-slate-950/70 p-3 rounded-xl border border-slate-800">
-            <span className="text-[10px] font-mono uppercase text-slate-400">LEARNED ROUTE TRANSITIONS</span>
-            <div className="text-base font-black text-purple-400 font-mono mt-0.5">{progressionModel.observations.toLocaleString()} Transitions</div>
-            <div className="text-[10px] text-slate-500">Route-specific timing through {progressionModel.through || 'available history'}</div>
-          </div>
-
-          <div className="bg-slate-950/70 p-3 rounded-xl border border-slate-800">
-            <span className="text-[10px] font-mono uppercase text-slate-400">TIMETABLE AUTO-SYNC</span>
-            <div className="text-base font-black text-emerald-400 font-mono mt-0.5">
-              {autoSyncedCount > 0 ? `${autoSyncedCount} Scheduled` : '0 Scheduled'}
-            </div>
-            <div className="text-[10px] text-slate-500">{selectedDate} live dispatch feed</div>
-          </div>
-        </div>
-      </div>
-
-      </details>
-
-      <p className="text-xs text-slate-400">Route timing check: {(transitionAudit.nextStageAccuracy*100).toFixed(1)}% correct next stages across {transitionAudit.coveredTransitions} covered later-history cases. This is not a measured accuracy for complete daily manifests.</p>
 
       {/* 1-Day Rental / Temporary Drivers Exclusion Notice */}
       {temporaryRentScheduleDrivers.length > 0 && (
@@ -747,32 +685,40 @@ export const DailyManifestView: React.FC = () => {
               />
             </div>
 
-            <div className="flex bg-slate-900 border border-slate-700 rounded-xl p-0.5">
+            <div className="followup-filters flex flex-wrap gap-1">
+              <button aria-pressed={manifestFilter === 'review'} onClick={() => setManifestFilter('review')}>
+                Needs review ({reviewCount})
+              </button>
               <button
+                aria-pressed={manifestFilter === 'all'}
                 onClick={() => setManifestFilter('all')}
                 className={`px-2.5 py-1 rounded-lg font-bold transition ${manifestFilter === 'all' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'}`}
               >
                 All ({operationalDrivers.length})
               </button>
               <button
+                aria-pressed={manifestFilter === 'scheduled'}
                 onClick={() => setManifestFilter('scheduled')}
                 className={`px-2.5 py-1 rounded-lg font-bold transition ${manifestFilter === 'scheduled' ? 'bg-sky-600 text-white' : 'text-slate-400 hover:text-white'}`}
               >
                 Dispatched Today
               </button>
               <button
+                aria-pressed={manifestFilter === 'transit'}
                 onClick={() => setManifestFilter('transit')}
                 className={`px-2.5 py-1 rounded-lg font-bold transition ${manifestFilter === 'transit' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'}`}
               >
                 En Route
               </button>
               <button
+                aria-pressed={manifestFilter === 'offloading'}
                 onClick={() => setManifestFilter('offloading')}
                 className={`px-2.5 py-1 rounded-lg font-bold transition ${manifestFilter === 'offloading' ? 'bg-amber-600 text-white' : 'text-slate-400 hover:text-white'}`}
               >
                 Offloading
               </button>
               <button
+                aria-pressed={manifestFilter === 'returning'}
                 onClick={() => setManifestFilter('returning')}
                 className={`px-2.5 py-1 rounded-lg font-bold transition ${manifestFilter === 'returning' ? 'bg-purple-600 text-white' : 'text-slate-400 hover:text-white'}`}
               >
@@ -780,22 +726,21 @@ export const DailyManifestView: React.FC = () => {
               </button>
             </div>
 
-            <span className="font-mono text-slate-400 hidden sm:inline">
-              Driver sequence for {selectedDate}; master sequence numbers are preserved
-            </span>
+            <button className="phone-view-toggle" aria-pressed={phoneTable} onClick={() => setPhoneTable(!phoneTable)}>
+              {phoneTable ? 'Show driver cards' : 'Open full table'}
+            </button>
           </div>
 
-          <div className="overflow-x-auto max-h-[600px] custom-scrollbar">
-            <table className="w-full text-left text-xs border-collapse">
+          <div className={`followup-scroll overflow-x-auto max-h-[600px] custom-scrollbar ${phoneTable ? '' : 'mobile-cards'}`}>
+            <table className="followup-sheet w-full text-left text-xs border-collapse">
               <thead className="bg-slate-900 text-slate-400 font-mono uppercase tracking-wider sticky top-0 z-10 border-b border-slate-700">
                 <tr>
-                  <th className="p-3 w-12 text-center">SL</th>
+                  <th className="p-3 w-12 text-center">No.</th>
                   <th className="p-3 w-64">Driver &amp; Vehicle</th>
-                  <th className="p-3 w-60">Schedule Ingestion</th>
-                  <th className="p-3 w-56">Previous Status</th>
-                  <th className="p-3">Suggested / Editable Tag</th>
-                  <th className="p-3 w-28 text-center">Confidence</th>
-                  <th className="p-3 w-20 text-center">Action</th>
+                  <th className="p-3 w-60">Trips</th>
+                  <th className="p-3 w-56">Last confirmed status</th>
+                  <th className="p-3">Status update</th>
+
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800">
@@ -804,7 +749,7 @@ export const DailyManifestView: React.FC = () => {
                     const idx = drivers.findIndex(item => item.id === d.id);
                     const prev = getPreviousTag(idx, selectedDate);
                     const pred = predictManifestTag(idx, selectedDate);
-                    const currentVal = localTags[d.id] !== undefined ? localTags[d.id] : (getDriverTag(todayTags, d.id, idx) || pred.text);
+                    const currentVal = localTags[d.id] !== undefined ? localTags[d.id] : (getDriverTag(storedTags, d.id, idx) || pred.text);
 
                     const matchedTrips = scheduleRowsForDriver(d, currentSchedule);
                     const matchedRow = matchedTrips[0];
@@ -818,12 +763,13 @@ export const DailyManifestView: React.FC = () => {
                       matchedRow, matchedTrips
                     };
                   })
-                  .filter(({ driver, currentVal, matchedRow, pred }) => {
+                  .filter(({ driver, currentVal, matchedRow, matchedTrips }) => {
+                    if (manifestFilter === 'review' && !needsReview(driver.id)) return false;
                     if (manifestSearch) {
                       const q = manifestSearch.toLowerCase();
                       const matchName = driver.name.toLowerCase().includes(q);
-                      const matchPlate = driver.assignedVehiclePlate?.toLowerCase().includes(q);
-                      const matchEmp = driver.empNo.toLowerCase().includes(q);
+                      const matchPlate = driver.assignedVehiclePlate?.toLowerCase().includes(q) || matchedTrips.some(trip => trip.plateNo?.toLowerCase().includes(q));
+                      const matchEmp = driver.empNo?.toLowerCase().includes(q);
                       const matchTag = currentVal.toLowerCase().includes(q);
                       if (!matchName && !matchPlate && !matchEmp && !matchTag) return false;
                     }
@@ -843,7 +789,7 @@ export const DailyManifestView: React.FC = () => {
                         <td className="p-3 text-center font-mono text-slate-400">#{idx + 1}</td>
                         <td className="p-3">
                           <div className="font-bold text-white text-sm">{d.name}</div>
-                          <div className="text-[11px] font-mono text-emerald-400">{d.assignedVehiclePlate || 'No Vehicle'} &bull; {d.empNo}</div>
+                          <div className="text-[11px] font-mono text-emerald-400">{[...new Set(matchedTrips.map(trip => trip.plateNo).filter(Boolean))].join(' / ') || d.assignedVehiclePlate || 'No plate'}</div>
                         </td>
                         <td className="p-3 text-slate-300">
                           {matchedRow ? (
@@ -861,17 +807,19 @@ export const DailyManifestView: React.FC = () => {
                           )}
                         </td>
                         <td className="p-3 text-slate-300 text-xs font-mono">
-                          {prev ? (
-                            <div className="max-w-[200px] truncate" title={prev}>{prev}</div>
+                          <span className="phone-label">Last confirmed status</span>
+                          {todayTags[d.id] || prev ? (
+                            <div>{todayTags[d.id] || prev}</div>
                           ) : (
                             <span className="text-slate-500 italic">—</span>
                           )}
                         </td>
                         <td className="p-3">
-                          <div className="relative">
+                          <span className={needsReview(d.id) ? 'review-status' : 'confirmed-status'}>{needsReview(d.id) ? 'Needs review' : 'Confirmed'}</span>
+                          <div>
                             <textarea
                               rows={2}
-                              placeholder="Enter today’s verified status"
+                              aria-label={`Status update for ${d.name}`} placeholder="Enter today’s verified status"
                               value={currentVal}
                               onChange={(e) => handleTagChange(d.id, e.target.value)}
                               className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-white text-xs font-mono focus:outline-none focus:border-blue-500 custom-scrollbar"
@@ -879,14 +827,14 @@ export const DailyManifestView: React.FC = () => {
                             {differsFromPred && (
                               <button
                                 onClick={() => handleTagChange(d.id, pred.text)}
-                                className="absolute right-2 top-2 bg-purple-900/80 hover:bg-purple-800 text-purple-200 text-[10px] font-mono px-2 py-0.5 rounded border border-purple-700 shadow flex items-center gap-1 cursor-pointer"
+                                className="bg-purple-900/80 hover:bg-purple-800 text-purple-200 text-[10px] font-mono px-2 py-0.5 rounded border border-purple-700 shadow flex items-center gap-1 cursor-pointer"
                                 title="Reset to AI suggested prediction"
                               >
-                                <Sparkles className="w-2.5 h-2.5" /> Apply AI
+                                <Sparkles className="w-2.5 h-2.5" /> Use suggestion
                               </button>
                             )}
                           </div>
-                          {/* Quick Status Chips */}
+                          <details className="driver-details"><summary>Quick statuses</summary>
                           <div className="flex flex-wrap gap-1 mt-1">
                             {[
                               'At Yanbu',
@@ -911,38 +859,104 @@ export const DailyManifestView: React.FC = () => {
                               </button>
                             ))}
                           </div>
-                          <div className="text-[10px] text-slate-400 mt-1 flex items-center gap-1">
-                            <span className="text-sky-400 font-mono">💡 AI:</span> {pred.reason}
-                          </div>
-                        </td>
-                        <td className="p-3 text-center">
-                          <span className={`inline-block px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase font-mono ${
-                            pred.conf === 'high'
-                              ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
-                              : pred.conf === 'medium'
-                              ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
-                              : 'bg-rose-500/20 text-rose-400 border border-rose-500/40'
-                          }`}>
-                            {pred.conf.toUpperCase()}
-                          </span>
-                        </td>
-                        <td className="p-3 text-center">
-                          <button
-                            onClick={() => setInspectModal({ driver: d, pred, prev, matchedRow, sl: idx + 1 })}
-                            className="p-1.5 text-slate-400 hover:text-white bg-slate-900 rounded-lg border border-slate-700 transition cursor-pointer"
-                            title="Show detailed prediction reasoning"
-                          >
-                            <HelpCircle className="w-4 h-4" />
-                          </button>
+                          </details>
+                          <button className="why-suggested" onClick={() => setInspectModal({ driver: d, pred, prev, matchedRow, sl: idx + 1 })}>Why suggested?</button>
+                          <details className="driver-details"><summary>Driver &amp; trip details</summary>
+                            <dl><div><dt>Iqama</dt><dd>{d.iqama || '—'}</dd></div>
+                              <div><dt>Mobile</dt><dd>{d.mobile || '—'}</dd></div>
+                              <div><dt>Employee</dt><dd>{d.empNo || '—'}</dd></div>
+                            </dl>
+                            {matchedTrips.map(trip => <dl key={trip.id}>
+                              <div><dt>Equipment</dt><dd>{trip.equipmentNo || '—'}</dd></div>
+                              <div><dt>Waybill</dt><dd>{trip.waybill || '—'}</dd></div>
+                              <div><dt>DN</dt><dd>{trip.dn || '—'}</dd></div>
+                            </dl>)}
+                          </details>
                         </td>
                       </tr>
                     );
                   })}
+                {manifestFilter === 'review' && reviewCount === 0 && <tr><td colSpan={5}>No drivers need review for this date.</td></tr>}
               </tbody>
             </table>
           </div>
         </div>
       )}
+
+      <details className="rounded-xl border border-slate-700">
+        <summary className="cursor-pointer p-3 text-sm font-semibold">Suggestion tools &amp; learning details</summary>
+      {/* AI Training & Accuracy Center Banner */}
+      <div className="bg-gradient-to-r from-slate-900 via-slate-800/95 to-slate-900 border border-slate-700 rounded-2xl p-5 shadow-2xl space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-purple-600/20 border border-purple-500/40 flex items-center justify-center text-purple-400 shadow-inner">
+              <Brain className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-base font-extrabold text-white">Manifest suggestions &amp; historical patterns</h3>
+                <span className="bg-slate-700/70 text-slate-300 border border-slate-600 text-[10px] font-mono font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
+                  <Sparkles className="w-3 h-3 text-slate-400" /> Suggestions require review
+                </span>
+              </div>
+              <p className="text-xs text-slate-300 mt-0.5">
+                Learns patterns from available manifest history &bull; Auto-syncs timetable dispatches &bull; Heuristic cycle progression
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={handleRetrainAiModel}
+              disabled={isRetraining}
+              className="bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-bold text-xs px-3.5 py-2 rounded-xl shadow-md transition flex items-center gap-1.5"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isRetraining ? 'animate-spin' : ''}`} /> Refresh historical patterns
+            </button>
+            <button
+              onClick={handleAutoPredictAll}
+              className="bg-gradient-to-r from-sky-600 to-blue-600 hover:from-sky-500 hover:to-blue-500 text-white font-bold text-xs px-4 py-2 rounded-xl shadow-md transition flex items-center gap-1.5 cursor-pointer"
+              title={`Apply heuristic suggestions to all ${operationalDrivers.length} drivers for ${selectedDate}`}
+            >
+              <Sparkles className="w-3.5 h-3.5 text-sky-200" /> Suggest statuses for {operationalDrivers.length} Drivers for {selectedDate}
+            </button>
+          </div>
+        </div>
+
+        {/* 4 Training Metric Badges */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1 border-t border-slate-700/80">
+          <div className="bg-slate-950/70 p-3 rounded-xl border border-slate-800">
+            <span className="text-[10px] font-mono uppercase text-slate-400">HISTORICAL STATUSES</span>
+            <div className="text-base font-black text-white font-mono mt-0.5">{modelStats.totalTripsIngested} Statuses</div>
+            <div className="text-[10px] text-slate-500">Available historical records</div>
+          </div>
+
+          <div className="bg-slate-950/70 p-3 rounded-xl border border-slate-800">
+            <span className="text-[10px] font-mono uppercase text-slate-400">DRIVERS MODELLED</span>
+            <div className="text-base font-black text-sky-400 font-mono mt-0.5">{operationalDrivers.length} Operational Drivers</div>
+            <div className="text-[10px] text-slate-500">Archived drivers remain available on historical dates.</div>
+          </div>
+
+          <div className="bg-slate-950/70 p-3 rounded-xl border border-slate-800">
+            <span className="text-[10px] font-mono uppercase text-slate-400">LEARNED ROUTE TRANSITIONS</span>
+            <div className="text-base font-black text-purple-400 font-mono mt-0.5">{progressionModel.observations.toLocaleString()} Transitions</div>
+            <div className="text-[10px] text-slate-500">Route-specific timing through {progressionModel.through || 'available history'}</div>
+          </div>
+
+          <div className="bg-slate-950/70 p-3 rounded-xl border border-slate-800">
+            <span className="text-[10px] font-mono uppercase text-slate-400">TIMETABLE AUTO-SYNC</span>
+            <div className="text-base font-black text-emerald-400 font-mono mt-0.5">
+              {autoSyncedCount > 0 ? `${autoSyncedCount} Scheduled` : '0 Scheduled'}
+            </div>
+            <div className="text-[10px] text-slate-500">{selectedDate} live dispatch feed</div>
+          </div>
+        </div>
+      </div>
+
+
+
+      <p className="text-xs text-slate-400">Route timing check: {(transitionAudit.nextStageAccuracy*100).toFixed(1)}% correct next stages across {transitionAudit.coveredTransitions} covered later-history cases. This is not a measured accuracy for complete daily manifests.</p>
+      </details>
 
       {/* Sub-Tab 2: Driver history */}
       {subTab === 'history' && (
@@ -1007,8 +1021,8 @@ export const DailyManifestView: React.FC = () => {
                 onChange={(e) => setLearningPasteText(e.target.value)}
                 placeholder={`Date: 2026-09-05
 | Driver Name | Source | Destination | Customer | Commodity |
-| MUHAMMAD FAYYAZ AWAN | Yanbu | Yanbu | LUBEREFF | SULPHER |
-| DOST MUHAMMAD KHALIQ | Yanbu | Jubail | ZAMIL | FC |
+| Example Driver A | Yanbu | Yanbu | LUBEREFF | SULPHER |
+| Example Driver B | Yanbu | Jubail | ZAMIL | FC |
 
 Date: 2026-09-06
 | Driver Name | Source | Destination | Customer | Commodity |
@@ -1240,7 +1254,7 @@ FC Supply for ZAMIL - Under Loading at Yanbu
                   <input
                     type="month"
                     value={multiPasteMonth}
-                    onChange={(e) => setMultiPasteMonth(e.target.value)}
+                    onChange={(e) => { setMultiPasteMonth(e.target.value); setParsedMultiResult(null); }}
                     className="bg-transparent text-white font-mono text-xs focus:outline-none"
                   />
                 </div>
@@ -1251,8 +1265,8 @@ FC Supply for ZAMIL - Under Loading at Yanbu
             <textarea
               rows={9}
               value={multiPasteText}
-              onChange={(e) => setMultiPasteText(e.target.value)}
-              placeholder={`Driver Name\tIqama #\tNationality\tContact Number\tEquipment#\tTransporter\tVehicle Plate No\tDriver card\t\tEmployee No.\tWorking For\tThursday, 1 \tFriday, 2 \tSaturday, 3 \tSunday, 4 \nMUHAMMAD FAYYAZ AWAN\t2326626773\tPAKISTAN\t595343932\t401LSR18\tTLS\tأ ح د D J A 4829\t\t\tL-EMP0024\tYanbu - Local\tCS Supply for SWCC - Under Offloading at Yanbu\t Internal Transfer \tMOLTEN SULPHER Collection from LUBEREF\tMOLTEN SULPHER Collection from LUBEREF\n...`}
+              onChange={(e) => { setMultiPasteText(e.target.value); setParsedMultiResult(null); }}
+              placeholder="Paste driver and date columns with the recorded daily statuses."
               className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-white font-mono placeholder-slate-600 focus:outline-none focus:border-sky-500 custom-scrollbar"
             />
 
@@ -1275,16 +1289,6 @@ FC Supply for ZAMIL - Under Loading at Yanbu
                   <Search className="w-3.5 h-3.5" /> 🔍 Parse Manifest Sheet
                 </button>
 
-                {parsedMultiResult && parsedMultiResult.mappedDriversCount > 0 && (
-                  <button
-                    onClick={handleApplyMultiSync}
-                    disabled={isSyncingMulti}
-                    className="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-xs px-5 py-2 rounded-xl shadow-lg transition flex items-center gap-2 disabled:opacity-50"
-                  >
-                    <RefreshCw className={`w-3.5 h-3.5 ${isSyncingMulti ? 'animate-spin' : ''}`} />
-                    ⚡ Sync Manifests to Database &amp; Suggest Today (Oct 5)
-                  </button>
-                )}
               </div>
             </div>
           </div>
@@ -1331,10 +1335,10 @@ FC Supply for ZAMIL - Under Loading at Yanbu
                 <div className="bg-slate-900/90 p-3.5 rounded-xl border border-slate-700">
                   <span className="text-[10px] font-mono uppercase text-slate-400">AI SUGGESTION READY</span>
                   <div className="text-base font-black text-amber-400 font-mono mt-0.5">
-                    Monday Oct 5
+                    {localTodayISO()}
                   </div>
                   <div className="text-[10px] text-slate-400 mt-1">
-                    Infers cycle from Sunday 4
+                    Review suggestions after import
                   </div>
                 </div>
               </div>
@@ -1347,16 +1351,16 @@ FC Supply for ZAMIL - Under Loading at Yanbu
                     Manifest Sheet Validated &amp; Ready for Synchronization
                   </h4>
                   <p className="text-xs text-sky-200 mt-0.5">
-                    Clicking sync updates manifests for <strong>{parsedMultiResult.detectedDates.length} selected dates</strong>, saves each driver&apos;s history timeline, retrains the progression engine, and immediately generates high-confidence predictions for <strong>{selectedDate}</strong>.
+                    Save statuses for <strong>{parsedMultiResult.detectedDates.length} dates</strong>, update learned rules and open today’s follow-up.
                   </p>
                 </div>
                 <button
                   onClick={handleApplyMultiSync}
-                  disabled={isSyncingMulti}
-                  className="bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs px-5 py-2.5 rounded-xl shadow-lg transition flex items-center gap-2 disabled:opacity-50"
+                  disabled={isSyncingMulti || !parsedMultiResult.mappedDriversCount}
+                  className="fleet-primary bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs px-5 py-2.5 rounded-xl shadow-lg transition flex items-center gap-2 disabled:opacity-50"
                 >
                   <RefreshCw className={`w-4 h-4 ${isSyncingMulti ? 'animate-spin' : ''}`} />
-                  ⚡ Sync Manifests to Database &amp; Suggest Today (Oct 5)
+                  {isSyncingMulti ? 'Saving…' : 'Save imported statuses'}
                 </button>
               </div>
 

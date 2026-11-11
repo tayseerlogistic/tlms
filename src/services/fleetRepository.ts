@@ -14,7 +14,7 @@ import {
   type Firestore,
 } from "firebase/firestore";
 import { auth, db } from "../firebase/config";
-import type { CashTransaction, KmRecord, Truck } from "../types";
+import type { CashTransaction, KmRecord, Truck, TimetableRow } from "../types";
 import { runVerifiedImport, type ImportResult } from "./verifiedImport";
 export type { ImportResult } from "./verifiedImport";
 import { canonicalKm } from "../utils/fleetAnalytics";
@@ -79,6 +79,25 @@ export function createFleetRepository(
           status({ state: "error", error: `${name}: ${error.message}` });
         },
       );
+    },
+    async saveSchedule(date: string, rows: TimetableRow[], draftTags?: Record<string, string>) {
+      const uid = requireSession();
+      const schedule = doc(db, "schedules", date);
+      const data = clean({ date, rows, confirmed: true, updatedBy: uid, updatedAt: new Date().toISOString() });
+      if (draftTags === undefined) {
+        await setDoc(schedule, data, { merge: true });
+        return;
+      }
+      const manifest = doc(db, "manifests", date);
+      await runTransaction(db, async transaction => {
+        const existing = await transaction.get(manifest);
+        transaction.set(schedule, data, { merge: true });
+        // A schedule can seed a new draft. Only follow-up actions may change existing statuses.
+        if (!existing.exists()) {
+          transaction.set(manifest, { date, scheduleId: date, tags: draftTags,
+            confirmed: false, updatedAt: data.updatedAt, updatedBy: uid });
+        }
+      });
     },
     async list(name: string) {
       requireSession();
