@@ -170,6 +170,16 @@ export function predictRouteProgression(driver:Driver,date:string,previousTag:st
   const dispatchRoute=planned?routeFor(planned):routes.size===1?[...routes.values()][0]:undefined;
   const recordedDestination=routes.size===0 && ['transit','waiting','offloading'].includes(activity.stage) ? city(activity.location) : '';
   const route=dispatchRoute || (recordedDestination ? {kind:activity.kind,commodity:activity.commodity,source:'',destination:recordedDestination} : undefined);
+  // Yesterday's loading entry can suggest travel even without route statistics.
+  // Only yesterday's matching dispatch can supply a destination for this fallback.
+  const fallbackTravel = () => {
+   const destination = latest === previousDate ? dispatchRoute?.destination : '';
+   warnings.push('Yesterday’s manifest recorded loading. Dispatcher review required to confirm travel.');
+   if (destination && dispatchRoute) return renderStage(activity, dispatchRoute, 'transit');
+   return activity.text.replace(/(?:under )?loading(?: at .*)?$/i, 'On the way');
+  };
+  const useLoadingFallback = activity.stage === 'loading' && !currentRows.length;
+  if (!route && useLoadingFallback) return fallbackTravel();
   if(!route){warnings.push('Route is ambiguous; review required.');return activity.text;}
   if(['transit','waiting','offloading'].includes(activity.stage)&&city(activity.location)!==route.destination){
    warnings.push('Recorded location differs from route destination; review required.');return activity.text;
@@ -180,6 +190,7 @@ export function predictRouteProgression(driver:Driver,date:string,previousTag:st
    if(matches.length!==1)break;age++;day=shiftISODate(day,-1);
   }
   const result=selectTransition(model,route,activity.stage,Math.max(age,1),!dispatchRoute);
+  if (!result && useLoadingFallback) return fallbackTravel();
   if(!result||(!dispatchRoute&&result.next==='loading')){warnings.push('Insufficient route history; previous activity needs review.');return activity.text;}
   warnings.push(`${dispatchRoute ? route.source+' → ' : 'Recorded destination '}${route.destination}, ${activity.kind}, day ${age||1} in ${activity.stage}: ${result.support} historical transitions, ${Math.round(result.confidence*100)}% chose ${result.next}.`);
   return renderStage(activity,route,result.next);

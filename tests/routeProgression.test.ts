@@ -70,3 +70,20 @@ test('an explicit travel destination can advance without a dispatch; stale loadi
  assert.match(predict('2026-11-02',tag).text,/Under Offloading at Turaif/);
  assert.equal(predict('2026-11-03','FC Supply for Plant - Under Loading at Yanbu').text,'');
 });
+
+test('yesterday’s loading suggests travel for unmatched supply trips without guessing a city', () => {
+ for (const shipment of ['SA Supply for MWSPC', 'AS Supply for AL MARAI', 'CS Supply for PRC']) {
+  const tag = shipment + ' - Under Loading at Yanbu';
+  const suggestion = predictManifestForDriver(0, driver({'2026-11-10':tag}), '2026-11-11',
+   [], tag, [], undefined, {schedules:{}, model});
+  assert.equal(suggestion.text, shipment + ' - On the way');
+  assert.equal(suggestion.conf, 'low');
+ }
+});
+
+test('a unique dispatch yesterday supplies the destination even with no learned transitions', () => {
+ const tag = 'FC Supply for Plant - Under Loading at Yanbu';
+ const result = predictRouteProgression(driver({'2026-11-01':tag}), '2026-11-02', tag,
+  [], schedules(row()), trainTransitions([]));
+ assert.equal(result?.text, 'FC Supply for Plant - On the way to Turaif');
+});
