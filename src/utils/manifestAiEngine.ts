@@ -1,3 +1,4 @@
+import { abbreviateManifestCustomers } from './manifestCustomer';
 import referenceTransitions from '../data/manifestTransitions.json';
 import { predictRouteProgression, type TransitionModel } from './routeProgression';
 import { manifestForTrips, scheduleRowsForDriver } from './dispatchManifest';
@@ -205,6 +206,7 @@ export function predictManifestForDriver(
     };
   }
 
+  previousTag = abbreviateManifestCustomers(previousTag);
   if (progression) {
     const suggestion = predictRouteProgression(driver, date, previousTag, scheduleRowsForDriver(driver,currentScheduleRows),
       progression.schedules, progression.model || referenceTransitions as TransitionModel);

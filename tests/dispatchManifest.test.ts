@@ -42,3 +42,24 @@ test('confirmed text is preserved and multi-activity history never invents a sin
   const suggestion=predictManifestForDriver(0,driver,'2026-11-01',[],prior,[]);
   assert.equal(suggestion.text,prior);assert.equal(suggestion.conf,'low');
 });
+
+test('manifest uses follow-up customer codes while dispatch keeps the original customer', () => {
+  for (const [customer, code] of [
+    ['Saudi Arabian Mining Co.', 'SWCC'], ['National Battery Company', 'NBC'],
+    ['National Batteries Company', 'NBC'], ['Petro- Rabigh Alky plant', 'PRC'],
+    ['Petro Rabigh Company', 'PRC'], ['Rabigh Power Company', 'RPC'],
+    ['Saudi Arabian Mining Company - Maaden (WH)', 'MWSPC'], ['Petro Rabigh Other', 'Petro Rabigh Other']
+  ]) {
+    const row = trip({customer});
+    assert.equal(scheduleManifestTags([row])[driver.id], 'CS Supply for ' + code + ' - Under Loading at Yanbu');
+    assert.equal(row.customer, customer);
+  }
+});
+
+test('follow-up continues a full-name historical status with the manifest customer code', () => {
+  const tag = 'CS Supply for Petro Rabigh - AP - Under Loading at Yanbu';
+  const d = {...driver, history: {'2026-11-10': tag}};
+  const predict = (confirmed?: string) => predictManifestForDriver(0, d, '2026-11-11', [], tag, [], confirmed, {schedules:{}});
+  assert.equal(predict().text, 'CS Supply for PRC - On the way');
+  assert.equal(predict(tag).text, tag);
+});

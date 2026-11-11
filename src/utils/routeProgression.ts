@@ -1,3 +1,4 @@
+import { abbreviateManifestCustomers } from './manifestCustomer';
 import type {TimetableRow,Driver,DailySchedule,ManifestSuggestion} from '../types';
 import {isWarehouseTransfer,isInternalTransfer,manifestActivity,normalizeDispatchParties,scheduleRowsForDriver} from './dispatchManifest';
 import {shiftISODate,isValidISODate} from './dateUtils';
@@ -18,7 +19,7 @@ export function material(value:string){
 }
 export function activities(tag:string):Activity[]{
  return String(tag||'').split(/\s+\/\s+/).map(text=>{
-  text=text.trim();const n=normalized(text);
+  text=abbreviateManifestCustomers(text.trim());const n=normalized(text);
   let stage:Stage|null=null;
   if(/WAITING.*OFFLOAD/.test(n))stage='waiting';
   else if(/BORDER/.test(n))stage='border';
