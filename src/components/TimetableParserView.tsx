@@ -1,3 +1,4 @@
+import { orderScheduleTrips, waybillText } from '../utils/scheduleOrder';
 import { compareFleetPlates } from '../utils/fleetOrder';
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useLms } from '../context/LmsContext';
@@ -36,7 +37,7 @@ import {
 export const SAMPLE_READY_TEMPLATE = `Driver Name\tIqama #\tDriver Mobile #\tEquipment #\tVehicle Plate No\tSource\tDestination\tCustomer\tSupplier\tStore\tEquipment Type\tCommodity\tWaybill #\tDN Number\tTransporter\tNotes\tBayan Expiry`;
 
 export const TimetableParserView: React.FC = () => {
-  const { drivers: masterDrivers, trucks: masterTrucks, equipment: masterEquipment, commodities: masterCommodities, stores: masterStores, schedules: contextSchedules, saveDailySchedule, deleteDailySchedule, saveDailyManifest, saveTimetableRegistry } = useLms();
+  const { drivers: masterDrivers, trucks: masterTrucks, equipment: masterEquipment, commodities: masterCommodities, stores: masterStores, schedules: contextSchedules, saveDailySchedule, changeScheduleRows, linkScheduleRow, deleteDailySchedule, saveDailyManifest, saveTimetableRegistry } = useLms();
   const { user, profile, isDispatcher, isAdmin } = useAuth();
 
   const [uiPrefs, setUiPrefs] = useState(() => loadTimetableDatabase().uiPrefs);
@@ -213,11 +214,7 @@ export const TimetableParserView: React.FC = () => {
       );
     }
 
-    if (enableSort) {
-      rows.sort((a, b) => schedulePriority(a) - schedulePriority(b) || compareFleetPlates(a.plateNo, b.plateNo));
-    }
-
-    return rows;
+    return orderScheduleTrips(rows, enableSort);
   }, [currentSchedule, filterGroup, filterPending, searchQuery, enableSort]);
 
   // -------------------------------------------------------------------
@@ -250,7 +247,7 @@ export const TimetableParserView: React.FC = () => {
 
     if (e.shiftKey && selStart) {
       // Range copy!
-      const rows = page === 'new' && newRows ? newRows : currentVisibleRows;
+      const rows = page === 'new' && newRows ? orderScheduleTrips(newRows, enableSort) : currentVisibleRows;
       const cols = visibleColumns;
       const ai = rows.findIndex(r => r.id === selStart.rowId);
       const bi = rows.findIndex(r => r.id === row.id);
@@ -390,20 +387,19 @@ export const TimetableParserView: React.FC = () => {
     if (page === 'new' && newRows) {
       setNewRows(applyUpdate(newRows));
     } else if (currentSchedule) {
-      const updatedRows = applyUpdate(currentSchedule.rows);
-      await updateDb(prev => ({
-        ...prev,
-        schedules: {
-          ...prev.schedules,
-          [currentDate]: {
-            ...prev.schedules[currentDate],
-            rows: updatedRows,
-            updatedAt: new Date().toISOString()
-          }
-        }
-      }));
-      // Keep LMS Context in sync
-      await saveDailySchedule(currentDate, updatedRows, false);
+      try {
+        await changeScheduleRows(currentDate, rows => {
+          if (!rows.some(row => row.id === rowId)) throw new Error('This trip was removed.');
+          return rows.map(row => {
+            if (row.id !== rowId) return row;
+            const updated = applyUpdate([row])[0];
+            return colKey === 'waybill' ? updated : linkScheduleRow(updated);
+          });
+        });
+      } catch (error) {
+        showToast(error instanceof Error ? error.message : 'Trip edit could not be saved.');
+        return;
+      }
     }
 
     setEditingCell(null);
@@ -525,24 +521,9 @@ export const TimetableParserView: React.FC = () => {
       setNewRows(updated);
       showToast('Row moved to new sequence in preview');
     } else if (currentSchedule) {
-      const updated = reorder(currentSchedule.rows);
-      await updateDb(prev => ({
-        ...prev,
-        schedules: {
-          ...prev.schedules,
-          [currentDate]: {
-            ...prev.schedules[currentDate],
-            rows: updated,
-            updatedAt: new Date().toISOString()
-          }
-        },
-        uiPrefs: {
-          ...prev.uiPrefs,
-          enableSort: false // Turn off auto priority sort so manual custom sequence holds
-        }
-      }));
+      await changeScheduleRows(currentDate, reorder);
+      await updateDb(prev => ({ ...prev, uiPrefs: { ...prev.uiPrefs, enableSort: false } }));
       setEnableSort(false);
-      await saveDailySchedule(currentDate, updated, false);
       showToast('Manual row sequence saved');
     }
 
@@ -559,8 +540,12 @@ export const TimetableParserView: React.FC = () => {
     const reorder = (list: TimetableRow[]): TimetableRow[] => {
       const index = list.findIndex(r => r.id === rowId);
       if (index < 0) return list;
-      const targetIndex = direction === 'up' ? index - 1 : index + 1;
-      if (targetIndex < 0 || targetIndex >= list.length) return list;
+      const pending = list.filter(row => !waybillText(row) &&
+        ((!row.transporter || row.transporter === 'TLS') === (!list[index].transporter || list[index].transporter === 'TLS')));
+      const position = pending.findIndex(row => row.id === rowId);
+      const neighbor = pending[position + (direction === 'up' ? -1 : 1)];
+      if (!neighbor) return list;
+      const targetIndex = list.findIndex(row => row.id === neighbor.id);
       const copy = [...list];
       const [moved] = copy.splice(index, 1);
       copy.splice(targetIndex, 0, moved);
@@ -572,24 +557,9 @@ export const TimetableParserView: React.FC = () => {
       setNewRows(updated);
       showToast(`Moved row ${direction}`);
     } else if (currentSchedule) {
-      const updated = reorder(currentSchedule.rows);
-      await updateDb(prev => ({
-        ...prev,
-        schedules: {
-          ...prev.schedules,
-          [currentDate]: {
-            ...prev.schedules[currentDate],
-            rows: updated,
-            updatedAt: new Date().toISOString()
-          }
-        },
-        uiPrefs: {
-          ...prev.uiPrefs,
-          enableSort: false
-        }
-      }));
+      await changeScheduleRows(currentDate, reorder);
+      await updateDb(prev => ({ ...prev, uiPrefs: { ...prev.uiPrefs, enableSort: false } }));
       setEnableSort(false);
-      await saveDailySchedule(currentDate, updated, false);
       showToast(`Moved row ${direction}`);
     }
   };
@@ -642,8 +612,9 @@ export const TimetableParserView: React.FC = () => {
     showToast(`Schedule saved for ${fmtDate(date)}`);
   };
 
+  const [addingTrip, setAddingTrip] = useState(false);
   const handleAddRow = async () => {
-    if (!currentSchedule) return;
+    if (addingTrip) return;
     const newRow: TimetableRow = {
       id: uid(),
       driverName: '',
@@ -665,20 +636,34 @@ export const TimetableParserView: React.FC = () => {
       bayanExpiry: '',
       priority: 999
     };
-    const updatedRows = [...currentSchedule.rows, newRow];
-    await updateDb(prev => ({
-      ...prev,
-      schedules: {
-        ...prev.schedules,
-        [currentDate]: {
-          ...prev.schedules[currentDate],
-          rows: updatedRows,
-          updatedAt: new Date().toISOString()
-        }
-      }
-    }));
-    await saveDailySchedule(currentDate, updatedRows, false);
-    showToast('Added new blank row');
+    setAddingTrip(true);
+    try {
+      await changeScheduleRows(currentDate, rows => [...rows, newRow], !currentSchedule);
+      setSearchQuery('');
+      setFilterGroup('all');
+      if (window.matchMedia('(max-width: 767px)').matches) setPhoneTable(true);
+      startEditCell(newRow, visibleColumns.includes('driverName') ? 'driverName' : visibleColumns[0] || 'driverName');
+      showToast('Trip added');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Trip could not be added.');
+    } finally {
+      setAddingTrip(false);
+    }
+  };
+
+  const deleteTrip = async (row: TimetableRow, preview = false) => {
+    if (!window.confirm('Delete this trip for ' + (row.driverName || 'Unassigned driver') +
+      ' (' + (row.source || '—') + ' → ' + (row.destination || '—') + ', waybill ' + (row.waybill || 'pending') + ')?')) return;
+    if (preview) {
+      setNewRows(rows => rows?.filter(item => item.id !== row.id) ?? null);
+      return;
+    }
+    try {
+      await changeScheduleRows(currentDate, rows => rows.filter(item => item.id !== row.id));
+      showToast('Trip deleted');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Trip could not be deleted.');
+    }
   };
 
   const handleDeleteSchedule = async () => {
@@ -871,15 +856,17 @@ export const TimetableParserView: React.FC = () => {
   // RENDER HELPERS
   // -------------------------------------------------------------------
   const renderTableRows = (rowsList: TimetableRow[], isPreview: boolean = false) => {
-    const tlsRows = rowsList.filter(r => !r.transporter || r.transporter === 'TLS');
-    const extRows = rowsList.filter(r => r.transporter && r.transporter !== 'TLS');
-
+    const ordered = isPreview ? orderScheduleTrips(rowsList, enableSort) : rowsList;
+    const numbered = ordered.filter(row => waybillText(row));
+    const pending = ordered.filter(row => !waybillText(row));
     const groups: { label: string; rows: TimetableRow[] }[] = [];
-    if (enableSort) {
-      groups.push({ label: 'Priority sequence', rows: [...rowsList].sort((a,b)=>schedulePriority(a)-schedulePriority(b)||compareFleetPlates(a.plateNo,b.plateNo)) });
-    } else {
-      if (tlsRows.length) groups.push({ label: 'TLS Fleets', rows: tlsRows });
-      if (extRows.length) groups.push({ label: 'External Trips', rows: extRows });
+    if (numbered.length) groups.push({label: 'With waybill', rows: numbered});
+    if (enableSort && pending.length) groups.push({label: 'Priority sequence', rows: pending});
+    if (!enableSort) {
+      const tls = pending.filter(row => !row.transporter || row.transporter === 'TLS');
+      const external = pending.filter(row => row.transporter && row.transporter !== 'TLS');
+      if (tls.length) groups.push({label: 'TLS Fleets', rows: tls});
+      if (external.length) groups.push({label: 'External Trips', rows: external});
     }
 
     return groups.map(g => (
@@ -905,11 +892,11 @@ export const TimetableParserView: React.FC = () => {
           return (
             <tr
               key={r.id}
-              draggable={true}
+              draggable={!waybillText(r)}
               onDragStart={e => handleRowDragStart(e, r.id)}
               onDragOver={e => handleRowDragOver(e, r.id)}
               onDragLeave={handleRowDragLeave}
-              onDrop={e => handleRowDrop(e, r.id, isPreview)}
+              onDrop={e => { if (!waybillText(r)) handleRowDrop(e, r.id, isPreview); }}
               onDragEnd={handleRowDragEnd}
               className={`hover:bg-slate-800/80 transition group border-b border-slate-800/80 ${statusBorder} ${
                 isDragging ? 'opacity-40 bg-slate-800' : ''
@@ -917,10 +904,14 @@ export const TimetableParserView: React.FC = () => {
             >
               {/* Row Action: Drag Handle, Step Controls & Copy */}
               <td className="w-16 min-w-[64px] text-center py-2 px-1 sticky left-0 bg-slate-900/95 z-20 border-r border-slate-800/80">
-                <div className="flex items-center justify-center gap-0.5">
+                <div className="flex flex-wrap items-center justify-center gap-0.5">
+                  <button type="button" title="Delete this trip" aria-label={'Delete trip for ' + (r.driverName || 'unassigned driver')}
+                    onClick={() => deleteTrip(r, isPreview)} className="p-1 text-rose-500 hover:text-rose-700">
+                    <Trash2 className="w-3 h-3" />
+                  </button>
                   <div
                     className="cursor-grab active:cursor-grabbing text-slate-500 hover:text-blue-400 p-0.5 rounded transition"
-                    title="Drag to change row sequence"
+                    title={waybillText(r) ? "Ordered by waybill number" : "Drag to change row sequence"}
                   >
                     <GripVertical className="w-3.5 h-3.5" />
                   </div>
@@ -934,7 +925,7 @@ export const TimetableParserView: React.FC = () => {
                   >
                     <Copy className="w-3 h-3" />
                   </button>
-                  <div className="opacity-0 group-hover:opacity-100 flex flex-col -space-y-1">
+                  {!waybillText(r) && <div className="opacity-0 group-hover:opacity-100 flex flex-col -space-y-1">
                     <button
                       onClick={e => {
                         e.stopPropagation();
@@ -955,7 +946,7 @@ export const TimetableParserView: React.FC = () => {
                     >
                       <ArrowDown className="w-2.5 h-2.5" />
                     </button>
-                  </div>
+                  </div>}
                 </div>
               </td>
 
@@ -1475,7 +1466,7 @@ export const TimetableParserView: React.FC = () => {
                   </h4>
                   <p className="text-[11px] text-slate-400 mt-0.5 flex items-center gap-1.5">
                     <GripVertical className="w-3 h-3 text-blue-400" />
-                    <span><b>Manual sequence reordering:</b> Drag the (⋮⋮) grip icon or click ↑ / ↓ arrows on any row to change its sequence order. Double-click cells to edit.</span>
+                    <span>Waybills appear in ascending order. Drag or use the arrows to reorder trips awaiting a waybill. Double-click a cell to edit.</span>
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
@@ -1542,6 +1533,7 @@ export const TimetableParserView: React.FC = () => {
               >
                 Create Schedule
               </button>
+              <button onClick={handleAddRow} disabled={addingTrip} className="ml-2 px-3 py-2 text-sm font-semibold">+ Add trip</button>
             </div>
           ) : (
             <>
@@ -1671,10 +1663,10 @@ export const TimetableParserView: React.FC = () => {
                 </button>
 
                 <button
-                  onClick={handleAddRow}
+                  onClick={handleAddRow} disabled={addingTrip}
                   className="bg-slate-950 hover:bg-slate-800 text-slate-300 border border-slate-800 px-3 py-1.5 rounded-xl text-xs font-semibold transition flex items-center gap-1"
                 >
-                  <Plus className="w-3.5 h-3.5" /> Add Row
+                  <Plus className="w-3.5 h-3.5" /> Add trip
                 </button>
 
                 <details className="export-options">
@@ -1687,10 +1679,10 @@ export const TimetableParserView: React.FC = () => {
 
                 <button
                   onClick={handleDeleteSchedule}
-                  aria-label="Delete schedule"
+                  aria-label="Delete entire schedule" title="Delete entire schedule"
                   className="text-rose-400 hover:text-rose-300 hover:bg-rose-950/40 border border-rose-900/50 px-2.5 py-1.5 rounded-xl text-xs font-semibold transition"
                 >
-                  <Trash2 className="w-3.5 h-3.5" />
+                  Delete entire schedule
                 </button>
               </div>
 
@@ -1757,6 +1749,7 @@ export const TimetableParserView: React.FC = () => {
                     </summary>
                     <dl>{OFFICIAL_EXPORT_COLUMNS.filter(([key]) => !['driverName','plateNo','source','destination'].includes(key)).map(([key, label]) =>
                       <div key={key}><dt>{label}</dt><dd>{trip[key] || '—'}</dd></div>)}</dl>
+                    <button onClick={() => deleteTrip(trip)} className="text-rose-600 p-2">Delete this trip</button>
                   </details>
                 ))}
                 {!currentVisibleRows.length && <p>No trips match these filters.</p>}

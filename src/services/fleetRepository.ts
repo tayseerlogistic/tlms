@@ -80,6 +80,16 @@ export function createFleetRepository(
         },
       );
     },
+    async changeScheduleRows(date: string, change: (rows: TimetableRow[]) => TimetableRow[], allowCreate = false) {
+      const uid = requireSession();
+      const ref = doc(db, 'schedules', date);
+      await runTransaction(db, async transaction => {
+        const snapshot = await transaction.get(ref);
+        if (!snapshot.exists() && !allowCreate) throw new Error('This schedule was removed. Reopen the date.');
+        const rows = change(snapshot.data()?.rows ?? []);
+        transaction.set(ref, clean({ date, rows, confirmed: true, updatedBy: uid, updatedAt: new Date().toISOString() }), { merge: true });
+      });
+    },
     async saveSchedule(date: string, rows: TimetableRow[], draftTags?: Record<string, string>) {
       const uid = requireSession();
       const schedule = doc(db, "schedules", date);

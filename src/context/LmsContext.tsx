@@ -91,6 +91,8 @@ interface LmsContextType {
     rows: any[],
     syncToManifest?: boolean,
   ) => Promise<void>;
+  changeScheduleRows: (date: string, change: (rows: TimetableRow[]) => TimetableRow[], allowCreate?: boolean) => Promise<void>;
+  linkScheduleRow: (row: TimetableRow) => TimetableRow;
   deleteDailySchedule: (date: string) => Promise<void>;
   saveDailyManifest: (
     date: string,
@@ -555,32 +557,33 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({
       );
     return tags;
   };
+  const linkScheduleRow = (row: TimetableRow): TimetableRow => {
+    const d = resolveDriver(
+      drivers,
+      row.driverId,
+      row.driverName,
+      row.iqama,
+    );
+    const t = resolveTruck(trucks, row.truckId, row.plateNo);
+    if ((row.driverId && !d) || d?.active === false)
+      throw new Error(`Driver is missing or archived: ${row.driverName}`);
+    if (row.plateNo && !t)
+      throw new Error(
+        `Unmatched truck: ${row.plateNo}. Add it to Master Data first.`,
+      );
+    if (row.driverName && !d)
+      throw new Error(
+        `Unmatched driver: ${row.driverName}. Add it to Master Data first.`,
+      );
+    return normalizeDispatchParties({ ...row, driverId: d?.id || null, truckId: t?.id || null });
+  };
   const saveDailySchedule = (
     date: string,
     input: TimetableRow[],
     syncToManifest = true,
   ) =>
     run(async () => {
-      const linked = input.map((row) => {
-        const d = resolveDriver(
-          drivers,
-          row.driverId,
-          row.driverName,
-          row.iqama,
-        );
-        const t = resolveTruck(trucks, row.truckId, row.plateNo);
-        if ((row.driverId && !d) || d?.active === false)
-          throw new Error(`Driver is missing or archived: ${row.driverName}`);
-        if (row.plateNo && !t)
-          throw new Error(
-            `Unmatched truck: ${row.plateNo}. Add it to Master Data first.`,
-          );
-        if (row.driverName && !d)
-          throw new Error(
-            `Unmatched driver: ${row.driverName}. Add it to Master Data first.`,
-          );
-        return normalizeDispatchParties({ ...row, driverId: d?.id || null, truckId: t?.id || null });
-      });
+      const linked = input.map(linkScheduleRow);
       await fleetRepository.saveSchedule(date, linked, syncToManifest ? scheduleManifestTags(linked) : undefined);
     });
   const deleteDailySchedule = (date: string) =>
@@ -1144,6 +1147,8 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({
     saveDriver,
     deleteDriver,
     saveDailySchedule,
+    linkScheduleRow,
+    changeScheduleRows: (date, change, allowCreate) => run(() => fleetRepository.changeScheduleRows(date, change, allowCreate)),
     deleteDailySchedule,
     saveDailyManifest,
     saveMultiDayManifests,
