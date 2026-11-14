@@ -1,14 +1,12 @@
-# Connect the combined Tayseer Driver Report
+# Create the new Tayseer form and spreadsheet
 
-1. Open your response spreadsheet using the Google account that owns its linked driver form.
-2. Open Extensions → Apps Script. If this already contains your earlier monthly automation, use a new standalone project at https://script.google.com/home/projects/create instead.
-3. Replace Code.gs with the complete included Code.gs. In Project Settings, enable “Show appsscript.json manifest file in editor”, then replace that file with the included manifest.
-4. In the downloadable template, set CONFIG.sheetId to the ID in your response spreadsheet URL and CONFIG.project to your TLMS Firebase project ID. Also set CONFIG.truckOrder and CONFIG.driverOrder to the approved sequences. The privately supplied preconfigured package already has all four values. Select setupTLMS and click Run. Review and authorize access. The executing Google account needs permission to read/write the TLMS Firestore database in tayseer-tlms-1792924020. The TLMS email/password account does not grant Google Cloud access. An administrator must authorize the installing Google account in Cloud IAM. This setup uses that account's OAuth access, without private keys in the website.
-5. The installer checks Firestore access first, updates the linked form, adds required Report Date, and configures the exact nine statuses. It creates KM Readings, Daily Follow-up, a sync log, and submission/5-minute retry triggers. Existing monthly tabs and original response records are retained.
-6. Remove the old KM-only script's triggers if you previously enabled them. Keep one installing account. Otherwise both versions can process the same submissions.
-7. Submit a real report, choosing the working date explicitly. Open TLMS Sync Log. In TLMS Settings → Driver Reports verify the truck, assignment, meter and status. Confirm the manifest and check that Daily Follow-up shows the confirmed text after the next sync.
-
-The public template requires your own response spreadsheet ID and TLMS Firebase project ID. The privately supplied package is configured for the previously supplied Tayseer_Daily_KM 2027 workbook. setupTLMS updates the form linked to the configured workbook. Verify that is the intended form before running setup.
+1. Replace Code.gs in your existing TLMS Driver Report Sync Apps Script project with Code.gs from this updated private package. Save. Keep the supplied appsscript.json.
+2. Choose createNewTLMSSystem beside Run, then click Run. Review any Google authorization prompt using the Google account that will own the new resources.
+3. The script creates a new Tayseer Driver Report form and Tayseer KM & Daily Follow-up spreadsheet. It saves their IDs immediately, so a retry resumes the same resources.
+4. The execution log prints NEW SPREADSHEET, FORM EDITOR and DRIVER FORM links after setup succeeds. START HERE in the new spreadsheet also contains those links.
+5. Open DRIVER FORM, select a report date and truck, enter the actual meter and status, then submit. Check TLMS Sync Log and TLMS Settings → Driver Reports.
+6. Firebase rules still need deployment for the website's report reviews and assignment history. The script's Google account needs the Firestore access configured separately.
+7. If an older KM-only integration was installed, remove its triggers after verifying the new integration. Use one installing account.
 
 The new sheets are generated views. Make corrections and assignments in TLMS. Each truck has one row in KM Readings, and each driver has one row in Daily Follow-up. The approved sequences remain fixed, with new entries appended. Both tabs use full dates across months and years. Current assignments appear in the first two columns. Historical driver/truck information and the original status appear in notes.
 

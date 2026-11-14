@@ -1,3 +1,4 @@
+import { parseFirestoreResponse } from '../../src/utils/firestoreResponse';
 import { sortManifestDrivers } from '../../src/utils/driverSequence';
 import { REPORT_STATUSES, reportStatus, resolveReportAssignment, validateDriverReport, reportMeterPlan } from '../../src/utils/driverReports';
 import { predictSheetManifest } from '../../src/utils/sheetManifest';
@@ -8,17 +9,68 @@ function sortFleetTrucks(trucks) {
  const rank=value=>{const i=CONFIG.truckOrder.findIndex(plate=>key(plate)===key(value));return i<0?9999:i;};
  return [...trucks].sort((a,b)=>rank(a.plate)-rank(b.plate)||(a.createdAt||'').localeCompare(b.createdAt||'')||(a.seq||0)-(b.seq||0)||a.id.localeCompare(b.id));
 }
+function truckChoices(trucks) {
+ const key=value=>String(value||'').replace(/[^A-Z0-9]/gi,'').toUpperCase();
+ const registry=new Map(trucks.map(truck=>[key(truck.plate),truck]));
+ const approved=CONFIG.truckOrder.filter(plate=>{
+  const truck=registry.get(key(plate));return !truck || (!truck.archived&&!truck.isThirdParty);
+ });
+ const known=new Set(approved.map(key));
+ return [...approved,...sortFleetTrucks(trucks.filter(truck=>!truck.archived&&!truck.isThirdParty))
+  .filter(truck=>!known.has(key(truck.plate))).map(truck=>truck.plate)];
+}
 const root = 'projects/'+CONFIG.project+'/databases/(default)/documents';
 const props = () => PropertiesService.getScriptProperties();
 const now = () => new Date().toISOString();
+const spreadsheetId = () => props().getProperty('systemSheetId') || CONFIG.sheetId;
+function createResources() {
+ let sheetId=props().getProperty('systemSheetId');
+ if(!sheetId){
+  const created=SpreadsheetApp.create('Tayseer KM & Daily Follow-up');
+  sheetId=created.getId();props().setProperty('systemSheetId',sheetId);
+  for(const name of ['nextRow','responseTab','formId','viewFingerprint','backupDate','choiceKey'])props().deleteProperty(name);
+ }
+ const sheet=SpreadsheetApp.openById(sheetId);
+ sheet.setSpreadsheetTimeZone(CONFIG.zone);
+ let formId=props().getProperty('newFormId');
+ if(!formId){
+  const created=FormApp.create('Tayseer Driver Report',true);
+  formId=created.getId();props().setProperty('newFormId',formId);
+ }
+ const form=FormApp.openById(formId);
+ const destination=form.getDestinationId();
+ if(destination && destination!==sheetId)throw Error('The saved form points to another spreadsheet. Review its response destination before continuing.');
+ if(!destination)form.setDestination(FormApp.DestinationType.SPREADSHEET,sheetId);
+ if(!form.getItems(FormApp.ItemType.LIST).some(item=>item.getTitle()==='Truck Plate Number'))
+  form.addListItem().setTitle('Truck Plate Number').setRequired(true).setChoiceValues(CONFIG.truckOrder);
+ form.setDescription('Every evening: choose the report date and your truck, type the meter KM, choose the truck status, then press Submit.');
+ form.setCollectEmail(false);form.setLimitOneResponsePerUser(false);
+ props().setProperty('formId',formId);
+ SpreadsheetApp.flush();
+ return {sheet,form};
+}
+export function createNewTLMSSystem() {
+ const lock=LockService.getScriptLock();lock.waitLock(10000);
+ try {
+  if(CONFIG.project.startsWith('PASTE_') || !CONFIG.truckOrder.length || !CONFIG.driverOrder.length)
+   throw Error('Use the privately configured installer with the Firebase project and approved sequences.');
+  if(!list('trucks').length)throw Error('No TLMS trucks are visible to this Google account.');
+  createResources();
+ }finally{lock.releaseLock();}
+ setupTLMS();
+ const sheet=SpreadsheetApp.openById(spreadsheetId()),form=FormApp.openById(props().getProperty('formId'));
+ console.log('NEW SPREADSHEET: '+sheet.getUrl());
+ console.log('FORM EDITOR: '+form.getEditUrl());
+ console.log('DRIVER FORM: '+form.getPublishedUrl());
+ console.log('SETUP COMPLETE. Check the new sheets and submit one report to verify delivery to TLMS.');
+}
+
 function api(path, body, method = 'post') {
  const response = UrlFetchApp.fetch('https://firestore.googleapis.com/v1/'+root+path,{
   method,contentType:'application/json',headers:{Authorization:'Bearer '+ScriptApp.getOAuthToken()},
   ...(body?{payload:JSON.stringify(body)}:{}),muteHttpExceptions:true
  });
- const data=JSON.parse(response.getContentText());
- if(response.getResponseCode()>=300)throw Error(data.error?.message||'Firestore request failed');
- return data;
+ return parseFirestoreResponse(response.getResponseCode(),response.getContentText());
 }
 function encode(value) {
  if(value===null || value===undefined)return {nullValue:null};
@@ -84,21 +136,28 @@ function number(value) {
 export function setupTLMS() {
  const lock=LockService.getScriptLock();lock.waitLock(10000);
  try {
-  if(CONFIG.sheetId.startsWith('PASTE_') || CONFIG.project.startsWith('PASTE_'))throw Error('Set the spreadsheet ID and Firebase project ID in CONFIG before running setupTLMS.');
-  const ss=SpreadsheetApp.openById(CONFIG.sheetId);
+  if(spreadsheetId().startsWith('PASTE_') || CONFIG.project.startsWith('PASTE_'))throw Error('Run createNewTLMSSystem first to create the new form and spreadsheet, or configure an existing spreadsheet ID.');
+  const ss=SpreadsheetApp.openById(spreadsheetId());
   const trucks=list('trucks');
   if(!trucks.length)throw Error('No trucks available. Check Google Cloud access to '+CONFIG.project);
   if(!CONFIG.truckOrder.length || !CONFIG.driverOrder.length)throw Error('Set the approved truckOrder and driverOrder in CONFIG. Use the privately supplied setup package.');
   commit([write('app_state/report_sequences',{driverOrder:CONFIG.driverOrder,truckOrder:CONFIG.truckOrder})]);
   // Establish write access before updating the form.
   commit([write('integration_status/google-form',{lastAttempt:now(),setupState:'configuring',error:''})]);
-  const url=ss.getFormUrl();if(!url)throw Error('Link the Tayseer Driver Report form to this spreadsheet first.');
-  const form=FormApp.openByUrl(url),items=form.getItems();
+  let form;
+  const ownedForm=props().getProperty('newFormId');
+  if(ownedForm)form=FormApp.openById(ownedForm);
+  else {
+   const url=ss.getFormUrl();
+   if(!url)throw Error('No linked form exists. Run createNewTLMSSystem to create a new form and spreadsheet.');
+   form=FormApp.openByUrl(url);
+  }
+  if(form.getDestinationId()!==ss.getId())throw Error('Form response destination does not match the configured spreadsheet.');
+  const items=form.getItems();
   const matches=items.filter(item=>item.getType()===FormApp.ItemType.LIST && /truck|plate|^question$/i.test(item.getTitle()));
   if(matches.length!==1)throw Error('The linked form needs exactly one truck dropdown. Rename it Truck Plate Number.');
   const plate=matches[0].asListItem();plate.setTitle('Truck Plate Number').setRequired(true);
-  const live=sortFleetTrucks(trucks.filter(truck=>!truck.archived&&!truck.isThirdParty));
-  plate.setChoiceValues(live.map(truck=>truck.plate));
+  plate.setChoiceValues(truckChoices(trucks));
   function question(title,type,add) {
    const found=form.getItems().filter(item=>item.getTitle().trim().toLowerCase()===title.toLowerCase());
    if(found.length>1)throw Error('Duplicate form field: '+title);
@@ -117,16 +176,25 @@ export function setupTLMS() {
   form.setTitle('Tayseer Driver Report');
   ss.setSpreadsheetTimeZone(CONFIG.zone);
   // Resolve the real response tab by its timestamp header, including existing responses.
-  const candidates=ss.getSheets().filter(s=>s.getLastRow() && s.getRange(1,1).getDisplayValue().trim().toLowerCase()==='timestamp');
+  SpreadsheetApp.flush();
+  let candidates=ss.getSheets().filter(s=>s.getFormUrl());
+  if(!candidates.length)candidates=ss.getSheets().filter(s=>s.getLastRow() && s.getRange(1,1).getDisplayValue().trim().toLowerCase()==='timestamp');
   if(candidates.length!==1)throw Error('Cannot identify the response tab. Keep one linked form response tab.');
   const response=candidates[0];props().setProperty('responseTab',response.getName());
   if(!props().getProperty('nextRow'))props().setProperty('nextRow',String(response.getLastRow()+1));
   for(const title of ['KM Readings','Daily Follow-up'])if(!ss.getSheetByName(title))ss.insertSheet(title);
   if(!ss.getSheetByName('TLMS Sync Log'))ss.insertSheet('TLMS Sync Log').appendRow(['Processed at','Response row','Report date','Plate','Result']);
   const triggers=ScriptApp.getProjectTriggers();
-  if(!triggers.some(t=>t.getHandlerFunction()==='submitTLMS'))ScriptApp.newTrigger('submitTLMS').forSpreadsheet(ss).onFormSubmit().create();
+  for(const trigger of triggers.filter(t=>t.getHandlerFunction()==='submitTLMS' && t.getTriggerSourceId()!==ss.getId()))ScriptApp.deleteTrigger(trigger);
+  if(!triggers.some(t=>t.getHandlerFunction()==='submitTLMS' && t.getTriggerSourceId()===ss.getId()))
+   ScriptApp.newTrigger('submitTLMS').forSpreadsheet(ss).onFormSubmit().create();
   if(!triggers.some(t=>t.getHandlerFunction()==='syncTLMS'))ScriptApp.newTrigger('syncTLMS').timeBased().everyMinutes(5).create();
   props().setProperty('formId',form.getId());
+  const welcome=ss.getSheetByName('START HERE') || ss.getSheets().find(sheet=>sheet.getName()==='Sheet1');
+  if(welcome){
+   welcome.setName('START HERE');
+   welcome.getRange(1,1,4,2).setValues([['Tayseer Driver Report','Links'],['Driver form',form.getPublishedUrl()],['Form editor',form.getEditUrl()],['Reporting spreadsheet',ss.getUrl()]]);
+  }
   refreshViews(ss);recordHealth();
  }finally{lock.releaseLock();}
 }
@@ -135,7 +203,7 @@ export function submitTLMS(e) {
 }
 function acceptRow(row,index,cols) {
  const date=day(row[cols.date]),plate=String(row[cols.plate]||'').trim();
- const id='sheet_'+CONFIG.sheetId+'_'+index;
+ const id='sheet_'+spreadsheetId()+'_'+index;
  const transaction=api(':beginTransaction',{}).transaction;
  let committed=false;
  try {
@@ -174,7 +242,7 @@ function acceptRow(row,index,cols) {
 export function syncTLMS() {
  const lock=LockService.getScriptLock();if(!lock.tryLock(1000))return;
  try {
-  const ss=SpreadsheetApp.openById(CONFIG.sheetId),sheet=responseSheet(ss);
+  const ss=SpreadsheetApp.openById(spreadsheetId()),sheet=responseSheet(ss);
   let next=Number(props().getProperty('nextRow'));
   if(!next)throw Error('Run setupTLMS first.');
   if(sheet.getLastRow()>=next) {
@@ -311,11 +379,11 @@ function refreshViews(ss) {
  }
  matrixSheet(ss,'Daily Follow-up',['Driver Name','Assigned Truck',...dates],manifestRows,manifestNotes);
  const formId=props().getProperty('formId');
- const choices=trucks.filter(truck=>!truck.archived);
- const choiceKey=choices.map(truck=>truck.plate).join('|');
+ const formChoices=truckChoices(data.trucks);
+ const choiceKey=formChoices.join('|');
  if(formId && props().getProperty('choiceKey')!==choiceKey) {
   const form=FormApp.openById(formId);
-  form.getItems(FormApp.ItemType.LIST).find(item=>item.getTitle()==='Truck Plate Number')?.asListItem().setChoiceValues(choices.map(truck=>truck.plate));
+  form.getItems(FormApp.ItemType.LIST).find(item=>item.getTitle()==='Truck Plate Number')?.asListItem().setChoiceValues(formChoices);
   props().setProperty('choiceKey',choiceKey);
  }
  // Preserve dated source copies for recovery from accidental later edits.
@@ -331,13 +399,13 @@ function refreshViews(ss) {
  props().setProperty('viewFingerprint',fingerprint);
 }
 export function goToToday() {
- const ss=SpreadsheetApp.openById(CONFIG.sheetId),sheet=ss.getActiveSheet();
+ const ss=SpreadsheetApp.openById(spreadsheetId()),sheet=ss.getActiveSheet();
  const header=sheet.getRange(1,1,1,sheet.getLastColumn()).getDisplayValues()[0];
  const column=header.indexOf(day(new Date()))+1;
  if(column>0)sheet.setActiveRange(sheet.getRange(1,column));
 }
 
-export const integrationTest = {acceptRow,encode,decode,headers,day,mirrorData};
+export const integrationTest = {acceptRow,encode,decode,headers,day,mirrorData,createResources};
 
 export function onOpen() {
  SpreadsheetApp.getUi().createMenu('TLMS').addItem('Go to today','goToToday').addItem('Sync now','syncTLMS').addToUi();

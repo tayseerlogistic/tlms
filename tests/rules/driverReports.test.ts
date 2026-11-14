@@ -15,7 +15,7 @@ test('Google bridge and TLMS approval share reports, meter validation, history a
   await setDoc(doc(ctx.firestore(),'trucks','t'),{plate:'D J A 4827',assignedDriverId:'d',assignedDriverName:'Driver'});
  });
  const root='http://'+process.env.FIRESTORE_EMULATOR_HOST+'/v1/projects/'+project+'/databases/(default)/documents';
- const sandbox:any={Date,console,ScriptApp:{getOAuthToken:()=>''},Utilities:{formatDate:(date:Date)=>date.toISOString().slice(0,10)},UrlFetchApp:{
+ const sandbox:any={Date,console,PropertiesService:{getScriptProperties:()=>({getProperty:()=>null})},ScriptApp:{getOAuthToken:()=>''},Utilities:{formatDate:(date:Date)=>date.toISOString().slice(0,10)},UrlFetchApp:{
   fetch:(url:string,options:any)=>{
    const path=url.split('/documents')[1];
    const raw=execFileSync('curl',['--noproxy','*','-sS','-X','POST','-H','Authorization: Bearer owner','-H','Content-Type: application/json','-d',options.payload,root+path],{encoding:'utf8'});

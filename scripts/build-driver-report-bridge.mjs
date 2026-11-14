@@ -4,7 +4,7 @@ const out = 'dist-driver-report';
 await mkdir(out, { recursive: true });
 const result = await build({entryPoints:['scripts/google-driver-report/Code.js'],bundle:true,write:false,format:'iife',
  globalName:'TLMSBridge',target:'es2022',platform:'neutral',minify:false});
-const wrappers = ['setupTLMS','syncTLMS','submitTLMS','goToToday','onOpen'].map(name =>
+const wrappers = ['createNewTLMSSystem','setupTLMS','syncTLMS','submitTLMS','goToToday','onOpen'].map(name =>
  'function '+name+'(e) { return TLMSBridge.'+name+'(e); }').join('\n');
 await writeFile(out+'/Code.gs',result.outputFiles[0].text+'\n'+wrappers+'\n');
 await copyFile('scripts/google-driver-report/appsscript.json',out+'/appsscript.json');
