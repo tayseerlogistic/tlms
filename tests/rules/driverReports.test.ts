@@ -27,7 +27,7 @@ test('Google bridge and TLMS approval share reports, meter validation, history a
  vm.runInContext(readFileSync('dist-driver-report/Code.gs','utf8').replaceAll('PASTE_FIREBASE_PROJECT_ID',project).replaceAll('PASTE_RESPONSE_SPREADSHEET_ID','test-sheet'),sandbox);
  const accept=sandbox.TLMSBridge.integrationTest.acceptRow;
  const cols={timestamp:0,plate:1,meter:2,date:3,status:4,remarks:5};
- const row=(date:string,meter:number,status='🚛 On the Way / راستے میں / रास्ते में')=>[new Date(), 'D J A 4827',meter,date,status,''];
+ const row=(date:string,meter:number,status='🚛 On the Way / راستے میں / रास्ते में')=>[new Date(date+'T18:00:00Z'), 'D J A 4827',meter,'1999-01-01',status,''];
  assert.match(accept(row('2026-11-10',1000),2,cols),/accepted/);
  assert.match(accept(row('2026-11-11',1200),3,cols),/accepted/);
  assert.match(accept(row('2026-11-11',1200),3,cols),/Already delivered/);

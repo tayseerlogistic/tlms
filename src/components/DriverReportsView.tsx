@@ -24,7 +24,7 @@ export function DriverReportsView() {
  };
  return <section className="space-y-4">
   <h3 className="text-xl font-bold">Driver reports & assignments</h3>
-  <p>Drivers select a report date, truck, meter and status. Review conflicts here before they replace an accepted report.</p>
+  <p>Drivers select a truck, meter and status. The submission date is recorded automatically in Saudi time. Review conflicts here before they replace an accepted report.</p>
   <details className="border rounded-xl p-3"><summary>Connect Google Form and Sheets</summary>
     <ol className="list-decimal pl-5 space-y-2 mt-3">
       <li>Extract the private TLMS Combined Driver Report Setup ZIP supplied in your chat. It contains Code.gs and appsscript.json.</li>

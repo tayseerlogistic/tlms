@@ -1,3 +1,4 @@
+import { automaticReportDate } from '../../src/utils/reportTimestamp';
 import { parseFirestoreResponse } from '../../src/utils/firestoreResponse';
 import { sortManifestDrivers } from '../../src/utils/driverSequence';
 import { REPORT_STATUSES, reportStatus, resolveReportAssignment, validateDriverReport, reportMeterPlan } from '../../src/utils/driverReports';
@@ -22,6 +23,7 @@ function truckChoices(trucks) {
 const root = 'projects/'+CONFIG.project+'/databases/(default)/documents';
 const props = () => PropertiesService.getScriptProperties();
 const now = () => new Date().toISOString();
+const submissionDay = timestamp => automaticReportDate(timestamp, value=>Utilities.formatDate(value,CONFIG.zone,'yyyy-MM-dd'));
 const spreadsheetId = () => props().getProperty('systemSheetId') || CONFIG.sheetId;
 function createResources() {
  let sheetId=props().getProperty('systemSheetId');
@@ -47,7 +49,7 @@ function createResources() {
  if(!destination)form.setDestination(FormApp.DestinationType.SPREADSHEET,sheetId);
  if(!form.getItems(FormApp.ItemType.LIST).some(item=>item.getTitle()==='Truck Plate Number'))
   form.addListItem().setTitle('Truck Plate Number').setRequired(true).setChoiceValues(CONFIG.truckOrder);
- form.setDescription('Every evening: choose the report date and your truck, type the meter KM, choose the truck status, then press Submit.');
+ form.setDescription('Every evening: choose your truck, type the meter KM, choose the truck status, then press Submit. The report date is recorded automatically using Saudi time.');
  form.setCollectEmail(false);form.setLimitOneResponsePerUser(false);
  props().setProperty('formId',formId);
  SpreadsheetApp.flush();
@@ -127,7 +129,6 @@ function headers(sheet) {
   timestamp:find('Timestamp',v=>v==='timestamp'),
   plate:find('Truck Plate Number',v=>v.includes('truck')&&(v.includes('plate')||v.includes('number')) || v==='question'),
   meter:find('Current Odometer KM',v=>v.includes('odometer')),
-  date:find('Report Date',v=>v==='report date'),
   status:find('Current Truck Status',v=>v==='current truck status'),
   remarks:names.indexOf('remarks')
  };
@@ -169,8 +170,10 @@ export function setupTLMS() {
    if(found[0])return found[0];
    return form.getItemById(add().getId());
   }
-  question('Report Date',FormApp.ItemType.DATE,()=>form.addDateItem().setTitle('Report Date')).asDateItem().setIncludesYear(true).setRequired(true)
-   .setHelpText('Choose the working day being reported, including when submitting after midnight.');
+  // Existing response rows and their original date column stay in the spreadsheet.
+  for(const item of form.getItems().filter(item=>item.getTitle().trim().toLowerCase()==='report date'))
+   form.deleteItem(item);
+  form.setDescription('Every evening: choose your truck, type the meter KM, choose the truck status, then press Submit. The report date is recorded automatically using Saudi time.');
   let meter=form.getItems().find(item=>item.getType()===FormApp.ItemType.TEXT && /odometer/i.test(item.getTitle()));
   if(!meter)meter=form.getItemById(form.addTextItem().getId());
   meter.asTextItem().setTitle('Current Odometer KM').setRequired(true).setValidation(FormApp.createTextValidation().requireNumberGreaterThanOrEqualTo(0).build());
@@ -206,7 +209,7 @@ export function submitTLMS(e) {
  if(e?.range && e.range.getSheet().getName()===props().getProperty('responseTab'))syncTLMS();
 }
 function acceptRow(row,index,cols) {
- const date=day(row[cols.date]),plate=String(row[cols.plate]||'').trim();
+ const date=submissionDay(row[cols.timestamp]),plate=String(row[cols.plate]||'').trim();
  const id='sheet_'+spreadsheetId()+'_'+index;
  const transaction=api(':beginTransaction',{}).transaction;
  let committed=false;
@@ -218,7 +221,7 @@ function acceptRow(row,index,cols) {
   const drivers=list('drivers',null,null,transaction),events=list('assignment_events','truckId',truck.id,transaction);
   const report={
    id,date,plate:truck.plate,truckId:truck.id,...resolveReportAssignment(truck,date,events,drivers),
-   submittedAt:row[cols.timestamp] instanceof Date?row[cols.timestamp].toISOString():now(),
+   submittedAt:row[cols.timestamp] instanceof Date && Number.isFinite(row[cols.timestamp].getTime())?row[cols.timestamp].toISOString():now(),dateSource:'submission-timestamp',
    odometer:number(row[cols.meter]),status:reportStatus(String(row[cols.status])),remarks:cols.remarks>=0?String(row[cols.remarks]||''):'',
    state:'accepted',reason:'',source:'google-form',sourceRow:index
   };
@@ -226,7 +229,7 @@ function acceptRow(row,index,cols) {
   try {validateDriverReport(report,day(new Date()));}catch(error){invalid=invalid||error.message;}
   if(invalid) {
    const raw={...report,odometer:Number.isFinite(report.odometer)?report.odometer:0,status:report.status||'loading',
-    validationError:invalid,rawOdometer:String(row[cols.meter]),rawStatus:String(row[cols.status]),rawDate:String(row[cols.date]),state:'review',reason:invalid};
+    validationError:invalid,rawOdometer:String(row[cols.meter]),rawStatus:String(row[cols.status]),rawTimestamp:String(row[cols.timestamp]),state:'review',reason:invalid};
    commit([write('driver_reports/'+id,raw)],transaction);committed=true;return 'Review · '+invalid;
   }
   const key=truck.id+'_'+date,previous=read('driver_report_days/'+key,transaction);
@@ -266,7 +269,7 @@ export function syncTLMS() {
      if(/Choose|valid|Required|Unknown|ambiguous|invalidate|truck status/i.test(error.message))result='Review in source sheet · '+error.message;
      else throw error;
     }
-    log.appendRow([new Date(),index,day(row[cols.date]),String(row[cols.plate]),result]);
+    log.appendRow([new Date(),index,submissionDay(row[cols.timestamp]),String(row[cols.plate]),result]);
     props().setProperty('nextRow',String(index+1));
    }
   }
