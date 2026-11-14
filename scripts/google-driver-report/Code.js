@@ -38,7 +38,11 @@ function createResources() {
   formId=created.getId();props().setProperty('newFormId',formId);
  }
  const form=FormApp.openById(formId);
- const destination=form.getDestinationId();
+ let destination=null;
+ try {destination=form.getDestinationId();}
+ catch(error){
+  if(!/no response destination/i.test(String(error.message)))throw error;
+ }
  if(destination && destination!==sheetId)throw Error('The saved form points to another spreadsheet. Review its response destination before continuing.');
  if(!destination)form.setDestination(FormApp.DestinationType.SPREADSHEET,sheetId);
  if(!form.getItems(FormApp.ItemType.LIST).some(item=>item.getTitle()==='Truck Plate Number'))

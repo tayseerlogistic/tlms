@@ -12,7 +12,10 @@ test('new form setup reuses saved resources after a partial failure and rejects 
  const listItem={getTitle:()=> 'Truck Plate Number',setTitle:()=>listItem,setRequired:()=>listItem,setChoiceValues:()=>listItem};
  let hasPlate=false;
  const form={
-  getId:()=> 'new-form',getDestinationId:()=>destination,
+  getId:()=> 'new-form',getDestinationId:()=>{
+   if(destination===null)throw Error('The form currently has no response destination.');
+   return destination;
+  },
   setDestination:(_type:string,id:string)=>{if(failLink)throw Error('Temporary Google failure');destination=id;},
   getItems:()=>hasPlate?[listItem]:[],
   addListItem:()=>{hasPlate=true;return listItem;},
