@@ -1,4 +1,7 @@
-import { sortFleetTrucks, fleetSequence, FLEET_PLATE_SEQUENCE } from '../utils/fleetOrder';
+import { sortFleetTrucks } from '../utils/fleetDisplayOrder';
+import { sortManifestDrivers, manifestDriverRank } from '../utils/driverSequence';
+import type { DriverReport, ReportDay, AssignmentEvent } from '../utils/driverReports';
+import { fleetSequence, FLEET_PLATE_SEQUENCE } from '../utils/fleetOrder';
 import { normalizeDispatchParties, scheduleManifestTags } from '../utils/dispatchManifest';
 import React, {
   createContext,
@@ -61,6 +64,12 @@ interface LmsContextType {
     next: TimetableDatabase,
     previous: TimetableDatabase,
   ) => Promise<void>;
+  driverReports: DriverReport[];
+  reportDays: ReportDay[];
+  assignmentEvents: AssignmentEvent[];
+  reportIntegration: Record<string, any>;
+  reviewDriverReport: (id: string, approve: boolean) => Promise<void>;
+  assignTruck: (truckId: string, driverId: string | null, date: string) => Promise<void>;
   trucks: Truck[];
   historicalTrucks: Truck[];
   equipment: Equipment[];
@@ -145,12 +154,16 @@ const collections = [
   "diesel_logs",
   "data_quality",
   "app_state",
+  "driver_reports",
+  "driver_report_days",
+  "assignment_events",
+  "integration_status",
 ] as const;
 type Rows = Record<string, any[]>;
 export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
-  const { user, profile } = useAuth();
+  const { user, profile, isAdmin, isEditor, isDispatcher, isCashier } = useAuth();
   const [remote, setRemote] = useState<Rows>({});
   const [statuses, setStatuses] = useState<Record<string, RepositoryStatus>>(
     {},
@@ -182,7 +195,8 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({
     setWriteError("");
     setSessionId(user?.uid || null);
     if (!user) return;
-    const subscriptions = collections.map((name) =>
+    const reportCollections = ['driver_reports','driver_report_days','assignment_events','integration_status'];
+    const subscriptions = collections.filter(name => !reportCollections.includes(name) || isAdmin || isEditor || isDispatcher || isCashier).map((name) =>
       fleetRepository.subscribe(
         name,
         (rows) => {
@@ -197,7 +211,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({
       active = false;
       subscriptions.forEach((stop) => stop());
     };
-  }, [user?.uid]);
+  }, [user?.uid, isAdmin, isEditor, isDispatcher, isCashier]);
   // Never render a previous account's records while the new subscriptions hydrate.
   const rows = sessionId === user?.uid ? remote : EMPTY_ROWS;
   const {
@@ -230,7 +244,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({
     }));
     const trucks = allTrucks.filter((t) => !t.archived);
     const equipment = sorted<Equipment>(rows.equipment || []);
-    const rawDrivers = sorted<Driver>(rows.drivers || []);
+    const rawDrivers = sortManifestDrivers(rows.drivers || [],(rows.app_state || []).find(row=>row.id==='report_sequences')?.driverOrder || []);
     const commodities: Commodity[] = rows.commodities || [];
     const stores: StoreMapItem[] = rows.stores || [];
     const manifests: Record<
@@ -337,12 +351,12 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({
   const loadingStates = Object.fromEntries(
     collections.map((name) => [
       name,
-      !statuses[name] || statuses[name].state === "loading",
+      (!statuses[name] && !["driver_reports","driver_report_days","assignment_events","integration_status"].includes(name)) || statuses[name]?.state === "loading",
     ]),
   );
   const syncStatus: SyncState = !user
     ? "guest/local-only"
-    : Object.keys(errorStates).length
+    : Object.keys(errorStates).some(name=>!["driver_reports","driver_report_days","assignment_events","integration_status"].includes(name))
       ? "error"
       : !online
         ? "offline"
@@ -418,11 +432,11 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({
             assignedVehiclePlate: truck.plate,
           },
         });
-      await fleetRepository.commit(writes);
+      await fleetRepository.commitAssignments(writes);
     });
   const deleteTruck = (id: string) =>
     run(async () => {
-      await fleetRepository.commit([
+      await fleetRepository.commitAssignments([
         {
           collection: "trucks",
           id,
@@ -486,6 +500,8 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({
           id: driver.id,
           data: {
             ...data,
+            manifestOrder: driver.manifestOrder ?? rawDrivers.find(row=>row.id===driver.id)?.manifestOrder ??
+              manifestDriverRank(rawDrivers.find(row=>row.id===driver.id)?.name || driver.name,(rows.app_state || []).find(row=>row.id==='report_sequences')?.driverOrder || []),
             assignedVehiclePlate: t?.plate || null,
             createdAt: driver.createdAt || new Date().toISOString(),
           },
@@ -519,13 +535,13 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({
             assignedDriverName: driver.name,
           },
         });
-      await fleetRepository.commit(writes);
+      await fleetRepository.commitAssignments(writes);
     });
   const deleteDriver = (id: string) =>
     run(async () => {
       // Fetch current assignments, so archive does not depend on stale screen state.
       const serverTrucks = (await fleetRepository.list("trucks")) as Truck[];
-      await fleetRepository.commit([
+      await fleetRepository.commitAssignments([
         {
           collection: "drivers",
           id,
@@ -1015,6 +1031,13 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({
           ["data_quality", data.dataQuality],
           ["cash_employees", data.cashEmployees],
         ];
+        for (const name of ['driver_reports','driver_report_days','assignment_events','integration_status']) {
+          if (Array.isArray(data[name])) {
+            const immutable = name==='assignment_events' || name==='driver_reports';
+            const existing = immutable ? new Set((await fleetRepository.list(name)).map(row=>row.id)) : new Set();
+            groups.push([name,data[name].filter((row: {id: string})=>!existing.has(row.id))]);
+          }
+        }
         const writes: Write[] = [];
         for (const [name, records] of groups) {
           if (!Array.isArray(records))
@@ -1051,6 +1074,7 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({
               `Only ${result.persistedRecordCount}/${result.expectedRecordCount} KM records verified.`,
             );
         }
+        if (data.reportSequences) await fleetRepository.save('app_state','report_sequences',data.reportSequences);
         if (Array.isArray(data.learnedRules))
           await fleetRepository.save("app_state", "learnedRules", {
             rules: data.learnedRules,
@@ -1104,6 +1128,11 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({
       cashEmployees,
       kmRecords,
       dieselLogs,
+      driver_reports: rows.driver_reports || [],
+      driver_report_days: rows.driver_report_days || [],
+      assignment_events: rows.assignment_events || [],
+      integration_status: rows.integration_status || [],
+      reportSequences: (rows.app_state || []).find(row=>row.id==='report_sequences') || null,
       dataQuality: conflicts,
       learnedRules,
     };
@@ -1140,6 +1169,12 @@ export const LmsProvider: React.FC<{ children: React.ReactNode }> = ({
     dieselLogs,
     conflicts,
     learnedRules,
+    driverReports: rows.driver_reports || [],
+    reportDays: rows.driver_report_days || [],
+    assignmentEvents: rows.assignment_events || [],
+    reportIntegration: (rows.integration_status || []).find(row => row.id === 'google-form') || {},
+    reviewDriverReport: (id, approve) => run(() => fleetRepository.reviewDriverReport(id,approve)),
+    assignTruck: (truckId,driverId,date) => run(() => fleetRepository.assignTruck(truckId,driverId,date)),
     saveTruck,
     deleteTruck,
     saveEquipment,

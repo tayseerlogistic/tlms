@@ -8,3 +8,5 @@ coverage/
 !.env.example
 
 migration-output/
+
+/dist-driver-report/

@@ -1,3 +1,5 @@
+import { reportMeterPlan, validateDriverReport, type DriverReport, type ReportDay } from '../utils/driverReports';
+import { ksaDateISO, isValidISODate } from '../utils/dateUtils';
 import {
   collection,
   doc,
@@ -79,6 +81,108 @@ export function createFleetRepository(
           status({ state: "error", error: `${name}: ${error.message}` });
         },
       );
+    },
+    async reviewDriverReport(id: string, approve: boolean) {
+      const uid = requireSession();
+      await runTransaction(db, async transaction => {
+        const reportRef = doc(db,'driver_reports',id);
+        const snapshot = await transaction.get(reportRef);
+        if (!snapshot.exists()) throw new Error('Report no longer exists.');
+        const report = {...snapshot.data(),id} as DriverReport;
+        if (report.state !== 'review') throw new Error('This report has already been reviewed. Refresh the list.');
+        const reviewedAt = new Date().toISOString();
+        if (!approve) {
+          transaction.update(reportRef,{state:'rejected',reviewedBy:uid,reviewedAt,updatedAt:reviewedAt});
+          return;
+        }
+        validateDriverReport(report,ksaDateISO());
+        if (!report.driverId) throw new Error('Assign the report to its historical driver before approving.');
+        const truckRef = doc(db,'trucks',report.truckId);
+        const truck = await transaction.get(truckRef);
+        if (!truck.exists()) throw new Error('Truck is missing.');
+        const key = report.truckId+'_'+report.date;
+        const dayRef = doc(db,'driver_report_days',key);
+        const day = await transaction.get(dayRef);
+        const records = await getDocsFromServer(query(collection(db,'km_records'),where('truckId','==',report.truckId)));
+        const meterDocs = await Promise.all(records.docs.map(row => transaction.get(row.ref)));
+        const prior = day.exists() ? day.data() as ReportDay : undefined;
+        const plan = reportMeterPlan(report,meterDocs.map(row=>({...row.data(),id:row.id} as KmRecord)),prior,true);
+        const priorRef = prior && prior.reportId !== id ? doc(db,'driver_reports',prior.reportId) : null;
+        if (priorRef) await transaction.get(priorRef);
+        if (priorRef) transaction.update(priorRef,{state:'superseded',reviewedBy:uid,reviewedAt,updatedAt:reviewedAt});
+        transaction.update(reportRef,{state:'accepted',reason:plan.reason,reviewedBy:uid,reviewedAt,updatedAt:reviewedAt});
+        transaction.set(dayRef,clean({...report,state:'accepted',reportId:id,reason:plan.reason,reviewedBy:uid,reviewedAt,updatedAt:reviewedAt}));
+        for (const record of plan.writes) transaction.set(doc(db,'km_records',record.id),clean({...record,updatedAt:reviewedAt}),{merge:true});
+        transaction.update(truckRef,{reportRevision:Number(truck.data()?.reportRevision || 0)+1});
+      });
+    },
+    async commitAssignments(writes: Write[], effectiveDate = ksaDateISO()) {
+      const uid = requireSession();
+      if (!isValidISODate(effectiveDate) || effectiveDate > ksaDateISO()) throw new Error('Assignment date must be today or earlier.');
+      const proposedIds = new Map(writes.filter(w=>w.collection==='trucks' && w.data && 'assignedDriverId' in w.data).map(w=>[w.id,crypto.randomUUID()]));
+      await runTransaction(db, async transaction => {
+        const snapshots = await Promise.all(writes.map(w=>transaction.get(doc(db,w.collection,w.id))));
+        const eventIds = new Map(proposedIds);
+        writes.forEach((write,index) => {
+          if (write.collection==='trucks' && (snapshots[index].data()?.assignedDriverId || null)===(write.data?.assignedDriverId || null)) eventIds.delete(write.id);
+        });
+        const fleet = eventIds.size ? await getDocsFromServer(collection(db,'trucks')) : null;
+        const people = eventIds.size ? await getDocsFromServer(collection(db,'drivers')) : null;
+        if (fleet && people) {
+          const apply = (name: string, docs: typeof fleet.docs) => {
+            const result = new Map(docs.map(item=>[item.id,{...item.data(),id:item.id} as DocumentData]));
+            writes.filter(write=>write.collection===name).forEach(write=>result.set(write.id,{...result.get(write.id),...write.data,id:write.id}));
+            return result;
+          };
+          const futureTrucks = apply('trucks',fleet.docs), futureDrivers = apply('drivers',people.docs);
+          const changedDrivers = new Set(writes.filter(write=>write.collection==='drivers').map(write=>write.id));
+          for (const truck of futureTrucks.values()) {
+            if (!eventIds.has(truck.id) && !changedDrivers.has(truck.assignedDriverId)) continue;
+            if (!truck.assignedDriverId) continue;
+            const driver = futureDrivers.get(truck.assignedDriverId);
+            if (!driver || driver.active===false || driver.assignedTruckId!==truck.id)
+              throw new Error('Assignments changed while editing. Reopen the truck and driver before saving.');
+          }
+          for (const driver of futureDrivers.values()) {
+            if (!changedDrivers.has(driver.id)) continue;
+            if (driver.assignedTruckId && futureTrucks.get(driver.assignedTruckId)?.assignedDriverId!==driver.id)
+              throw new Error('Assignments are inconsistent. Reassign using Driver Reports.');
+          }
+        }
+        const currentDateEvents = eventIds.size ? await getDocsFromServer(query(collection(db,'assignment_events'),where('effectiveDate','>=',effectiveDate))) : null;
+        if (currentDateEvents?.docs.some(event=>eventIds.has(event.data().truckId) && event.data().effectiveDate>effectiveDate))
+          throw new Error('A later assignment exists. Review the assignment history before backdating.');
+        writes.forEach((write,index) => {
+          const snapshot = snapshots[index], before = snapshot.data(), ref = doc(db,write.collection,write.id);
+          if (write.remove) transaction.delete(ref);
+          else transaction.set(ref,clean({...write.data,updatedAt:new Date().toISOString()}),{merge:write.merge!==false});
+          if (eventIds.has(write.id) && write.collection==='trucks' &&
+              (before?.assignedDriverId || null)!==(write.data?.assignedDriverId || null)) {
+            transaction.set(doc(db,'assignment_events',eventIds.get(write.id)!),clean({
+              truckId:write.id,plate:write.data?.plate || before?.plate || '',
+              driverId:write.data?.assignedDriverId || null,driverName:write.data?.assignedDriverName || '',
+              previousDriverId:before?.assignedDriverId || null,previousDriverName:before?.assignedDriverName || '',
+              effectiveDate,changedAt:new Date().toISOString(),changedBy:uid
+            }));
+          }
+        });
+      });
+    },
+    async assignTruck(truckId: string, driverId: string | null, date: string) {
+      const trucks = await this.list('trucks') as Truck[];
+      const drivers = await this.list('drivers') as unknown as import('../types').Driver[];
+      const truck = trucks.find(row=>row.id===truckId && !row.archived);
+      const driver = drivers.find(row=>row.id===driverId && row.active!==false);
+      if (!truck || (driverId && !driver)) throw new Error('Choose an active truck and driver.');
+      const writes: Write[] = [
+        {collection:'trucks',id:truckId,data:{assignedDriverId:driverId,assignedDriverName:driver?.name || null}},
+        ...drivers.filter(row=>row.assignedTruckId===truckId && row.id!==driverId).map(row=>({
+          collection:'drivers',id:row.id,data:{assignedTruckId:null,assignedVehiclePlate:null}})),
+        ...trucks.filter(row=>driverId && row.assignedDriverId===driverId && row.id!==truckId).map(row=>({
+          collection:'trucks',id:row.id,data:{assignedDriverId:null,assignedDriverName:null}}))
+      ];
+      if (driver) writes.push({collection:'drivers',id:driver.id,data:{assignedTruckId:truckId,assignedVehiclePlate:truck.plate}});
+      await this.commitAssignments(writes,date);
     },
     async changeScheduleRows(date: string, change: (rows: TimetableRow[]) => TimetableRow[], allowCreate = false) {
       const uid = requireSession();

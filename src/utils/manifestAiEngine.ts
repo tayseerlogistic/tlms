@@ -1,3 +1,4 @@
+import { reportManifest, type ReportDay } from './driverReports';
 import { abbreviateManifestCustomers } from './manifestCustomer';
 import referenceTransitions from '../data/manifestTransitions.json';
 import { predictRouteProgression, type TransitionModel } from './routeProgression';
@@ -195,7 +196,7 @@ export function predictManifestForDriver(
   previousTag: string,
   learnedRules: LearnedRule[],
   confirmedTag?: string,
-  progression?: {schedules: Record<string, DailySchedule>; model?: TransitionModel}
+  progression?: {schedules: Record<string, DailySchedule>; model?: TransitionModel; reports?: ReportDay[]}
 ): ManifestSuggestion {
   // If already confirmed by dispatcher for this date, return locked
   if (confirmedTag) {
@@ -206,6 +207,9 @@ export function predictManifestForDriver(
     };
   }
 
+  const reports = progression?.reports?.filter(report => report.driverId === driver.id && report.date === date) || [];
+  if (reports.length > 1) return {text:'',conf:'low',reason:'Multiple truck reports match this driver and date. Review the assignment and active trip.'};
+  if (reports.length === 1) return reportManifest(reports[0],driver,progression!.schedules,previousTag);
   previousTag = abbreviateManifestCustomers(previousTag);
   if (progression) {
     const suggestion = predictRouteProgression(driver, date, previousTag, scheduleRowsForDriver(driver,currentScheduleRows),

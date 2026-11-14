@@ -5,13 +5,14 @@
   "type": "module",
   "scripts": {
     "dev": "vite --port=3000 --host=0.0.0.0",
-    "build": "vite build",
+    "build": "npm run build:driver-bridge && vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
     "test": "node --import tsx --test tests/*.test.ts",
-    "test:rules": "firebase emulators:exec --only firestore --project demo-tlms --config firebase.emulator.json \"node --import tsx --test tests/rules/*.test.ts\"",
-    "migrate:plan": "node --import tsx scripts/migrate-data.ts"
+    "test:rules": "npm run build:driver-bridge && firebase emulators:exec --only firestore --project demo-tlms --config firebase.emulator.json \"node --import tsx --test tests/rules/*.test.ts\"",
+    "migrate:plan": "node --import tsx scripts/migrate-data.ts",
+    "build:driver-bridge": "node scripts/build-driver-report-bridge.mjs"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
@@ -43,6 +44,7 @@
     "firebase-tools": "^15.34.1",
     "tailwindcss": "^4.3.3",
     "tsx": "^4.21.0",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "esbuild": "0.28.2"
   }
 }

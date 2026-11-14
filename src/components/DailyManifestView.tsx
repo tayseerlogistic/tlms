@@ -41,7 +41,7 @@ function localTodayISO(): string {
 
 export const DailyManifestView: React.FC = () => {
   const {
-    drivers, manifests, manifestDraftDates, schedules, saveDailyManifest, saveMultiDayManifests,
+    drivers, reportDays, manifests, manifestDraftDates, schedules, saveDailyManifest, saveMultiDayManifests,
     loadingStates, errorStates, learnedRules, learnHistoricalRules
   } = useLms();
 
@@ -207,7 +207,7 @@ export const DailyManifestView: React.FC = () => {
       prev,
       learnedRules,
       confirmed,
-      {schedules,model:progressionModel}
+      {schedules,model:progressionModel,reports:reportDays}
     );
   };
 
@@ -277,7 +277,7 @@ export const DailyManifestView: React.FC = () => {
     operationalDrivers.forEach(driver => {
       const idx = drivers.findIndex(item => item.id === driver.id);
       finalTags[driver.id] = localTags[driver.id] !== undefined ? localTags[driver.id] :
-        (getDriverTag(storedTags, driver.id, idx) || predictManifestTag(idx, selectedDate).text);
+        (reportDays.some(report=>report.driverId===driver.id && report.date===selectedDate) ? predictManifestTag(idx,selectedDate).text : getDriverTag(storedTags, driver.id, idx) || predictManifestTag(idx, selectedDate).text);
     });
     if (!operationalDrivers.length || saving) return;
     if (Object.values(finalTags).some(tag => !tag.trim())) {
@@ -419,7 +419,7 @@ export const DailyManifestView: React.FC = () => {
         'Driver Name': driver.name,
         'Employee No': driver.empNo,
         'Vehicle Plate': driver.assignedVehiclePlate || '—',
-        [selectedDate]: localTags[driver.id] !== undefined ? localTags[driver.id] : (getDriverTag(storedTags, driver.id, idx) || predictManifestTag(idx, selectedDate).text)
+        [selectedDate]: localTags[driver.id] !== undefined ? localTags[driver.id] : (reportDays.some(report=>report.driverId===driver.id && report.date===selectedDate) ? predictManifestTag(idx,selectedDate).text : getDriverTag(storedTags, driver.id, idx) || predictManifestTag(idx, selectedDate).text)
       };
     });
 
@@ -749,7 +749,7 @@ export const DailyManifestView: React.FC = () => {
                     const idx = drivers.findIndex(item => item.id === d.id);
                     const prev = getPreviousTag(idx, selectedDate);
                     const pred = predictManifestTag(idx, selectedDate);
-                    const currentVal = localTags[d.id] !== undefined ? localTags[d.id] : (getDriverTag(storedTags, d.id, idx) || pred.text);
+                    const currentVal = localTags[d.id] !== undefined ? localTags[d.id] : (reportDays.some(report=>report.driverId===d.id && report.date===selectedDate) ? pred.text : getDriverTag(storedTags, d.id, idx) || pred.text);
 
                     const matchedTrips = scheduleRowsForDriver(d, currentSchedule);
                     const matchedRow = matchedTrips[0];
@@ -808,6 +808,8 @@ export const DailyManifestView: React.FC = () => {
                         </td>
                         <td className="p-3 text-slate-300 text-xs font-mono">
                           <span className="phone-label">Last confirmed status</span>
+                          {reportDays.filter(report=>report.driverId===d.id && report.date===selectedDate).map(report=>
+                            <p key={report.reportId} className="text-xs text-blue-500">Driver report · {report.status} · {report.plate}</p>)}
                           {todayTags[d.id] || prev ? (
                             <div>{todayTags[d.id] || prev}</div>
                           ) : (
@@ -1021,7 +1023,7 @@ export const DailyManifestView: React.FC = () => {
                 onChange={(e) => setLearningPasteText(e.target.value)}
                 placeholder={`Date: 2026-09-05
 | Driver Name | Source | Destination | Customer | Commodity |
-| Example Driver A | Yanbu | Yanbu | LUBEREFF | SULPHER |
+| Example Driver A | Yanbu | Yanbu | Example Supplier | SULPHER |
 | Example Driver B | Yanbu | Jubail | ZAMIL | FC |
 
 Date: 2026-09-06
@@ -1144,9 +1146,9 @@ Date: 2026-09-06
             rows={8}
             value={bulkTagsText}
             onChange={(e) => setBulkTagsText(e.target.value)}
-            placeholder={`SULPHER Collection from LUBEREFF
-SA Supply for CISCO - Under Offloading at Kuwait
-FC Supply for ZAMIL - Under Loading at Yanbu
+            placeholder={`SULPHER Collection from Example Supplier
+SA Supply for Example Customer A - Under Offloading at Example Destination
+FC Supply for Example Customer B - Under Loading at Yanbu
 ... (exactly ${operationalDrivers.length} lines)`}
             className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-white font-mono placeholder-slate-600 focus:outline-none focus:border-emerald-500"
           />

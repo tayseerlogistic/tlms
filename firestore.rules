@@ -205,7 +205,30 @@ service cloud.firestore {
     match /data_quality/{id} { allow read: if isSignedIn(); allow write: if isStaff(); }
     match /app_state/{id} {
       allow read: if isSignedIn();
-      allow write: if (id == 'branding' && isAdmin()) || (id == 'learnedRules' && isStaff());
+      allow write: if (id == 'branding' && isAdmin()) || (id == 'learnedRules' && isStaff()) || (id == 'report_sequences' && isAdmin());
+    }
+
+    match /driver_reports/{id} {
+      allow read: if isSignedIn() && isStaff();
+      allow create: if isStaff() && request.resource.data.source == 'google-form';
+      allow update: if isStaff() && request.resource.data.diff(resource.data).affectedKeys()
+        .hasOnly(['state','reason','reviewedBy','reviewedAt','updatedAt']);
+      allow delete: if false;
+    }
+    match /driver_report_days/{id} {
+      allow read: if isSignedIn() && isStaff();
+      allow create, update: if isStaff();
+      allow delete: if false;
+    }
+    match /assignment_events/{id} {
+      allow read: if isSignedIn() && isStaff();
+      allow create: if isStaff();
+      allow update, delete: if false;
+    }
+    match /integration_status/{id} {
+      allow read: if isSignedIn() && isStaff();
+      allow create, update: if isStaff();
+      allow delete: if false;
     }
 
     // Diesel logs

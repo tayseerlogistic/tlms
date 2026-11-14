@@ -1,3 +1,4 @@
+import { DriverReportsView } from './DriverReportsView';
 import React, { useEffect, useState } from 'react';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
@@ -11,7 +12,7 @@ import {
 } from 'lucide-react';
 
 interface SettingsViewProps {
-  initialTab?: 'mood' | 'master' | 'driver-portal' | 'users' | 'backup';
+  initialTab?: 'mood' | 'master' | 'driver-portal' | 'users' | 'backup' | 'reports';
   onBackToCommandCenter?: () => void;
 }
 
@@ -26,7 +27,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     cashTransactions, conflicts, exportFullBackup, restoreFullBackup, branding, saveBranding: persistBranding
   } = useLms();
 
-  const [activeTab, setActiveTab] = useState<'mood' | 'master' | 'driver-portal' | 'users' | 'backup'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'mood' | 'master' | 'driver-portal' | 'users' | 'backup' | 'reports'>(initialTab);
   const [isRestoring, setIsRestoring] = useState(false);
   const [restoreFeedback, setRestoreFeedback] = useState<string | null>(null);
   const [brandName, setBrandName] = useState(() => localStorage.getItem('tlms.brandName') || 'TLS Logistics LMS');
@@ -87,6 +88,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   };
 
   const navItems = [
+    { id: 'reports' as const, label: 'Driver Reports', icon: Smartphone, desc: 'Form readings, conflicts & dated assignments' },
     { id: 'mood' as const, label: 'Change Mood', icon: theme === 'dark' ? Sun : Moon, desc: 'Dark / Light theme styling' },
     { id: 'master' as const, label: 'Master Repository', icon: Database, desc: 'Fleet trucks, equipment, drivers & rates', badge: openConflictsCount > 0 ? openConflictsCount : undefined },
     { id: 'driver-portal' as const, label: 'Driver Portal', icon: Smartphone, desc: 'Driver mobile trip sheets & logger' },
@@ -96,6 +98,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   return (
     <div className="space-y-6">
+      {activeTab === 'reports' && <DriverReportsView />}
       {/* Settings Top Header */}
       <div className="flex flex-wrap items-center justify-between gap-4 p-5 bg-gradient-to-r from-slate-900 via-slate-800/90 to-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl">
         <div className="flex items-center gap-3">

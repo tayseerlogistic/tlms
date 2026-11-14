@@ -52,6 +52,7 @@ export interface Equipment {
 }
 
 export interface Driver {
+  manifestOrder?: number;
   createdAt?: string;
   updatedAt?: string;
   archivedAt?: string | null;
